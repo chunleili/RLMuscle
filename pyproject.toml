@@ -10,7 +10,13 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "newton",
-    "pyglet>=2.0",
+    "pyglet>=2.1.6",        # for OpenGL viewer
+]
+
+[project.optional-dependencies]
+viewer = [
+    "imgui_bundle>=1.92.0", # for viewer UI (imgui)
+    "PyOpenGL>=3.1.5",      # for viewer UI (imgui)
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -3711,11 +3711,20 @@ dependencies = [
     { name = "pyglet" },
 ]
 
+[package.optional-dependencies]
+viewer = [
+    { name = "imgui-bundle" },
+    { name = "pyopengl" },
+]
+
 [package.metadata]
 requires-dist = [
+    { name = "imgui-bundle", marker = "extra == 'viewer'", specifier = ">=1.92.0" },
     { name = "newton", editable = "external/newton" },
-    { name = "pyglet", specifier = ">=2.0" },
+    { name = "pyglet", specifier = ">=2.1.6" },
+    { name = "pyopengl", marker = "extra == 'viewer'", specifier = ">=3.1.5" },
 ]
+provides-extras = ["viewer"]
 
 [[package]]
 name = "roman-numerals"
