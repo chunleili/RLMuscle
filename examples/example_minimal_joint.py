@@ -97,7 +97,8 @@ class Example:
 
         self.viewer.set_model(self.model)
 
-        self.capture()
+        # self.capture()
+        self.graph = None
 
     def capture(self):
         if wp.get_device().is_cuda:

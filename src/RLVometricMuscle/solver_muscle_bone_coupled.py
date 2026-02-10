@@ -11,10 +11,8 @@ class SolverMuscleBoneCoupled:
         self.muscle_solver = SolverVolumetricMuscle(model, **solver_kwargs)  
 
     def step(self, state_in, state_out, control, contacts, dt):      
-        self.muscle_solver.step(state_in, state_out, dt, contacts, control)
-
         if control is None:
             control = self.model.control(clone_variables=False)
 
+        self.muscle_solver.step(state_in, state_out, dt, contacts, control)
         self.bone_solver.step(state_in, state_out, control, contacts, dt)
-        self.muscle_solver.step(state_in, state_out, control, contacts, dt)
