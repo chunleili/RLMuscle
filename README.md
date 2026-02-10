@@ -23,3 +23,6 @@ uv run main.py
     - [ ] Add muscle coupling solver
 - reinforcement learning
     - [ ] Implement a simple RL task
+
+# Note
+We use Y-up. Newton can set this with `newton.ModelBuilder(up_axis=newton.Axis.Y, gravity=-9.81)`, see [here](https://newton-physics.github.io/newton/latest/concepts/conventions.html#coordinate-system-and-up-axis-conventions) for newton's convention. Be careful when using other assets.
