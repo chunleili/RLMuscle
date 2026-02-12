@@ -7,6 +7,80 @@ import numpy as np
 _USE_NEWTON_USD_GET_MESH = True
 
 
+def _axis_index_from_any(axis: Any | None) -> int | None:
+    if axis is None:
+        return None
+
+    if isinstance(axis, str):
+        name = axis.strip().upper()
+        if name in ("X", "Y", "Z"):
+            return "XYZ".index(name)
+        raise ValueError(f"Invalid axis string: {axis!r}. Expected one of 'X', 'Y', 'Z'.")
+
+    try:
+        value = int(axis)
+    except Exception:
+        name = getattr(axis, "name", None)
+        if isinstance(name, str):
+            name = name.strip().upper()
+            if name in ("X", "Y", "Z"):
+                return "XYZ".index(name)
+        value_attr = getattr(axis, "value", None)
+        if value_attr is None:
+            raise ValueError(f"Unsupported axis value: {axis!r}.")
+        value = int(value_attr)
+
+    if value not in (0, 1, 2):
+        raise ValueError(f"Invalid axis index: {value}. Expected 0/1/2 for X/Y/Z.")
+    return int(value)
+
+
+def _rotation_matrix_align_up(source_up_axis: int, target_up_axis: int) -> np.ndarray:
+    if source_up_axis == target_up_axis:
+        return np.eye(3, dtype=np.float32)
+
+    src = np.zeros(3, dtype=np.float64)
+    dst = np.zeros(3, dtype=np.float64)
+    src[source_up_axis] = 1.0
+    dst[target_up_axis] = 1.0
+
+    v = np.cross(src, dst)
+    s = float(np.linalg.norm(v))
+    c = float(np.dot(src, dst))
+
+    if s < 1.0e-12:
+        if c > 0.0:
+            return np.eye(3, dtype=np.float32)
+        # Fallback for opposite vectors.
+        ortho = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        if abs(src[0]) > 0.9:
+            ortho = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        axis = np.cross(src, ortho)
+        axis /= np.linalg.norm(axis)
+        K = np.array(
+            [
+                [0.0, -axis[2], axis[1]],
+                [axis[2], 0.0, -axis[0]],
+                [-axis[1], axis[0], 0.0],
+            ],
+            dtype=np.float64,
+        )
+        # Rodrigues at pi: R = I + 2*K*K
+        R = np.eye(3, dtype=np.float64) + 2.0 * (K @ K)
+        return R.astype(np.float32)
+
+    K = np.array(
+        [
+            [0.0, -v[2], v[1]],
+            [v[2], 0.0, -v[0]],
+            [-v[1], v[0], 0.0],
+        ],
+        dtype=np.float64,
+    )
+    R = np.eye(3, dtype=np.float64) + K + (K @ K) * ((1.0 - c) / (s * s))
+    return R.astype(np.float32)
+
+
 def _triangulate_faces(face_counts: np.ndarray, face_indices: np.ndarray) -> np.ndarray:
     if face_counts.ndim != 1 or face_indices.ndim != 1:
         raise ValueError("Invalid USD mesh face arrays.")
@@ -242,7 +316,11 @@ def _transform_points_world(points: np.ndarray, prim, xform_cache, Gf) -> np.nda
     )
 
 
-def load_usd_render_meshes(usd_path: str, root_path: str = "/"):
+def load_usd_render_meshes(
+    usd_path: str,
+    root_path: str = "/",
+    y_up_to_z_up: bool = False,
+):
     try:
         from pxr import Gf, Usd, UsdGeom
     except ImportError as exc:
@@ -258,6 +336,11 @@ def load_usd_render_meshes(usd_path: str, root_path: str = "/"):
     stage = Usd.Stage.Open(usd_path)
     if stage is None:
         raise FileNotFoundError(f"Failed to open USD file: {usd_path}")
+
+    stage_up_axis = _axis_index_from_any(str(UsdGeom.GetStageUpAxis(stage)))
+    up_axis_rotation = None
+    if y_up_to_z_up and stage_up_axis == 1:
+        up_axis_rotation = _rotation_matrix_align_up(1, 2)
 
     if root_path == "/":
         prim_iter = stage.Traverse()
@@ -313,6 +396,8 @@ def load_usd_render_meshes(usd_path: str, root_path: str = "/"):
             continue
 
         points_world = _transform_points_world(points, prim, xform_cache, Gf)
+        if up_axis_rotation is not None:
+            points_world = np.asarray(points_world @ up_axis_rotation.T, dtype=np.float32)
         mesh_path = str(prim.GetPath())
         mesh_color = _mesh_color_from_display_color(primvars.get("displayColor"))
         if mesh_color is None:

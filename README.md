@@ -24,5 +24,5 @@ uv run main.py
 - reinforcement learning
     - [ ] Implement a simple RL task
 
-# Note
-We use Y-up. Newton can set this with `newton.ModelBuilder(up_axis=newton.Axis.Y, gravity=-9.81)`, see [here](https://newton-physics.github.io/newton/latest/concepts/conventions.html#coordinate-system-and-up-axis-conventions) for newton's convention. Be careful when using other assets.
+# Caution
+- up-axis: USD and Houdini use Y up by default. But Newton uses Z up by default. See [here](https://newton-physics.github.io/newton/latest/concepts/conventions.html#coordinate-system-and-up-axis-conventions) for newton's convention. We use transfer the asset to Z up when loading it (turn off by switch off "y_up_to_z_up"). Be careful when importing other assets.

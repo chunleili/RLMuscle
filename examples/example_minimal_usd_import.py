@@ -8,20 +8,21 @@ import warp as wp
 import newton
 import newton.examples
 from RLVometricMuscle.usd_adapter import load_usd_render_meshes, summarize_primvars
+from RLVometricMuscle.visualization import (
+    ViewerVisualization,
+    viewer_visual_config_from,
+)
 
 
 @dataclass(frozen=True)
 class DemoConfig:
-    model_up_axis: newton.Axis = newton.Axis.Y
+    # Default source data is Y-up. Enable conversion to improve Newton GL viewer lighting.
+    y_up_to_z_up: bool = True
     gravity: float = -9.81
     center_model: bool = True
     show_ground: bool = True
     show_origin_gizmo: bool = True
     focus_keep_view: bool = True
-    disable_shadows_after_first_frame: bool = True
-    light_color: tuple[float, float, float] = (1, 1, 1)
-    sky_upper: tuple[float, float, float] = (0.85, 0.90, 0.95)
-    sky_lower: tuple[float, float, float] = (0.95, 0.96, 0.97)
     # use_color: custom | display | activation
     use_color: str = "activation"
     custom_color: tuple[float, float, float] = (1, 1, 1)
@@ -44,22 +45,6 @@ def center_model_bbox_to_origin(*point_sets: np.ndarray, up_axis: int = 2) -> tu
     return shifted, anchor.astype(np.float32)
 
 
-def _camera_angles_from_look_dir(viewer, look_dir: np.ndarray) -> tuple[float, float]:
-    d = look_dir / (np.linalg.norm(look_dir) + 1.0e-12)
-    up_axis = getattr(getattr(viewer, "camera", None), "up_axis", 2)
-
-    if up_axis == 0:  # X-up
-        pitch = np.degrees(np.arcsin(np.clip(d[0], -1.0, 1.0)))
-        yaw = np.degrees(np.arctan2(d[2], d[1]))
-    elif up_axis == 1:  # Y-up
-        pitch = np.degrees(np.arcsin(np.clip(d[1], -1.0, 1.0)))
-        yaw = np.degrees(np.arctan2(d[2], d[0]))
-    else:  # Z-up
-        pitch = np.degrees(np.arcsin(np.clip(d[2], -1.0, 1.0)))
-        yaw = np.degrees(np.arctan2(d[1], d[0]))
-    return float(pitch), float(yaw)
-
-
 def _shape_key(path: str, mesh_index: int) -> str:
     sanitized = path.strip("/").replace("/", "_")
     if not sanitized:
@@ -67,8 +52,16 @@ def _shape_key(path: str, mesh_index: int) -> str:
     return f"usd_mesh_{mesh_index}_{sanitized}"
 
 
-def _load_usd_meshes(usd_path: str, root_path: str = "/"):
-    return load_usd_render_meshes(usd_path, root_path=root_path)
+def _load_usd_meshes(
+    usd_path: str,
+    root_path: str = "/",
+    y_up_to_z_up: bool = False,
+):
+    return load_usd_render_meshes(
+        usd_path,
+        root_path=root_path,
+        y_up_to_z_up=y_up_to_z_up,
+    )
 
 
 def _create_parser() -> argparse.ArgumentParser:
@@ -99,8 +92,6 @@ class Example:
         self.usd_path = args.usd_path
         self.usd_root_path = args.usd_root_path
 
-        self._prev_f_down = False
-        self.is_first_frame = True
         self.model_center_shift = np.zeros(3, dtype=np.float32)
         self._activation_demo_value = 0.0
         self._activation_auto = True
@@ -113,7 +104,12 @@ class Example:
         if self._use_color_mode not in valid_modes:
             raise ValueError(f"Invalid cfg.use_color='{self.cfg.use_color}'. Valid values: {', '.join(valid_modes)}")
 
-        usd_meshes = _load_usd_meshes(args.usd_path, root_path=args.usd_root_path)
+        self._model_up_axis = newton.Axis.Z if self.cfg.y_up_to_z_up else newton.Axis.Y
+        usd_meshes = _load_usd_meshes(
+            args.usd_path,
+            root_path=args.usd_root_path,
+            y_up_to_z_up=self.cfg.y_up_to_z_up,
+        )
         self._mesh_base_color_by_path: dict[str, tuple[float, float, float]] = {
             mesh_path: (float(mesh_color[0]), float(mesh_color[1]), float(mesh_color[2]))
             for mesh_path, _, _, mesh_color, _ in usd_meshes
@@ -130,8 +126,7 @@ class Example:
         self._primvar_summary = self._build_primvar_summary()
 
         self.viewer.set_model(self.model)
-        self._init_origin_gizmo()
-        self._configure_visual_defaults()
+        self._visualization = self._build_visualization()
 
     def _prepare_meshes(self, meshes):
         if not self.cfg.center_model:
@@ -140,7 +135,7 @@ class Example:
         point_sets = [vertices for _, vertices, _, _, _ in meshes]
         shifted_sets, center_shift = center_model_bbox_to_origin(
             *point_sets,
-            up_axis=int(self.cfg.model_up_axis),
+            up_axis=int(self._model_up_axis),
         )
 
         shifted_meshes = []
@@ -151,7 +146,7 @@ class Example:
         return shifted_meshes
 
     def _build_model(self, meshes):
-        builder = newton.ModelBuilder(up_axis=self.cfg.model_up_axis, gravity=self.cfg.gravity)
+        builder = newton.ModelBuilder(up_axis=self._model_up_axis, gravity=self.cfg.gravity)
         custom_color = self._to_rgb(self.cfg.custom_color)
 
         for i, (mesh_path, mesh_vertices, mesh_faces, mesh_color, primvars) in enumerate(meshes):
@@ -270,129 +265,18 @@ class Example:
         if updates:
             self.viewer.update_shape_colors(updates)
 
-    def _configure_visual_defaults(self):
-        self._set_camera_wide()
-        self._set_light()
-        self.focus_camera_on_model()
-
-    def _init_origin_gizmo(self):
-        self._origin_starts = None
-        self._origin_ends = None
-        self._origin_colors = None
-        if not self.cfg.show_origin_gizmo:
-            return
-
-        starts = np.array(
-            [
-                [0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0],
-            ],
-            dtype=np.float32,
+    def _build_visualization(self) -> ViewerVisualization:
+        visual_cfg = viewer_visual_config_from(
+            self.cfg,
+            orbit_around_focus=True,
         )
-        L = self._origin_axis_length
-        ends = np.array(
-            [
-                [L, 0.0, 0.0],
-                [0.0, L, 0.0],
-                [0.0, 0.0, L],
-            ],
-            dtype=np.float32,
+        visuals = ViewerVisualization(viewer=self.viewer, config=visual_cfg)
+        visuals.setup(
+            wide_points=self._focus_points,
+            focus_points=self._focus_points,
+            origin_axis_length=self._origin_axis_length,
         )
-        colors = np.array(
-            [
-                [1.0, 0.2, 0.2],
-                [0.2, 1.0, 0.2],
-                [0.2, 0.4, 1.0],
-            ],
-            dtype=np.float32,
-        )
-
-        device = getattr(self.viewer, "device", None)
-        self._origin_starts = wp.array(starts, dtype=wp.vec3, device=device)
-        self._origin_ends = wp.array(ends, dtype=wp.vec3, device=device)
-        self._origin_colors = wp.array(colors, dtype=wp.vec3, device=device)
-
-    def _set_light(self):
-        if hasattr(self.viewer, "renderer"):
-            self.viewer.renderer._light_color = self.cfg.light_color
-            self.viewer.renderer.sky_upper = self.cfg.sky_upper
-            self.viewer.renderer.sky_lower = self.cfg.sky_lower
-
-    def _set_camera_wide(self):
-        if not hasattr(self.viewer, "set_camera"):
-            return
-
-        bbox_min, bbox_max = _bbox_min_max(self._focus_points)
-        center = 0.5 * (bbox_min + bbox_max)
-        diag = float(np.linalg.norm(bbox_max - bbox_min))
-        dist = max(1.2, 2.0 * diag)
-        cam_pos = np.array(
-            [center[0] + dist, center[1] + 0.35 * dist, center[2] + 0.4 * dist],
-            dtype=np.float32,
-        )
-        look_dir = center - cam_pos
-        pitch, yaw = _camera_angles_from_look_dir(self.viewer, look_dir)
-        self.viewer.set_camera(pos=wp.vec3(*cam_pos.tolist()), pitch=pitch, yaw=yaw)
-
-        if hasattr(self.viewer, "camera") and hasattr(self.viewer.camera, "fov"):
-            self.viewer.camera.fov = 45.0
-
-    def focus_camera_on_model(self):
-        if not hasattr(self.viewer, "set_camera"):
-            return
-
-        bbox_min, bbox_max = _bbox_min_max(self._focus_points)
-        center = 0.5 * (bbox_min + bbox_max)
-        diag = float(np.linalg.norm(bbox_max - bbox_min))
-        camera = getattr(self.viewer, "camera", None)
-
-        if self.cfg.focus_keep_view and camera is not None:
-            front = np.array(camera.get_front(), dtype=np.float32)
-            front_norm = float(np.linalg.norm(front))
-            if front_norm > 1.0e-6:
-                front = front / front_norm
-                fov = float(getattr(camera, "fov", 45.0))
-                fov = float(np.clip(fov, 15.0, 90.0))
-                tan_half = max(np.tan(np.radians(0.5 * fov)), 1.0e-3)
-                dist = max(0.6, 0.75 * diag / tan_half)
-                cam_pos = center - front * dist
-                self.viewer.set_camera(
-                    pos=wp.vec3(*cam_pos.tolist()),
-                    pitch=float(camera.pitch),
-                    yaw=float(camera.yaw),
-                )
-                return
-
-        up_axis = int(getattr(camera, "up_axis", 2)) if camera is not None else 2
-        side_axis = (up_axis + 1) % 3
-        cam_pos = center.copy()
-        cam_pos[up_axis] += max(0.5, 1.2 * diag)
-        cam_pos[side_axis] += 0.35 * max(diag, 0.2)
-        look_dir = center - cam_pos
-        pitch, yaw = _camera_angles_from_look_dir(self.viewer, look_dir)
-        self.viewer.set_camera(pos=wp.vec3(*cam_pos.tolist()), pitch=pitch, yaw=yaw)
-
-    def _handle_first_frame_visual_overrides(self):
-        if not self.is_first_frame:
-            return
-
-        if self.cfg.disable_shadows_after_first_frame and hasattr(self.viewer, "renderer"):
-            if hasattr(self.viewer.renderer, "draw_shadows"):
-                self.viewer.renderer.draw_shadows = False
-
-        self.is_first_frame = False
-
-    def _log_debug_visuals(self):
-        if self.cfg.show_origin_gizmo and self._origin_starts is not None:
-            self.viewer.log_lines(
-                "/debug/origin_axes",
-                self._origin_starts,
-                self._origin_ends,
-                self._origin_colors,
-                width=0.01,
-                hidden=False,
-            )
+        return visuals
 
     def gui(self, ui):
         if hasattr(ui, "set_window_size") and hasattr(ui, "ImVec2"):
@@ -407,6 +291,8 @@ class Example:
         ui.text("visualization-only mode")
         ui.text("simulate() is pass")
         ui.text("Press F to focus camera")
+        ui.text(f"y_up_to_z_up={self.cfg.y_up_to_z_up}")
+        ui.text(f"model_up_axis={self._model_up_axis.name}")
         if hasattr(ui, "text_wrapped"):
             ui.text_wrapped(f"usd_path={self.usd_path}")
             ui.text_wrapped(f"usd_root_path={self.usd_root_path}")
@@ -487,18 +373,15 @@ class Example:
         self.sim_time += self.frame_dt
 
     def render(self):
-        f_down = bool(self.viewer.is_key_down("f")) if hasattr(self.viewer, "is_key_down") else False
-        if f_down and not self._prev_f_down:
-            self.focus_camera_on_model()
-        self._prev_f_down = f_down
+        self._visualization.update_focus_hotkey()
 
         self.viewer.begin_frame(self.sim_time)
         self._update_activation_demo_colors()
         self.viewer.log_state(self.state_0)
-        self._log_debug_visuals()
+        self._visualization.log_debug_visuals()
         self.viewer.end_frame()
 
-        self._handle_first_frame_visual_overrides()
+        self._visualization.handle_post_frame()
 
 
 def main():

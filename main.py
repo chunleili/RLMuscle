@@ -1,7 +1,7 @@
 
 def main():
     # example_to_run = "minimal_joint"  # change this to run a different example
-    example_to_run = "minimal_usd_import"  # change this to run a different example
+    example_to_run = "minimal_bone_muscle_import"  # change this to run a different example
 
     if example_to_run == "minimal_joint":
         from examples import example_minimal_joint

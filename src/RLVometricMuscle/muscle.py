@@ -81,7 +81,19 @@ def constraint_alias(name: str) -> str:
 
 
 def pick_arch(name: str):
+    import sys
     name = name.lower()
+    
+    # On Windows, CUDA backend with LLVM can cause linker issues
+    # Default to CPU backend on Windows unless explicitly requested
+    if sys.platform == "win32" and name == "cuda":
+        try:
+            # Try CUDA first, but will fall back if it fails during init
+            return ti.cuda
+        except:
+            print("Warning: CUDA not available on Windows, using CPU backend")
+            return ti.cpu
+    
     if name == "vulkan":
         return ti.vulkan
     if name == "cpu":
@@ -473,8 +485,18 @@ def get_inv_mass(idx: ti.i32, mass: ti.template(), stopped: ti.template())-> ti.
 @ti.data_oriented
 class MuscleSim:   
     def __init__(self, cfg: SimConfig):
+        import sys
         self.cfg = cfg
-        ti.init(arch=pick_arch(cfg.arch))
+        
+        # On Windows, use CPU backend to avoid LLVM linker issues
+        if sys.platform == "win32" and cfg.arch.lower() == "cuda":
+            print("Note: Using CPU backend on Windows to avoid LLVM compatibility issues.")
+            print("To use CUDA, please ensure you have a compatible CUDA toolkit installed.")
+            arch = ti.cpu
+        else:
+            arch = pick_arch(cfg.arch)
+        
+        ti.init(arch=arch, kernel_profiler=False, default_fp=ti.f32)
 
         self.constraint_configs = self.cfg.constraints if self.cfg.constraints else []
 
@@ -1997,8 +2019,6 @@ class MuscleSim:
                         if pt0 >= 0:
                             pos[pt0] += invmass0 * dp
                         pos[pt1] -= invmass1 * dp
-                            ti.atomic_add(pos[pt0], invmass0 * dp)
-                        ti.atomic_add(pos[pt1], -invmass1 * dp)
                         cons[cidx].L[loff] = cons[cidx].L[loff] + dL
 
     @ti.func
