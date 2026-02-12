@@ -6,3 +6,6 @@
 4. Add one user-facing activation scalar (single muscle control) and map it to `control.tet_activations`.
 5. Wire `main.py` to run the couple demo entry (already present) and keep changes minimal.
 6. Verify syntax and provide exact run command.
+
+# Note
+You should first activate the .venv environment, run with python in the .venv.

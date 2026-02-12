@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "newton",
     "pyglet>=2.1.6",        # for OpenGL viewer
+    "usd-core>=25.11",
 ]
 
 [project.optional-dependencies]
