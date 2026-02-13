@@ -84,8 +84,6 @@ class Example:
         self._export_status: str = ""
         self._custom_usd_exporter: LayeredUsdExporter | None = None
         self._export_frame_num = 0
-        self._export_first_mesh_path: str | None = None
-        self._export_first_mesh_active = True
 
         if self._use_my_usd_io:
             if not is_usd_path(self.usd_path):
@@ -113,7 +111,6 @@ class Example:
             mesh_path: (float(mesh_color[0]), float(mesh_color[1]), float(mesh_color[2]))
             for mesh_path, _, _, mesh_color, _ in usd_meshes
         }
-        self._export_first_mesh_path = usd_meshes[0][0] if usd_meshes else None
         self.usd_primvars: dict[str, dict[str, np.ndarray | None]] = {
             mesh_path: primvars for mesh_path, _, _, _, primvars in usd_meshes
         }
@@ -234,9 +231,6 @@ class Example:
         if self._custom_usd_exporter is None:
             return
 
-        if self._export_first_mesh_path:
-            self._custom_usd_exporter.set_prim_active(self._export_first_mesh_path, self._export_first_mesh_active)
-
         stats = self._custom_usd_exporter.write_frame(self._export_frame_num, mesh_colors)
         self._export_status = (
             f"my_usd_io frame={self._export_frame_num}, written={stats['written']}, missing={stats['missing']}"
@@ -285,10 +279,6 @@ class Example:
         if self._custom_usd_exporter is not None:
             ui.text("my_usd_io=enabled")
             _text(f"output_path={self.output_path}")
-            if self._export_first_mesh_path:
-                changed, value = ui.checkbox("First Mesh Active (Export)", self._export_first_mesh_active)
-                if changed:
-                    self._export_first_mesh_active = bool(value)
             if ui.button("Save USD Layer"):
                 self._save_custom_export()
                 if self._export_status:

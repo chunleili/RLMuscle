@@ -20,6 +20,7 @@ uv run main.py
 # Roadmap
 - physical engine
     - [x] Implement a minimal joint demo using newton
+    - [x] USD IO with layering
     - [ ] Add muscle coupling solver
 - reinforcement learning
     - [ ] Implement a simple RL task

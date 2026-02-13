@@ -562,16 +562,6 @@ class LayeredUsdExporter:
             raise ValueError(f"Invalid USD prim path: {prim_path!r}")
         return self.stage.DefinePrim(path, "Scope")
 
-    def set_prim_active(self, prim_path: str, active: bool) -> bool:
-        path = str(prim_path).strip()
-        if not path.startswith("/"):
-            raise ValueError(f"Invalid USD prim path: {prim_path!r}")
-        prim = self.stage.OverridePrim(path)
-        if prim is None or not prim.IsValid():
-            return False
-        prim.SetActive(bool(active))
-        return True
-
     def _set_display_color(self, prim_path: str, color: tuple[float, float, float], frame_index: int) -> bool:
         prim = self.stage.GetPrimAtPath(prim_path)
         if prim is None or not prim.IsValid():
