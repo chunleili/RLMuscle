@@ -500,9 +500,9 @@ class LayeredUsdExporter:
             os.makedirs(output_dir, exist_ok=True)
 
         if self.copy_usd:
-            self.stage, self._edit_layer = self._open_copy_stage()
-        else:
-            self.stage, self._edit_layer = self._open_overlay_stage()
+            self._copy_source_to_output_dir()
+
+        self.stage, self._edit_layer = self._open_overlay_stage()
 
         default_prim = self.stage.GetDefaultPrim()
         if default_prim is not None and default_prim.IsValid():
@@ -518,6 +518,16 @@ class LayeredUsdExporter:
         copy_attr.Set(bool(self.copy_usd))
         self._time_code_start: int | None = None
         self._time_code_end: int | None = None
+
+    def _copy_source_to_output_dir(self) -> None:
+        """Copy the source USD file into the same directory as *output_path*."""
+        import shutil
+
+        dest = os.path.join(os.path.dirname(self.output_path), os.path.basename(self.source_usd_path))
+        dest = os.path.abspath(dest)
+        if os.path.normcase(dest) != os.path.normcase(self.source_usd_path):
+            shutil.copy2(self.source_usd_path, dest)
+        self.source_usd_path = dest
 
     @staticmethod
     def _to_layer_path(path: str, relative_to: str | None = None) -> str:
@@ -545,46 +555,6 @@ class LayeredUsdExporter:
             raise RuntimeError(f"Failed to open composed USD stage: {root_layer.identifier}")
         stage.SetEditTarget(root_layer)
         return stage, root_layer
-
-    def _open_copy_stage(self):
-        if os.path.normcase(self.source_usd_path) == os.path.normcase(self.output_path):
-            raise ValueError("--copy_usd requires output_path different from usd source path.")
-
-        source_layer = self.Sdf.Layer.FindOrOpen(self.source_usd_path)
-        if source_layer is None:
-            raise RuntimeError(f"Failed to open source layer for copy: {self.source_usd_path}")
-        if not source_layer.Export(self.output_path):
-            raise RuntimeError(f"Failed to export copied USD stage: {self.output_path}")
-
-        stage = self.Usd.Stage.Open(self.output_path)
-        if stage is None:
-            raise RuntimeError(f"Failed to open copied USD stage: {self.output_path}")
-
-        root_layer = stage.GetRootLayer()
-        edits_path = self._build_edits_layer_path(self.output_path)
-        edits_layer = self.Sdf.Layer.FindOrOpen(edits_path)
-        if edits_layer is None:
-            edits_layer = self.Sdf.Layer.CreateNew(edits_path)
-        if edits_layer is None:
-            raise RuntimeError(f"Failed to create edits layer: {edits_path}")
-
-        edits_layer_path = self._to_layer_path(edits_layer.realPath or edits_layer.identifier, self.output_path)
-        sublayers = list(root_layer.subLayerPaths)
-        if edits_layer_path not in sublayers:
-            sublayers.insert(0, edits_layer_path)
-            root_layer.subLayerPaths = sublayers
-            root_layer.Save()
-
-        stage = self.Usd.Stage.Open(self.output_path)
-        if stage is None:
-            raise RuntimeError(f"Failed to reopen staged USD file: {self.output_path}")
-        stage.SetEditTarget(edits_layer)
-        return stage, edits_layer
-
-    @staticmethod
-    def _build_edits_layer_path(output_path: str) -> str:
-        stem, _ext = os.path.splitext(output_path)
-        return f"{stem}.edits.usda"
 
     def ensure_scope(self, prim_path: str):
         path = str(prim_path).strip()
