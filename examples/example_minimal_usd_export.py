@@ -17,9 +17,8 @@ except ModuleNotFoundError:
 def _create_parser():
     parser = _create_import_parser()
     parser.set_defaults(
-        viewer="usd",
-        output_path="output/minimal_usd_export.usd",
-        num_frames=120,
+        viewer="gl",
+        output_path="output/minimal_usd_export.usda"
     )
     return parser
 
@@ -61,11 +60,18 @@ class Example(ImportExample):
 def main():
     parser = _create_parser()
     viewer, args = newton.examples.init(parser)
-    if str(getattr(args, "viewer", "")).lower() != "usd":
-        raise ValueError("example_minimal_usd_export requires --viewer usd")
+    viewer_name = str(getattr(args, "viewer", "")).lower()
+    if args.use_my_usd_io and viewer_name == "usd":
+        raise ValueError(
+            "--use_my_usd_io cannot be combined with --viewer usd in example_minimal_usd_export. "
+            "Use --viewer gl or --viewer null."
+        )
 
     example = Example(viewer, args, cfg=DEFAULT_CONFIG)
-    newton.examples.run(example, args)
+    try:
+        newton.examples.run(example, args)
+    finally:
+        example.close()
 
 
 if __name__ == "__main__":

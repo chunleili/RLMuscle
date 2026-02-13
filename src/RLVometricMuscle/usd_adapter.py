@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import numpy as np
@@ -445,3 +446,219 @@ def summarize_primvars(primvars_by_path: dict[str, dict[str, np.ndarray | None]]
                 path_summary[key] = f"shape={shape}, dtype={arr.dtype}"
         summary[path] = path_summary
     return summary
+
+
+def is_usd_path(path: str) -> bool:
+    """Return *True* if *path* has a recognised USD file extension."""
+    return str(path).lower().endswith((".usd", ".usda", ".usdc", ".usdz"))
+
+
+def shape_key_from_path(path: str, mesh_index: int) -> str:
+    """Derive a Newton shape key from a USD prim path."""
+    sanitized = path.strip("/").replace("/", "_") or "mesh"
+    return f"usd_mesh_{mesh_index}_{sanitized}"
+
+
+def center_model_bbox_to_origin(
+    *point_sets: np.ndarray,
+    up_axis: int = 2,
+) -> tuple[list[np.ndarray], np.ndarray]:
+    """Shift point sets so their combined bounding-box bottom-centre sits at the origin."""
+    all_points = np.vstack(point_sets)
+    bbox_min, bbox_max = all_points.min(axis=0), all_points.max(axis=0)
+    anchor = 0.5 * (bbox_min + bbox_max)
+    anchor[int(up_axis)] = bbox_min[int(up_axis)]
+    shifted = [pts - anchor for pts in point_sets]
+    return shifted, anchor.astype(np.float32)
+
+
+class LayeredUsdExporter:
+    """Layer-based USD writer that edits an existing USD scene instead of rebuilding it."""
+
+    def __init__(self, source_usd_path: str, output_path: str, copy_usd: bool = False):
+        try:
+            from pxr import Gf, Sdf, Usd, UsdGeom
+        except ImportError as exc:
+            raise ImportError(
+                "USD export requires `pxr` (`usd-core`). Install with `uv add usd-core` or `pip install usd-core`."
+            ) from exc
+
+        self.Gf = Gf
+        self.Sdf = Sdf
+        self.Usd = Usd
+        self.UsdGeom = UsdGeom
+
+        self.source_usd_path = os.path.abspath(source_usd_path)
+        self.output_path = os.path.abspath(output_path)
+        self.copy_usd = bool(copy_usd)
+
+        if not os.path.isfile(self.source_usd_path):
+            raise FileNotFoundError(f"USD source file not found: {self.source_usd_path}")
+
+        output_dir = os.path.dirname(self.output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        if self.copy_usd:
+            self.stage, self._edit_layer = self._open_copy_stage()
+        else:
+            self.stage, self._edit_layer = self._open_overlay_stage()
+
+        default_prim = self.stage.GetDefaultPrim()
+        if default_prim is not None and default_prim.IsValid():
+            scope_path = f"{default_prim.GetPath()}/rlmuscle_export"
+        else:
+            scope_path = "/rlmuscle_export"
+
+        self._scope = self.stage.DefinePrim(scope_path, "Scope")
+        self._frame_attr = self._scope.CreateAttribute("frameNum", self.Sdf.ValueTypeNames.Int, custom=True)
+        source_attr = self._scope.CreateAttribute("sourceUsd", self.Sdf.ValueTypeNames.String, custom=True)
+        copy_attr = self._scope.CreateAttribute("copyUsd", self.Sdf.ValueTypeNames.Bool, custom=True)
+        source_attr.Set(self.source_usd_path.replace("\\", "/"))
+        copy_attr.Set(bool(self.copy_usd))
+        self._time_code_start: int | None = None
+        self._time_code_end: int | None = None
+
+    @staticmethod
+    def _to_layer_path(path: str) -> str:
+        return os.path.abspath(path).replace("\\", "/")
+
+    def _open_overlay_stage(self):
+        root_layer = self.Sdf.Layer.FindOrOpen(self.output_path)
+        if root_layer is None:
+            root_layer = self.Sdf.Layer.CreateNew(self.output_path)
+        if root_layer is None:
+            raise RuntimeError(f"Failed to create USD layer: {self.output_path}")
+
+        source_layer_path = self._to_layer_path(self.source_usd_path)
+        sublayers = list(root_layer.subLayerPaths)
+        if source_layer_path not in sublayers:
+            sublayers.append(source_layer_path)
+            root_layer.subLayerPaths = sublayers
+            root_layer.Save()
+
+        stage = self.Usd.Stage.Open(root_layer)
+        if stage is None:
+            raise RuntimeError(f"Failed to open composed USD stage: {root_layer.identifier}")
+        stage.SetEditTarget(root_layer)
+        return stage, root_layer
+
+    def _open_copy_stage(self):
+        if os.path.normcase(self.source_usd_path) == os.path.normcase(self.output_path):
+            raise ValueError("--copy_usd requires output_path different from usd source path.")
+
+        source_layer = self.Sdf.Layer.FindOrOpen(self.source_usd_path)
+        if source_layer is None:
+            raise RuntimeError(f"Failed to open source layer for copy: {self.source_usd_path}")
+        if not source_layer.Export(self.output_path):
+            raise RuntimeError(f"Failed to export copied USD stage: {self.output_path}")
+
+        stage = self.Usd.Stage.Open(self.output_path)
+        if stage is None:
+            raise RuntimeError(f"Failed to open copied USD stage: {self.output_path}")
+
+        root_layer = stage.GetRootLayer()
+        edits_path = self._build_edits_layer_path(self.output_path)
+        edits_layer = self.Sdf.Layer.FindOrOpen(edits_path)
+        if edits_layer is None:
+            edits_layer = self.Sdf.Layer.CreateNew(edits_path)
+        if edits_layer is None:
+            raise RuntimeError(f"Failed to create edits layer: {edits_path}")
+
+        edits_layer_path = self._to_layer_path(edits_layer.realPath or edits_layer.identifier)
+        sublayers = list(root_layer.subLayerPaths)
+        if edits_layer_path not in sublayers:
+            sublayers.insert(0, edits_layer_path)
+            root_layer.subLayerPaths = sublayers
+            root_layer.Save()
+
+        stage = self.Usd.Stage.Open(self.output_path)
+        if stage is None:
+            raise RuntimeError(f"Failed to reopen staged USD file: {self.output_path}")
+        stage.SetEditTarget(edits_layer)
+        return stage, edits_layer
+
+    @staticmethod
+    def _build_edits_layer_path(output_path: str) -> str:
+        stem, _ext = os.path.splitext(output_path)
+        return f"{stem}.edits.usda"
+
+    def ensure_scope(self, prim_path: str):
+        path = str(prim_path).strip()
+        if not path.startswith("/"):
+            raise ValueError(f"Invalid USD prim path: {prim_path!r}")
+        return self.stage.DefinePrim(path, "Scope")
+
+    def set_prim_active(self, prim_path: str, active: bool) -> bool:
+        path = str(prim_path).strip()
+        if not path.startswith("/"):
+            raise ValueError(f"Invalid USD prim path: {prim_path!r}")
+        prim = self.stage.OverridePrim(path)
+        if prim is None or not prim.IsValid():
+            return False
+        prim.SetActive(bool(active))
+        return True
+
+    def _set_display_color(self, prim_path: str, color: tuple[float, float, float], frame_index: int) -> bool:
+        prim = self.stage.GetPrimAtPath(prim_path)
+        if prim is None or not prim.IsValid():
+            return False
+
+        gprim = self.UsdGeom.Gprim(prim)
+        if not gprim:
+            return False
+
+        primvars_api = self.UsdGeom.PrimvarsAPI(prim)
+        primvar = primvars_api.GetPrimvar("displayColor")
+        if not primvar:
+            primvar = primvars_api.CreatePrimvar(
+                "displayColor",
+                self.Sdf.ValueTypeNames.Color3fArray,
+                self.UsdGeom.Tokens.constant,
+            )
+        else:
+            primvar.SetInterpolation(self.UsdGeom.Tokens.constant)
+
+        rgb = np.clip(np.asarray(color, dtype=np.float32), 0.0, 1.0)
+        primvar.Set([self.Gf.Vec3f(float(rgb[0]), float(rgb[1]), float(rgb[2]))], int(frame_index))
+        return True
+
+    def _update_time_code_range(self, frame: int) -> None:
+        if self._time_code_start is None or frame < self._time_code_start:
+            self._time_code_start = frame
+        if self._time_code_end is None or frame > self._time_code_end:
+            self._time_code_end = frame
+
+        root_layer = self.stage.GetRootLayer()
+        start = float(self._time_code_start)
+        end = float(self._time_code_end)
+        if root_layer is not None:
+            root_layer.startTimeCode = start
+            root_layer.endTimeCode = end
+        if self._edit_layer is not None and self._edit_layer != root_layer:
+            self._edit_layer.startTimeCode = start
+            self._edit_layer.endTimeCode = end
+
+    def write_frame(self, frame_index: int, mesh_colors: dict[str, tuple[float, float, float]]) -> dict[str, int]:
+        frame = int(frame_index)
+        self._frame_attr.Set(frame, frame)
+        self._update_time_code_range(frame)
+
+        written = 0
+        missing = 0
+        for prim_path, color in mesh_colors.items():
+            if self._set_display_color(prim_path, color, frame):
+                written += 1
+            else:
+                missing += 1
+        return {"written": written, "missing": missing}
+
+    def save(self) -> None:
+        root_layer = self.stage.GetRootLayer()
+        if root_layer is not None:
+            root_layer.Save()
+        if self._edit_layer is not None and self._edit_layer != root_layer:
+            self._edit_layer.Save()
+
+    def close(self) -> None:
+        self.save()
