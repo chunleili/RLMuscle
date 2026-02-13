@@ -1,5 +1,5 @@
 import argparse
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -23,9 +23,6 @@ class DemoConfig:
     show_ground: bool = True
     show_origin_gizmo: bool = True
     focus_keep_view: bool = True
-    # use_color: custom | display | activation
-    use_color: str = "activation"
-    custom_color: tuple[float, float, float] = (1, 1, 1)
     activation_demo_hz: float = 0.1
 
 
@@ -94,15 +91,13 @@ class Example:
 
         self.model_center_shift = np.zeros(3, dtype=np.float32)
         self._activation_demo_value = 0.0
+        self._activation_enabled = True
         self._activation_auto = True
         self._activation_manual_value = 0.5
+        self._activation_demo_hz = float(self.cfg.activation_demo_hz)
         self._ui_panel_width = 520.0
         self._shape_id_by_path: dict[str, int] = {}
         self._activation_shape_ids: list[int] = []
-        self._use_color_mode = str(self.cfg.use_color).strip().lower()
-        valid_modes = ("custom", "display", "activation")
-        if self._use_color_mode not in valid_modes:
-            raise ValueError(f"Invalid cfg.use_color='{self.cfg.use_color}'. Valid values: {', '.join(valid_modes)}")
 
         self._model_up_axis = newton.Axis.Z if self.cfg.y_up_to_z_up else newton.Axis.Y
         usd_meshes = _load_usd_meshes(
@@ -147,17 +142,8 @@ class Example:
 
     def _build_model(self, meshes):
         builder = newton.ModelBuilder(up_axis=self._model_up_axis, gravity=self.cfg.gravity)
-        custom_color = self._to_rgb(self.cfg.custom_color)
 
-        for i, (mesh_path, mesh_vertices, mesh_faces, mesh_color, primvars) in enumerate(meshes):
-            if self._use_color_mode == "custom":
-                mesh_color = custom_color
-            elif self._use_color_mode == "display":
-                mesh_color = self._display_color_from_primvars(primvars) or mesh_color
-            elif self._use_color_mode == "activation":
-                # Keep imported/base mesh color during build. Activation tint is applied
-                # at runtime only to selected muscle shapes.
-                pass
+        for i, (mesh_path, mesh_vertices, mesh_faces, mesh_color, _primvars) in enumerate(meshes):
             render_mesh = newton.Mesh(
                 vertices=mesh_vertices,
                 indices=mesh_faces.reshape(-1),
@@ -186,33 +172,6 @@ class Example:
         return summarize_primvars(self.usd_primvars)
 
     @staticmethod
-    def _to_rgb(color: tuple[float, float, float]) -> tuple[float, float, float]:
-        rgb = np.asarray(color, dtype=np.float32).reshape(-1)
-        if rgb.size < 3:
-            return (0.5, 0.5, 0.5)
-        rgb = np.clip(rgb[:3], 0.0, 1.0)
-        return float(rgb[0]), float(rgb[1]), float(rgb[2])
-
-    @staticmethod
-    def _display_color_from_primvars(primvars: dict[str, np.ndarray | None]) -> tuple[float, float, float] | None:
-        display_color = primvars.get("displayColor")
-        if display_color is None:
-            return None
-        arr = np.asarray(display_color, dtype=np.float32)
-        if arr.size == 0:
-            return None
-        if arr.ndim == 1:
-            if arr.shape[0] < 3:
-                return None
-            rgb = arr[:3]
-        else:
-            if arr.shape[-1] < 3:
-                return None
-            rgb = arr[..., :3].reshape(-1, 3).mean(axis=0)
-        rgb = np.clip(rgb, 0.0, 1.0)
-        return float(rgb[0]), float(rgb[1]), float(rgb[2])
-
-    @staticmethod
     def _activation_to_color(activation: float) -> tuple[float, float, float]:
         a = float(np.clip(activation, 0.0, 1.0))
         cold = np.array([1, 1, 1], dtype=np.float32)
@@ -220,47 +179,28 @@ class Example:
         rgb = (1.0 - a) * cold + a * hot
         return float(rgb[0]), float(rgb[1]), float(rgb[2])
 
-    def _update_activation_demo_colors(self):
-        if self._use_color_mode != "activation":
-            return
-        if not self._activation_shape_ids or not hasattr(self.viewer, "update_shape_colors"):
-            return
-
+    def _compute_activation_demo_value(self) -> float:
         if self._activation_auto:
-            omega = 2.0 * np.pi * float(self.cfg.activation_demo_hz)
+            omega = 2.0 * np.pi * float(self._activation_demo_hz)
             self._activation_demo_value = 0.5 * (1.0 + float(np.sin(omega * self.sim_time)))
         else:
             self._activation_demo_value = float(np.clip(self._activation_manual_value, 0.0, 1.0))
-        color = self._activation_to_color(self._activation_demo_value)
-        self.viewer.update_shape_colors({shape_id: color for shape_id in self._activation_shape_ids})
+        return self._activation_demo_value
 
-    def _apply_use_color_mode_colors(self):
+    def _update_display_colors(self):
         if not hasattr(self.viewer, "update_shape_colors"):
             return
 
         updates: dict[int, tuple[float, float, float]] = {}
-        if self._use_color_mode == "custom":
-            color = self._to_rgb(self.cfg.custom_color)
-            updates = {shape_id: color for shape_id in self._shape_id_by_path.values()}
-        elif self._use_color_mode == "display":
-            for mesh_path, shape_id in self._shape_id_by_path.items():
-                color = self._display_color_from_primvars(self.usd_primvars.get(mesh_path, {}))
-                if color is None:
-                    color = self._mesh_base_color_by_path.get(mesh_path, (1.0, 1.0, 1.0))
-                updates[shape_id] = color
-        else:
-            if self._activation_auto:
-                omega = 2.0 * np.pi * float(self.cfg.activation_demo_hz)
-                self._activation_demo_value = 0.5 * (1.0 + float(np.sin(omega * self.sim_time)))
+        activation_ids = set(self._activation_shape_ids)
+        activation_color = self._activation_to_color(self._compute_activation_demo_value())
+
+        for mesh_path, shape_id in self._shape_id_by_path.items():
+            base_color = self._mesh_base_color_by_path.get(mesh_path, (1.0, 1.0, 1.0))
+            if self._activation_enabled and shape_id in activation_ids:
+                updates[shape_id] = activation_color
             else:
-                self._activation_demo_value = float(np.clip(self._activation_manual_value, 0.0, 1.0))
-            activation_color = self._activation_to_color(self._activation_demo_value)
-            activation_ids = set(self._activation_shape_ids)
-            for mesh_path, shape_id in self._shape_id_by_path.items():
-                if shape_id in activation_ids:
-                    updates[shape_id] = activation_color
-                else:
-                    updates[shape_id] = self._mesh_base_color_by_path.get(mesh_path, (1.0, 1.0, 1.0))
+                updates[shape_id] = base_color
 
         if updates:
             self.viewer.update_shape_colors(updates)
@@ -300,25 +240,15 @@ class Example:
             ui.text(f"usd_path={self.usd_path}")
             ui.text(f"usd_root_path={self.usd_root_path}")
         ui.text(f"mesh_count={self.usd_mesh_count}")
-        if hasattr(ui, "begin_combo") and hasattr(ui, "selectable") and hasattr(ui, "end_combo"):
-            if ui.begin_combo("Use Color", self._use_color_mode):
-                for mode in ("activation", "display", "custom"):
-                    selected = self._use_color_mode == mode
-                    changed, _ = ui.selectable(mode, selected)
-                    if changed and not selected:
-                        self._use_color_mode = mode
-                        self.cfg = replace(self.cfg, use_color=mode)
-                        self._apply_use_color_mode_colors()
-                ui.end_combo()
-        else:
-            ui.text(f"use_color={self._use_color_mode}")
-        if self._use_color_mode == "custom":
-            ui.text(f"custom_color={self.cfg.custom_color}")
+        if hasattr(ui, "checkbox"):
+            changed, value = ui.checkbox("Activation Color", self._activation_enabled)
+            if changed:
+                self._activation_enabled = bool(value)
         if hasattr(ui, "slider_float"):
             changed, value = ui.slider_float("Panel Width", float(self._ui_panel_width), 320.0, 900.0, "%.0f")
             if changed:
                 self._ui_panel_width = float(np.clip(value, 320.0, 900.0))
-        if self._use_color_mode == "activation":
+        if self._activation_enabled:
             if hasattr(ui, "checkbox"):
                 changed, value = ui.checkbox("Auto Activation", self._activation_auto)
                 if changed:
@@ -328,10 +258,9 @@ class Example:
                 if changed:
                     self._activation_manual_value = float(np.clip(value, 0.0, 1.0))
             if hasattr(ui, "slider_float"):
-                changed, value = ui.slider_float("Frequency", float(self.cfg.activation_demo_hz), 0.05, 2.0, "%.2f")
+                changed, value = ui.slider_float("Frequency", float(self._activation_demo_hz), 0.05, 2.0, "%.2f")
                 if changed:
-                    # DemoConfig is frozen; store runtime override on the instance.
-                    self.cfg = replace(self.cfg, activation_demo_hz=float(value))
+                    self._activation_demo_hz = float(value)
             ui.text(f"activation_demo={self._activation_demo_value:.3f}")
         ui.text("Primvar summary:")
         if hasattr(ui, "begin_child") and hasattr(ui, "end_child"):
@@ -376,7 +305,8 @@ class Example:
         self._visualization.update_focus_hotkey()
 
         self.viewer.begin_frame(self.sim_time)
-        self._update_activation_demo_colors()
+        # Keep exported/rendered primvars:displayColor in sync with runtime color state.
+        self._update_display_colors()
         self.viewer.log_state(self.state_0)
         self._visualization.log_debug_visuals()
         self.viewer.end_frame()

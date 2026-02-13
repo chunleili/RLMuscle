@@ -130,46 +130,49 @@ def _extract_surface_tris(tets: np.ndarray) -> np.ndarray:
     return np.asarray(surface, dtype=np.int32)
 
 
-def _tet_indices_from_prim(prim) -> np.ndarray | None:
-    for attr_name in ("tetraIndices", "tetVertexIndices", "tetIndices"):
-        attr = prim.GetAttribute(attr_name)
-        if not attr or not attr.IsValid():
-            continue
-        value = attr.Get()
-        if value is None:
-            continue
-        raw = np.asarray(value, dtype=np.int32)
-        if raw.size == 0:
-            continue
-        if raw.ndim == 1 and raw.size % 4 == 0:
-            tets = raw.reshape(-1, 4)
-        elif raw.ndim == 2 and raw.shape[1] == 4:
-            tets = raw
-        else:
-            continue
-        return np.asarray(tets, dtype=np.int32)
-    return None
-
-
-def _surface_tris_from_prim(prim) -> np.ndarray | None:
-    attr = prim.GetAttribute("surfaceFaceVertexIndices")
-    if not attr or not attr.IsValid():
-        return None
-
-    value = attr.Get()
+def _indices_from_value(value, width: int) -> np.ndarray | None:
     if value is None:
         return None
 
     raw = np.asarray(value, dtype=np.int32)
     if raw.size == 0:
         return None
-    if raw.ndim == 1 and raw.size % 3 == 0:
-        tris = raw.reshape(-1, 3)
-    elif raw.ndim == 2 and raw.shape[1] == 3:
-        tris = raw
+    if raw.ndim == 1 and raw.size % width == 0:
+        out = raw.reshape(-1, width)
+    elif raw.ndim == 2 and raw.shape[1] == width:
+        out = raw
     else:
         return None
-    return np.asarray(tris, dtype=np.int32)
+    return np.asarray(out, dtype=np.int32)
+
+
+def _points_from_point_based(point_based) -> np.ndarray | None:
+    points_attr = point_based.GetPointsAttr()
+    if not points_attr or not points_attr.IsValid():
+        return None
+
+    points_value = points_attr.Get()
+    if points_value is None:
+        return None
+
+    points = np.asarray(points_value, dtype=np.float32)
+    if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
+        return None
+    return points
+
+
+def _tet_indices_from_tetmesh(tetmesh) -> np.ndarray | None:
+    attr = tetmesh.GetTetVertexIndicesAttr()
+    if not attr or not attr.IsValid():
+        return None
+    return _indices_from_value(attr.Get(), width=4)
+
+
+def _surface_tris_from_tetmesh(tetmesh) -> np.ndarray | None:
+    attr = tetmesh.GetSurfaceFaceVertexIndicesAttr()
+    if not attr or not attr.IsValid():
+        return None
+    return _indices_from_value(attr.Get(), width=3)
 
 
 def _mesh_color_from_path(path: str) -> tuple[float, float, float]:
@@ -308,6 +311,44 @@ def _load_mesh_fallback(prim, UsdGeom) -> tuple[np.ndarray, np.ndarray] | None:
     return points, tris
 
 
+def _load_mesh_geometry(prim, UsdGeom) -> tuple[np.ndarray, np.ndarray] | None:
+    parsed = _load_mesh_with_newton_usd(prim)
+    if parsed is not None:
+        return parsed
+    return _load_mesh_fallback(prim, UsdGeom)
+
+
+def _load_tetmesh_geometry(prim, UsdGeom) -> tuple[np.ndarray, np.ndarray] | None:
+    tetmesh = UsdGeom.TetMesh(prim)
+    if not tetmesh:
+        return None
+
+    points = _points_from_point_based(tetmesh)
+    if points is None:
+        return None
+
+    tris = _surface_tris_from_tetmesh(tetmesh)
+    tet_indices = _tet_indices_from_tetmesh(tetmesh)
+
+    if (tris is None or tris.size == 0) and hasattr(UsdGeom.TetMesh, "ComputeSurfaceFaces"):
+        try:
+            tris = _indices_from_value(UsdGeom.TetMesh.ComputeSurfaceFaces(tetmesh), width=3)
+        except Exception:
+            tris = None
+
+    # Fallback if surface faces are not authored and ComputeSurfaceFaces is unavailable/failed.
+    if (tris is None or tris.size == 0) and tet_indices is not None and tet_indices.shape[0] > 0:
+        valid = np.all((tet_indices >= 0) & (tet_indices < points.shape[0]), axis=1)
+        tet_indices = tet_indices[valid]
+        if tet_indices.shape[0] > 0:
+            tet_indices = _fix_tet_winding(points, tet_indices.copy())
+            tris = _extract_surface_tris(tet_indices)
+
+    if tris is None or tris.size == 0:
+        return None
+    return points, np.asarray(tris, dtype=np.int32)
+
+
 def _transform_points_world(points: np.ndarray, prim, xform_cache, Gf) -> np.ndarray:
     world_xform = xform_cache.GetLocalToWorldTransform(prim)
     return np.asarray(
@@ -355,45 +396,22 @@ def load_usd_render_meshes(
     meshes: list[tuple[str, np.ndarray, np.ndarray, tuple[float, float, float], dict[str, np.ndarray | None]]] = []
     for prim in prim_iter:
         is_mesh = prim.IsA(UsdGeom.Mesh)
-        surface_tris = _surface_tris_from_prim(prim)
-        tet_indices = _tet_indices_from_prim(prim)
-        if not is_mesh and surface_tris is None and tet_indices is None:
+        is_tetmesh = prim.IsA(UsdGeom.TetMesh)
+        if not is_mesh and not is_tetmesh:
             continue
 
         primvars = _read_all_primvars(prim)
 
-        points = None
-        tris = None
-
         if is_mesh:
-            parsed = _load_mesh_with_newton_usd(prim)
-            if parsed is None:
-                parsed = _load_mesh_fallback(prim, UsdGeom)
-            if parsed is not None:
-                points, tris = parsed
+            parsed = _load_mesh_geometry(prim, UsdGeom)
+        elif is_tetmesh:
+            parsed = _load_tetmesh_geometry(prim, UsdGeom)
         else:
-            points_attr = prim.GetAttribute("points")
-            if points_attr and points_attr.IsValid():
-                points_value = points_attr.Get()
-                if points_value is not None:
-                    points = np.asarray(points_value, dtype=np.float32)
-                    if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
-                        points = None
+            parsed = None
 
-            if points is not None:
-                if surface_tris is not None:
-                    tris = surface_tris
-
-                # For TetMesh-like assets, extract surface triangles from tetrahedra.
-                if (tris is None or tris.size == 0) and tet_indices is not None and tet_indices.shape[0] > 0:
-                    valid = np.all((tet_indices >= 0) & (tet_indices < points.shape[0]), axis=1)
-                    tet_indices = tet_indices[valid]
-                    if tet_indices.shape[0] > 0:
-                        tet_indices = _fix_tet_winding(points, tet_indices.copy())
-                        tris = _extract_surface_tris(tet_indices)
-
-        if points is None or tris is None or tris.size == 0:
+        if parsed is None:
             continue
+        points, tris = parsed
 
         points_world = _transform_points_world(points, prim, xform_cache, Gf)
         if up_axis_rotation is not None:
