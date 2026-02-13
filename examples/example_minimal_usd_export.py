@@ -18,7 +18,9 @@ def _create_parser():
     parser = _create_import_parser()
     parser.set_defaults(
         viewer="gl",
-        output_path="output/minimal_usd_export.usda"
+        output_path="output/minimal_usd_export.usda",
+        use_my_usd_io=True,
+        copy_usd=False,
     )
     return parser
 

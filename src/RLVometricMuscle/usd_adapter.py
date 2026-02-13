@@ -520,8 +520,11 @@ class LayeredUsdExporter:
         self._time_code_end: int | None = None
 
     @staticmethod
-    def _to_layer_path(path: str) -> str:
-        return os.path.abspath(path).replace("\\", "/")
+    def _to_layer_path(path: str, relative_to: str | None = None) -> str:
+        abs_path = os.path.abspath(path)
+        if relative_to is not None:
+            abs_path = os.path.relpath(abs_path, os.path.dirname(os.path.abspath(relative_to)))
+        return abs_path.replace("\\", "/")
 
     def _open_overlay_stage(self):
         root_layer = self.Sdf.Layer.FindOrOpen(self.output_path)
@@ -530,7 +533,7 @@ class LayeredUsdExporter:
         if root_layer is None:
             raise RuntimeError(f"Failed to create USD layer: {self.output_path}")
 
-        source_layer_path = self._to_layer_path(self.source_usd_path)
+        source_layer_path = self._to_layer_path(self.source_usd_path, self.output_path)
         sublayers = list(root_layer.subLayerPaths)
         if source_layer_path not in sublayers:
             sublayers.append(source_layer_path)
@@ -565,7 +568,7 @@ class LayeredUsdExporter:
         if edits_layer is None:
             raise RuntimeError(f"Failed to create edits layer: {edits_path}")
 
-        edits_layer_path = self._to_layer_path(edits_layer.realPath or edits_layer.identifier)
+        edits_layer_path = self._to_layer_path(edits_layer.realPath or edits_layer.identifier, self.output_path)
         sublayers = list(root_layer.subLayerPaths)
         if edits_layer_path not in sublayers:
             sublayers.insert(0, edits_layer_path)

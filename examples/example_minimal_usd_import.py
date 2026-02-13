@@ -55,14 +55,14 @@ def _create_parser() -> argparse.ArgumentParser:
         "--use-my-usd-io",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Use local layer-based USD exporter instead of Newton USD viewer exporter.",
+        help="Use my usd io instead of newton's. It will edit the usd by layering, which is the authentic way to use USD. It cannot work with usd viewer but can work with gl or null viewer. It will reference the original USD location in absolute paths. So Moving either will make the reference broken. If you want to zip it or share it, consider using --copy_usd to copy the original USD to the output location.",
     )
     parser.add_argument(
         "--copy_usd",
         "--copy-usd",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="When using --use_my_usd_io, copy source USD before writing overlay edits.",
+        help="Copy source USD instead of referencing. Use it along with --use_my_usd_io. Copying USD can be more robust when your share and move the original USD file to different locations, but it can be slower and consume more disk space. If on, the exporter will save two USD files: XXX.edit.usda and XXX.usda. The .edit.usda is the layered file that references the copied .usd and contains the edits. The .usd is the copied file that has the same content as the original USD at the time of export but without any edits.",
     )
     return parser
 
