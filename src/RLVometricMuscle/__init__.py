@@ -1,2 +1,2 @@
-"""RLMuscle package."""
-
+"""RLMuscle package.
+"""
