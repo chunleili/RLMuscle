@@ -38,6 +38,7 @@ DEFAULT_CONFIG = DemoConfig()
 
 def _create_parser() -> argparse.ArgumentParser:
     parser = newton.examples.create_parser()
+    parser.set_defaults(output_path="output/minimal_usd_import.anim.usda")
     parser.add_argument(
         "--usd-path",
         type=str,
@@ -51,18 +52,18 @@ def _create_parser() -> argparse.ArgumentParser:
         help="USD prim path to load.",
     )
     parser.add_argument(
-        "--use_my_usd_io",
-        "--use-my-usd-io",
+        "--use_layered_usd",
+        "--use-layered-usd",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Use my usd io instead of newton's. It will edit the usd by layering, which is the authentic way to use USD. It cannot work with usd viewer but can work with gl or null viewer. It will reference the original USD location in absolute paths. So Moving either will make the reference broken. If you want to zip it or share it, consider using --copy_usd to copy the original USD to the output location.",
+        help="Use layered USD export instead of Newton's USD exporter. This writes edits into an overlay layer and requires --viewer gl or --viewer null. The output layer references the source USD by path. If you need a portable package, add --copy_usd to copy the source USD into the output directory.",
     )
     parser.add_argument(
         "--copy_usd",
         "--copy-usd",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Copy source USD instead of referencing. Use it along with --use_my_usd_io. Copying USD can be more robust when your share and move the original USD file to different locations, but it can be slower and consume more disk space. If on, the exporter will save two USD files: XXX.edit.usda and XXX.usda. The .edit.usda is the layered file that references the copied .usd and contains the edits. The .usd is the copied file that has the same content as the original USD at the time of export but without any edits.",
+        help="Copy source USD instead of only referencing it. Use with --use_layered_usd. When enabled, the exporter writes the layered .anim.usda output and also copies the source USD beside it.",
     )
     return parser
 
@@ -77,19 +78,19 @@ class Example:
         self.cfg = cfg
         self.usd_path = args.usd_path
         self.usd_root_path = args.usd_root_path
-        self.output_path = str(getattr(args, "output_path", "output.usd"))
+        self.output_path = str(getattr(args, "output_path", "output/minimal_usd_import.anim.usda"))
 
-        self._use_my_usd_io = bool(getattr(args, "use_my_usd_io", False))
+        self._use_layered_usd = bool(getattr(args, "use_layered_usd", False))
         self._copy_usd = bool(getattr(args, "copy_usd", False))
         self._export_status: str = ""
         self._custom_usd_exporter: LayeredUsdExporter | None = None
         self._export_frame_num = 0
 
-        if self._use_my_usd_io:
+        if self._use_layered_usd:
             if not is_usd_path(self.usd_path):
-                raise ValueError("--use_my_usd_io requires --usd-path to be a USD file.")
+                raise ValueError("--use_layered_usd requires --usd-path to be a USD file.")
             if str(getattr(args, "viewer", "")).lower() == "usd":
-                raise ValueError("--use_my_usd_io cannot be combined with --viewer usd. Use --viewer gl or --viewer null.")
+                raise ValueError("--use_layered_usd cannot be combined with --viewer usd. Use --viewer gl or --viewer null.")
 
         self.model_center_shift = np.zeros(3, dtype=np.float32)
         self._activation_demo_value = 0.0
@@ -127,7 +128,7 @@ class Example:
         self._init_custom_usd_exporter()
 
     def _init_custom_usd_exporter(self) -> None:
-        if not self._use_my_usd_io:
+        if not self._use_layered_usd:
             return
         self._custom_usd_exporter = LayeredUsdExporter(
             source_usd_path=self.usd_path,
@@ -135,7 +136,7 @@ class Example:
             copy_usd=self._copy_usd,
         )
         self._export_status = (
-            f"my_usd_io enabled, output={self._custom_usd_exporter.output_path}, "
+            f"layered_usd enabled, output={self._custom_usd_exporter.output_path}, "
             f"copy_usd={self._copy_usd}"
         )
 
@@ -233,7 +234,7 @@ class Example:
 
         stats = self._custom_usd_exporter.write_frame(self._export_frame_num, mesh_colors)
         self._export_status = (
-            f"my_usd_io frame={self._export_frame_num}, written={stats['written']}, missing={stats['missing']}"
+            f"layered_usd frame={self._export_frame_num}, written={stats['written']}, missing={stats['missing']}"
         )
         self._export_frame_num += 1
 
@@ -277,12 +278,12 @@ class Example:
         ui.text(f"mesh_count={self.usd_mesh_count}")
 
         if self._custom_usd_exporter is not None:
-            ui.text("my_usd_io=enabled")
+            ui.text("layered_usd=enabled")
             _text(f"output_path={self.output_path}")
             if ui.button("Save USD Layer"):
                 self._save_custom_export()
                 if self._export_status:
-                    print(self._export_status)
+                    print(self._export_status+f" frame 0-{self._export_frame_num}")
             if self._export_status:
                 _text(self._export_status)
 

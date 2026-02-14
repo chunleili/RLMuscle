@@ -18,8 +18,8 @@ def _create_parser():
     parser = _create_import_parser()
     parser.set_defaults(
         viewer="gl",
-        output_path="output/minimal_usd_export.usda",
-        use_my_usd_io=True,
+        output_path="output/minimal_usd_export.anim.usda",
+        use_layered_usd=True,
         copy_usd=False,
     )
     return parser
@@ -63,9 +63,9 @@ def main():
     parser = _create_parser()
     viewer, args = newton.examples.init(parser)
     viewer_name = str(getattr(args, "viewer", "")).lower()
-    if args.use_my_usd_io and viewer_name == "usd":
+    if args.use_layered_usd and viewer_name == "usd":
         raise ValueError(
-            "--use_my_usd_io cannot be combined with --viewer usd in example_minimal_usd_export. "
+            "--use_layered_usd cannot be combined with --viewer usd in example_minimal_usd_export. "
             "Use --viewer gl or --viewer null."
         )
 
