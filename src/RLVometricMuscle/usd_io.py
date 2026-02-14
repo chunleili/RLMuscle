@@ -6,6 +6,7 @@ Public API:
 - `UsdIO`: one object for read + layered edit operations.
 """
 
+import argparse
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -16,6 +17,41 @@ ColorRgb = tuple[float, float, float]
 PrimvarsMap = dict[str, np.ndarray | None]
 _MeshTuple = tuple[str, np.ndarray, np.ndarray, ColorRgb, PrimvarsMap]
 _USE_NEWTON_USD_GET_MESH = True
+
+
+def add_usd_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    usd_path: str,
+    usd_root_path: str = "/",
+    output_path: str,
+) -> argparse.ArgumentParser:
+    """Add shared USD-layering CLI arguments for teaching examples."""
+
+    parser.set_defaults(output_path=output_path)
+    parser.add_argument("--usd-path", 
+                        type=str, 
+                        default=usd_path,
+                        help="Path to USD file.")
+    parser.add_argument("--usd-root-path", 
+                        type=str,
+                        default=usd_root_path,
+                        help="USD prim path to load.")
+    parser.add_argument(
+        "--use_layered_usd",
+        "--use-layered-usd",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write runtime edits into a layered USD file.",
+    )
+    parser.add_argument(
+        "--copy_usd",
+        "--copy-usd",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Copy source USD to output directory before writing layered edits.",
+    )
+    return parser
 
 
 @dataclass(frozen=True)
@@ -523,7 +559,7 @@ def _as_vec3(value, Gf):
 class _UsdLayerEditor:
     """Layered USD editor with simple prim/property editing methods."""
 
-    def __init__(self, source_usd_path: str, output_path: str, copy_usd: bool = False):
+    def __init__(self, source_usd_path: str, output_path: str, copy_usd: bool = True):
         try:
             from pxr import Gf, Sdf, Usd, UsdGeom
         except ImportError as exc:
@@ -596,9 +632,9 @@ class _UsdLayerEditor:
     def _init_metadata_scope(self) -> None:
         default_prim = self.stage.GetDefaultPrim()
         if default_prim is not None and default_prim.IsValid():
-            scope_path = f"{default_prim.GetPath()}/rlmuscle_export"
+            scope_path = f"{default_prim.GetPath()}/anim"
         else:
-            scope_path = "/rlmuscle_export"
+            scope_path = "/anim"
         scope = self.stage.DefinePrim(scope_path, "Scope")
         self._frame_attr = scope.CreateAttribute("frameNum", self.Sdf.ValueTypeNames.Int, custom=True)
         src_attr = scope.CreateAttribute("sourceUsd", self.Sdf.ValueTypeNames.String, custom=True)
@@ -861,8 +897,8 @@ class UsdIO:
         focus_points = usd.focus_points
 
         with usd.start("output/bicep.anim.usda", copy_usd=True):
-            usd.add_prim("/rlmuscle_export/debug", "Scope")
-            usd.set_custom("/rlmuscle_export/debug", "note", "hello")
+            usd.add_prim("/anim/debug", "Scope")
+            usd.set_custom("/anim/debug", "note", "hello")
             usd.set_runtime("activation", 0.5, frame=0)
             usd.set_primvar("/character/muscle/bicep", "displayColor", [[1.0, 0.2, 0.2]], value_type="Color3fArray")
             usd.set_color("/character/muscle/bicep", (1.0, 0.2, 0.2), frame=0)
@@ -872,7 +908,7 @@ class UsdIO:
     - meshes / mesh_count / focus_points / base_colors / center_shift: loaded data.
 
     Layer editing API:
-    - start(output_path, copy_usd=False): open a layered output stage.
+    - start(output_path, copy_usd=True): open a layered output stage.
     - add_prim(path, prim_type="Scope")
     - remove_prim(path)
     - set_custom(path, name, value, ...)
@@ -899,7 +935,7 @@ class UsdIO:
         self.up_axis = _resolve_up_axis_index(up_axis, default=2)
         self._cached: UsdMeshSet | None = None
         self._editor: _UsdLayerEditor | None = None
-        self._runtime_prim = "/rlmuscle_export/runtime"
+        self._runtime_prim = "/anim/runtime"
 
         if not os.path.isfile(self.source_usd_path):
             raise FileNotFoundError(f"USD source file not found: {self.source_usd_path}")
@@ -961,8 +997,8 @@ class UsdIO:
         self,
         output_path: str | None = None,
         *,
-        copy_usd: bool = False,
-        runtime_prim: str = "/rlmuscle_export/runtime",
+        copy_usd: bool = True,
+        runtime_prim: str = "/anim/runtime",
     ) -> "UsdIO":
         if output_path is None:
             output_path = self.default_anim_path(self.source_usd_path)
@@ -1098,4 +1134,5 @@ class UsdIO:
 
 __all__ = [
     "UsdIO",
+    "add_usd_arguments",
 ]

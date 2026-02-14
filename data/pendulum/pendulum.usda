@@ -1,0 +1,42 @@
+#usda 1.0
+(
+    upAxis = "Z"
+    metersPerUnit = 1.0
+)
+
+# Pendulum geometry matching Newton rigid-body setup:
+#   parent_xform: translate (0,0,3), rotate Z -90 deg
+#   child_xform:  translate (-hx,0,0) => joint at left end of rod
+#   box half-extents: (1.0, 0.1, 0.1) => full size 2x0.2x0.2
+#   revolute axis: Y
+
+def Xform "pendulum"
+{
+    # Fixed: joint anchor position + base rotation (matches Newton parent_xform)
+    float3 xformOp:translate = (0, 0, 3)
+    float3 xformOp:rotateXYZ = (0, 0, -90)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+
+    def Sphere "pivot"
+    {
+        double radius = 0.08
+        color3f[] primvars:displayColor = [(0.9, 0.9, 0.2)]
+    }
+
+    def Xform "joint0"
+    {
+        # Animated: revolute joint angle around Y (written per-frame by example_dynamics)
+        float xformOp:rotateY = 0
+        uniform token[] xformOpOrder = ["xformOp:rotateY"]
+
+        def Cube "rod"
+        {
+            double size = 2.0
+            color3f[] primvars:displayColor = [(0.4, 0.6, 0.9)]
+            # Offset so joint is at left end; scale to match box half-extents
+            float3 xformOp:translate = (1, 0, 0)
+            float3 xformOp:scale = (1, 0.1, 0.1)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
+}

@@ -22,7 +22,7 @@ import warp as wp
 
 import newton
 import newton.examples
-from RLVometricMuscle.usd_io import UsdIO
+from RLVometricMuscle.usd_io import UsdIO, add_usd_arguments
 from RLVometricMuscle.visualization import ViewerVisualization, viewer_visual_config_from
 
 
@@ -51,22 +51,10 @@ DEFAULT_CONFIG = DemoConfig()
 def _create_parser() -> argparse.ArgumentParser:
     """Create CLI arguments used by `newton.examples`."""
     parser = newton.examples.create_parser()
-    parser.set_defaults(output_path="output/example_usd_io.anim.usda")
-    parser.add_argument("--usd-path", type=str, default="data/muscle/model/bicep.usd", help="Path to USD file.")
-    parser.add_argument("--usd-root-path", type=str, default="/", help="USD prim path to load.")
-    parser.add_argument(
-        "--use_layered_usd",
-        "--use-layered-usd",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Write runtime edits into a layered USD file (requires --viewer gl/null).",
-    )
-    parser.add_argument(
-        "--copy_usd",
-        "--copy-usd",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Copy source USD to output directory before writing layered edits.",
+    add_usd_arguments(
+        parser,
+        usd_path="data/muscle/model/bicep.usd",
+        output_path="output/example_usd_io.anim.usda",
     )
     return parser
 

@@ -61,15 +61,15 @@ focus_points = usd.focus_points
 
 # write layered edits + edit prim/custom properties
 with usd.start("output/my_demo.anim.usda", copy_usd=True):
-    usd.add_prim("/rlmuscle_export/debug", "Scope")                 # add prim
-    usd.set_custom("/rlmuscle_export/debug", "foo", 1)              # add/update custom property
+    usd.add_prim("/anim/debug", "Scope")                 # add prim
+    usd.set_custom("/anim/debug", "foo", 1)              # add/update custom property
     usd.set_primvar(                                                 # generic primvar edit
         "/character/muscle/bicep", "displayColor", [[0.8, 0.2, 0.2]],
         value_type="Color3fArray", interpolation="constant", frame=0
     )
     usd.set_runtime("phase", 0.5, frame=0)                          # write runtime property
     usd.set_color("/character/muscle/bicep", (0.8, 0.2, 0.2), frame=0)
-    usd.remove_prim("/rlmuscle_export/to_delete")                   # delete prim
+    usd.remove_prim("/anim/to_delete")                   # delete prim
 ```
 
 ### Headless mode

@@ -74,7 +74,8 @@ class SolverVolumetricMuscle:
             if muscle_act.size > 0:
                 self.core.activation.fill(float(muscle_act[0]))
 
-        self.core.step()
+        # TODO: enable muscle simulation when particle data is wired up
+        # self.core.step()
 
         if state_out.particle_q is not None and state_out.particle_qd is not None:
             state_out.particle_q.assign(wp.array(self.core.pos.to_numpy(), dtype=wp.vec3, device=self.model.device))
