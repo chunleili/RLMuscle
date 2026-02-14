@@ -62,7 +62,7 @@ def _create_parser() -> argparse.ArgumentParser:
         "--copy_usd",
         "--copy-usd",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
         help="Copy source USD instead of only referencing it. Use with --use_layered_usd. When enabled, the exporter writes the layered .anim.usda output and also copies the source USD beside it.",
     )
     return parser

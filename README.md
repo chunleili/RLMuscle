@@ -25,5 +25,19 @@ uv run main.py
 - reinforcement learning
     - [ ] Implement a simple RL task
 
+
+# Note
+
+## visualization & IO
+
+### Layered USD
+Use **"--use-layered-usd"** to enable the layered USD export. This is better than the newton's usd viewer because it just adding layers on top of the original usd file, which is the correct way to use usd. So it is incompatible with the "--viewer usd" and has to be used with usd as input. 
+
+You can also specify "--copy-usd" to copy the input usd file to the output directory, which is useful when you want to move and share the usd since the usd use relative path to reference the input usd file.
+
+### Headless mode
+ You can run the example in headless mode by adding "--use-layered-usd --headless --num-frames 100" to the command. It will automatically save the layered usd file after 100 frames.
+
 # Caution
-- up-axis: USD and Houdini use Y up by default. But Newton uses Z up by default. See [here](https://newton-physics.github.io/newton/latest/concepts/conventions.html#coordinate-system-and-up-axis-conventions) for newton's convention. We use transfer the asset to Z up when loading it (turn off by switch off "y_up_to_z_up"). Be careful when importing other assets.
+## up-axis
+ USD and Houdini use Y up by default. But Newton uses **Z up** by default. See [here](https://newton-physics.github.io/newton/latest/concepts/conventions.html#coordinate-system-and-up-axis-conventions) for newton's convention. We will **transfer the asset to Z up when loading it** (turn off by switching off "y_up_to_z_up"). Be careful when importing other assets.
