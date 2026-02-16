@@ -3,6 +3,14 @@
 It is based on NVIDIA's [Newton](https://github.com/newton-physics/newton) physical engine, but with [my own fork](https://github.com/chunleili/newton) so there might be some differences. 
 
 # Run
+Firstly, git clone this repo and [my fork](https://github.com/chunleili/newton) of newton. 
+
+```
+git clone https://github.com/chunleili/RLMuscle
+cd RLMuscle
+git clone https://github.com/chunleili/newton external/newton
+```
+
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/). 
 
 Then install the package with:
@@ -41,36 +49,6 @@ Use **"--use-layered-usd"** to enable the layered USD export. This is better tha
 
 You can also specify "--copy-usd" to copy the input usd file to the output directory, which is useful when you want to move and share the usd since the usd use relative path to reference the input usd file.
 
-### USD IO API (Minimal)
-Use the minimal API in `RLVometricMuscle.usd_io`:
-
-```python
-from RLVometricMuscle.usd_io import UsdIO
-
-# read meshes
-usd = UsdIO(
-    "data/muscle/model/bicep.usd",
-    root_path="/",
-    y_up_to_z_up=True,
-    center_model=True,
-    up_axis=2,
-)
-usd.read()
-meshes = usd.meshes
-focus_points = usd.focus_points
-
-# write layered edits + edit prim/custom properties
-with usd.start("output/my_demo.anim.usda", copy_usd=True):
-    usd.add_prim("/anim/debug", "Scope")                 # add prim
-    usd.set_custom("/anim/debug", "foo", 1)              # add/update custom property
-    usd.set_primvar(                                                 # generic primvar edit
-        "/character/muscle/bicep", "displayColor", [[0.8, 0.2, 0.2]],
-        value_type="Color3fArray", interpolation="constant", frame=0
-    )
-    usd.set_runtime("phase", 0.5, frame=0)                          # write runtime property
-    usd.set_color("/character/muscle/bicep", (0.8, 0.2, 0.2), frame=0)
-    usd.remove_prim("/anim/to_delete")                   # delete prim
-```
 
 ### Headless mode
 You can run the USD IO example in headless mode:

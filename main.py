@@ -1,6 +1,6 @@
 
 def main():
-    example_to_run = "example_dynamics"  # change this to run a different example
+    example_to_run = "example_couple"  # change this to run a different example
 
     if example_to_run == "minimal_joint":
         from examples import example_minimal_joint
@@ -14,6 +14,9 @@ def main():
     elif example_to_run == "example_dynamics":
         from examples import example_dynamics
         example_dynamics.main()
+    elif example_to_run == "example_couple":
+        from examples import example_couple
+        example_couple.main()
 
 if __name__ == "__main__":
     main()
