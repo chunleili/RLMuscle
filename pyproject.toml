@@ -23,10 +23,3 @@ viewer = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/RLVometricMuscle"]
 
-[tool.uv.workspace]
-members = [
-    "external/newton",
-]
-
-[tool.uv.sources]
-newton = { workspace = true, editable = true }

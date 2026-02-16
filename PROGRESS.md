@@ -20,6 +20,25 @@
 - 无头模式 30 帧运行无报错，不再加载 Taichi / bicep.geo。
 - `output/example_dynamics.anim.usda` 包含逐帧 `joint_angle`、`motor`、`body_pos_xyz`。
 
+### 运行验证（本轮）
+- 迭代 1：执行 `examples/example_dynamics.py`（`--viewer null --headless --num-frames 30 --use-layered-usd`）失败，报错：`ModelBuilder` 不存在 `add_link`（当前 `newton==0.1.3` 仅有 `add_body` 路径）。
+- 迭代 2：转测上一个 commit 里新增的 `examples/example_couple.py`（30 帧，无头 + layered USD）运行通过，产出 `output/example_couple_30.anim.usda`。
+- 迭代 3：将 `example_couple` 扩展到 120 帧回归，运行通过，产出 `output/example_couple_120.anim.usda`。
+- 对 USD 文件进行结构检查（`pxr.Usd`）：
+  - `example_couple_30.anim.usda` 与 `example_couple_120.anim.usda` 均包含 `/anim/runtime` 下 `joint_angle`、`muscle_activation`、`muscle_centroid_y` 三组 timeSamples。
+  - `over /pendulum/joint0` 的 `xformOp:rotateY.timeSamples` 与帧数一致（30/120）。
+  - 分层结构正确：`subLayers = [@pendulum.usda@]`，且输出目录存在 `output/pendulum.usda`。
+
+### 可能问题（已记录）
+- **API 兼容性回退**：`example_dynamics.py` 仍使用旧的 `newton` 构模 API（`add_link`），在当前环境不可运行。
+- **文档/进度与代码不一致**：当前 `example_dynamics.py` 只写出 `joint_angle` 和 `motor`，未实现 `PROGRESS.md` 中声明的 `body_pos_x/y/z` 输出。
+- **依赖声明问题**：`uv sync` 失败（`pyproject.toml` 中 `workspace=true` 与 `editable=true` 同时设置冲突），会影响一键复现实验环境。
+
+### 下一步
+- 将 `example_dynamics.py` 对齐 `newton==0.1.3` API（参考 `example_couple` 的 `add_body/add_articulation` 用法），先恢复可运行性。
+- 补齐或回滚 `body_pos_x/y/z` 的声明，保证“代码行为”和“PROGRESS/README 描述”一致。
+- 修复 `pyproject.toml` 的 `tool.uv.sources` 配置冲突，恢复 `uv sync` 可用，避免依赖安装路径分叉。
+
 ## example_couple
 
 ### 已完成
