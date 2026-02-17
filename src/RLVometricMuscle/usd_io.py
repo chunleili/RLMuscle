@@ -19,23 +19,24 @@ _MeshTuple = tuple[str, np.ndarray, np.ndarray, ColorRgb, PrimvarsMap]
 _USE_NEWTON_USD_GET_MESH = True
 
 
-def add_usd_arguments(
-    parser: argparse.ArgumentParser,
-    *,
+def usd_args(
     usd_path: str,
-    usd_root_path: str = "/",
-    output_path: str,
+    output_path: str = "output.usd",
+    parser: argparse.ArgumentParser | None = None,
 ) -> argparse.ArgumentParser:
     """Add shared USD-layering CLI arguments for teaching examples."""
+    if parser is None:
+        import newton.examples
+        parser = newton.examples.create_parser()
 
     parser.set_defaults(output_path=output_path)
     parser.add_argument("--usd-path", 
                         type=str, 
                         default=usd_path,
-                        help="Path to USD file.")
+                        help="data/muscle/model/bicep.usd")
     parser.add_argument("--usd-root-path", 
                         type=str,
-                        default=usd_root_path,
+                        default="/",
                         help="USD prim path to load.")
     parser.add_argument(
         "--use_layered_usd",

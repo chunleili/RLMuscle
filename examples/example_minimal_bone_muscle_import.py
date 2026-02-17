@@ -7,10 +7,7 @@ import warp as wp
 import newton
 import newton.examples
 from RLVometricMuscle.geo import Geo
-from RLVometricMuscle.visualization import (
-    ViewerVisualization,
-    viewer_visual_config_from,
-)
+from RLVometricMuscle.visualization import ViewerVisualization
 
 
 @dataclass(frozen=True)
@@ -284,17 +281,11 @@ class Example:
         self.state_0 = self.model.state()
 
     def _build_visualization(self) -> ViewerVisualization:
-        visual_cfg = viewer_visual_config_from(
-            self.cfg,
-            orbit_around_focus=True,
-        )
-        visuals = ViewerVisualization(viewer=self.viewer, config=visual_cfg)
-        visuals.setup(
+        return ViewerVisualization(
+            viewer=self.viewer,
             wide_points=self._all_points,
             focus_points=self._muscle_points,
-            origin_axis_length=self._origin_axis_length,
         )
-        return visuals
 
     def gui(self, ui):
         ui.text("visualization-only mode")

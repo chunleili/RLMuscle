@@ -20,16 +20,11 @@ import warp as wp
 import newton
 import newton.examples
 from newton.solvers import SolverFeatherstone
-from RLVometricMuscle.usd_io import UsdIO, add_usd_arguments
+from RLVometricMuscle.usd_io import UsdIO, usd_args
 
 
 def _create_parser() -> argparse.ArgumentParser:
-    parser = newton.examples.create_parser()
-    add_usd_arguments(
-        parser,
-        usd_path="data/pendulum/pendulum.usda",
-        output_path="output/example_dynamics.anim.usda",
-    )
+    parser = usd_args()
     return parser
 
 
