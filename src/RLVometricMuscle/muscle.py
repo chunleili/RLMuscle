@@ -12,9 +12,10 @@ import taichi as ti
 @dataclass
 class SimConfig:
     name: str = "MuscleSim"
-    geo_path: Path | None = Path("data/muscle/model/bicep.geo")
-    bone_geo_path: Path | None = Path("data/muscle/model/bicep_bone.geo")
-    bone_animation_path: Path | None = None
+    geo_path: Path = Path("data/muscle/model/bicep.geo")
+    bone_geo_path: Path = Path("data/muscle/model/bicep_bone.geo")
+    ground_mesh_path: Path = Path("data/muscle/model/ground.obj")
+    coord_mesh_path: Path = Path("data/muscle/model/coord.obj")
     dt: float = 1e-3
     nsteps: int = 400
     num_substeps: int = 10  # 每个主时间步的子时间步数，用于提高稳定性
@@ -81,19 +82,7 @@ def constraint_alias(name: str) -> str:
 
 
 def pick_arch(name: str):
-    import sys
     name = name.lower()
-    
-    # On Windows, CUDA backend with LLVM can cause linker issues
-    # Default to CPU backend on Windows unless explicitly requested
-    if sys.platform == "win32" and name == "cuda":
-        try:
-            # Try CUDA first, but will fall back if it fails during init
-            return ti.cuda
-        except:
-            print("Warning: CUDA not available on Windows, using CPU backend")
-            return ti.cpu
-    
     if name == "vulkan":
         return ti.vulkan
     if name == "cpu":
@@ -109,14 +98,13 @@ def load_config(path: Path) -> SimConfig:
 
     # Use dataclass field list so defaults live in SimConfig and we only override provided keys
     from dataclasses import fields
-    path_fields = {"geo_path", "bone_geo_path", "bone_animation_path"}
     kwargs = {}
     for fld in fields(SimConfig):
         name = fld.name
         if name in data:
-            if name in path_fields:
-                value = data[name]
-                kwargs[name] = Path(value) if value else None
+            # special-case Path field
+            if name == "geo_path" or name == "bone_geo_path":  
+                kwargs[name] = Path(data[name])
             else:
                 kwargs[name] = data[name]
 
@@ -149,7 +137,7 @@ def load_mesh_tetgen(path):
     return positions, tets, None, None, None
 
 def load_mesh_geo(path: Path):
-    from .geo import Geo
+    from geo import Geo
     geo = Geo(str(path))
     positions = np.asarray(geo.positions, dtype=np.float32)
     tets = np.asarray(geo.vert, dtype=np.int32)
@@ -193,74 +181,6 @@ def load_mesh(path: Path):
         return load_mesh_geo(path)
 
 
-def load_bone_animation(zip_path: Path):
-    """从压缩包中读取每帧骨骼变换。
-
-    返回值:
-        dict[str, np.ndarray]: key 为 muscle_id，value 为形状 (num_frames, 4, 4) 的矩阵序列。
-    """
-
-    def pair_list_to_dict(items):
-        if not isinstance(items, list):
-            return {}
-        return {items[i]: items[i + 1] for i in range(0, len(items), 2)}
-
-    if not Path(zip_path).exists():
-        raise FileNotFoundError(f"Bone animation zip not found: {zip_path}")
-
-    xform_lists = {}
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        geo_files = [name for name in zf.namelist() if name.lower().endswith(".geo")]
-        geo_files = sorted(
-            geo_files,
-            key=lambda name: (0, int(Path(name).stem)) if Path(name).stem.isdigit() else (1, name),
-        )
-
-        for geo_name in geo_files:
-            with zf.open(geo_name) as fb, TextIOWrapper(fb, encoding="utf-8") as f:
-                raw = json.load(f)
-
-            root = pair_list_to_dict(raw)
-            attrs = pair_list_to_dict(root.get("attributes", []))
-            point_attrs = attrs.get("pointattributes", [])
-
-            muscle_ids = None
-            transforms = None
-            for attr_pair in point_attrs:
-                meta = pair_list_to_dict(attr_pair[0])
-                data = pair_list_to_dict(attr_pair[1])
-                name = meta.get("name")
-
-                if name == "muscle_id":
-                    strings = data.get("strings", [])
-                    idx_info = pair_list_to_dict(data.get("indices", []))
-                    arrays = idx_info.get("arrays") or []
-                    if arrays:
-                        muscle_ids = [strings[idx] for idx in arrays[0]]
-                elif name == "transform":
-                    values = pair_list_to_dict(data.get("values", []))
-                    tuples = values.get("tuples") or []
-                    transforms = [np.array(t, dtype=np.float32).reshape(4, 4) for t in tuples]
-
-            if muscle_ids is None or transforms is None:
-                raise ValueError(f"Missing muscle_id or transform in {geo_name}")
-
-            if len(muscle_ids) != len(transforms):
-                raise ValueError(f"muscle_id count != transform count in {geo_name}")
-
-            if not xform_lists:
-                for mid in muscle_ids:
-                    xform_lists[mid] = []
-
-            missing = set(muscle_ids) ^ set(xform_lists.keys())
-            if missing:
-                raise ValueError(f"Inconsistent muscle_id set in {geo_name}: {missing}")
-
-            for mid, tf in zip(muscle_ids, transforms):
-                xform_lists[mid].append(tf)
-
-    xform = {mid: np.stack(seq, axis=0) for mid, seq in xform_lists.items()}
-    return xform
 
 
 def build_surface_tris(tets: np.ndarray) -> np.ndarray:
@@ -284,7 +204,7 @@ def build_surface_tris(tets: np.ndarray) -> np.ndarray:
     return np.asarray(surface, dtype=np.int32)
 
 
-def read_auxiliary_meshes():
+def read_auxiliary_meshes(ground_path="data/model/ground.obj", coord_path="data/model/coord.obj"):
     """
     读取辅助网格，包括地面和坐标系。
 
@@ -305,8 +225,8 @@ def read_auxiliary_meshes():
         mesh.vertices += shift
         return mesh.vertices, mesh.faces
 
-    ground_, ground_indices_ = read_mesh("data/model/ground.obj")
-    coord_, coord_indices_ = read_mesh("data/model/coord.obj")
+    ground_, ground_indices_ = read_mesh(ground_path)
+    coord_, coord_indices_ = read_mesh(coord_path)
     ground_indices_ = ground_indices_.flatten()
     coord_indices_ = coord_indices_.flatten()
     ground = ti.Vector.field(3, dtype=ti.f32, shape=ground_.shape[0])
@@ -485,18 +405,8 @@ def get_inv_mass(idx: ti.i32, mass: ti.template(), stopped: ti.template())-> ti.
 @ti.data_oriented
 class MuscleSim:   
     def __init__(self, cfg: SimConfig):
-        import sys
         self.cfg = cfg
-        
-        # On Windows, use CPU backend to avoid LLVM linker issues
-        if sys.platform == "win32" and cfg.arch.lower() == "cuda":
-            print("Note: Using CPU backend on Windows to avoid LLVM compatibility issues.")
-            print("To use CUDA, please ensure you have a compatible CUDA toolkit installed.")
-            arch = ti.cpu
-        else:
-            arch = pick_arch(cfg.arch)
-        
-        ti.init(arch=arch, kernel_profiler=False, default_fp=ti.f32)
+        ti.init(arch=pick_arch(cfg.arch))
 
         self.constraint_configs = self.cfg.constraints if self.cfg.constraints else []
 
@@ -508,12 +418,6 @@ class MuscleSim:
 
         print("Loading bone mesh:", cfg.bone_geo_path)
         self.load_bone_geo(cfg.bone_geo_path)
-        print("Loading bone animation:", cfg.bone_animation_path)
-        if cfg.bone_animation_path and Path(cfg.bone_animation_path).exists():
-            self.bone_xform = load_bone_animation(cfg.bone_animation_path)
-        else:
-            self.bone_xform = {}
-            print("Bone animation not found. Running with static bone geometry.")
 
         print("Allocating&initializing fields...")
         self._allocate_fields()
@@ -523,11 +427,14 @@ class MuscleSim:
         self.build_constraints()
             
         self.use_jacobi = False
-        self.use_jacobi = True # Default to True to avoid race conditions in parallel solver
         
         print("Initializing visualization...")
         print("Renderer mode:", cfg.render_mode)
-        self._init_render()
+        self.vis = Visualizer(cfg, self)
+        # 生成肌肉顶点颜色
+        self.vis._generate_muscle_colors()
+        # 为 attach 约束准备可视化数据
+        self.vis._init_attach_vis(self.attach_constraints)
         print("All initialization done.")
 
 
@@ -675,7 +582,7 @@ class MuscleSim:
         constraints = []
         pin_mask = None
         try:
-            from .geo import Geo
+            from geo import Geo
             geo = Geo(str(self.cfg.geo_path))
             if hasattr(geo, "gluetoanimation"):
                 pin_mask = np.asarray(geo.gluetoanimation, dtype=np.float32)
@@ -744,11 +651,8 @@ class MuscleSim:
 
 
     def load_bone_geo(self, target_path):
-        if target_path is None:
-            return None, np.zeros((0, 3), dtype=np.float32)
-
         if not hasattr(self, 'bone_pos_field') and Path(target_path).exists():
-            from .geo import Geo
+            from geo import Geo
             self.bone_geo = Geo(target_path)
             if len(self.bone_geo.positions) == 0:
                 print(f"Warning: No vertices found in {target_path}")
@@ -810,64 +714,8 @@ class MuscleSim:
         else: # file does not exist or is empty
             return None, np.zeros((0,3), dtype=np.float32)
 
-    def _generate_muscle_id_colors(self, muscle_ids):
-        """为每个 muscle_id 生成独特的颜色"""
-        import colorsys
-        colors = {}
-        n = len(muscle_ids)
-        for i, mid in enumerate(muscle_ids):
-            # 使用 HSV 色彩空间生成均匀分布的颜色
-            hue = i / max(n, 1)
-            saturation = 0.7 + (i % 3) * 0.1  # 0.7-0.9 之间
-            value = 0.8 + (i % 2) * 0.15  # 0.8-0.95 之间
-            rgb = colorsys.hsv_to_rgb(hue, saturation, value)
-            colors[mid] = np.array(rgb, dtype=np.float32)
-        return colors
 
-    def _generate_muscle_colors(self):
-        """根据 cfg.color_muscles 生成肌肉顶点颜色"""
-        self.muscle_vertex_colors = None
-        self.muscle_colors_field = None
-        
-        if self.cfg.color_muscles is None:
-            return
-        
-        if self.cfg.color_muscles == "muscle_id":
-            # 按 muscle_id 着色
-            if hasattr(self.geo, 'pointattr') and 'muscle_id' in self.geo.pointattr:
-                muscle_ids = self.geo.pointattr['muscle_id']
-                unique_ids = sorted(set(muscle_ids))
-                id_colors = self._generate_muscle_id_colors(unique_ids)
-                
-                self.muscle_vertex_colors = np.zeros((self.n_verts, 3), dtype=np.float32)
-                for v_idx, mid in enumerate(muscle_ids):
-                    self.muscle_vertex_colors[v_idx] = id_colors[mid]
-                
-                print(f"Muscle coloring by muscle_id enabled ({len(unique_ids)} groups)")
-            else:
-                print("Warning: muscle_id not found in geometry, cannot color by muscle_id")
-        
-        elif self.cfg.color_muscles == "tendonmask":
-            # 按 tendonmask 着色（白色=肌腱，红色=肌肉腹部）
-            if self.v_tendonmask_np is not None:
-                self.muscle_vertex_colors = np.zeros((self.n_verts, 3), dtype=np.float32)
-                for v_idx in range(self.n_verts):
-                    mask_value = self.v_tendonmask_np[v_idx]
-                    # mask_value: 0=肌肉, 1=肌腱
-                    # 插值颜色：红色(0.9,0.1,0.1) -> 白色(1.0,1.0,1.0)
-                    r = 0.9 + mask_value * 0.1
-                    g = 0.1 + mask_value * 0.9
-                    b = 0.1 + mask_value * 0.9
-                    self.muscle_vertex_colors[v_idx] = [r, g, b]
-                
-                print("Muscle coloring by tendonmask enabled")
-            else:
-                print("Warning: tendonmask not found in geometry, cannot color by tendonmask")
-        
-        # 创建 Taichi field
-        if self.muscle_vertex_colors is not None:
-            self.muscle_colors_field = ti.Vector.field(3, dtype=ti.f32, shape=self.n_verts)
-            self.muscle_colors_field.from_numpy(self.muscle_vertex_colors)
+
 
     def create_attach_constraints(self, params):
         """
@@ -946,9 +794,6 @@ class MuscleSim:
                 compressionstiffness=-1.0,
             )
             constraints.append(c)
-            if not hasattr(self, 'attach_constraints'):
-                self.attach_constraints = []
-            self.attach_constraints.append(c)
         
         return constraints
 
@@ -1143,6 +988,7 @@ class MuscleSim:
         print("Building constraints...")
         constraint_struct = ti.types.struct(
             type=ti.i32,
+            cidx=ti.i32, # constraint index
             pts=ti.types.vector(4, ti.i32),
             stiffness=ti.f32,
             dampingratio=ti.f32,
@@ -1199,35 +1045,13 @@ class MuscleSim:
         if n_cons > 0:
             self.cons = constraint_struct.field(shape=n_cons)
             for i, c in enumerate(all_constraints):
+                c['cidx'] = i  # Add constraint index to each constraint
                 self.cons[i] = c
         else:
             self.cons = constraint_struct.field(shape=0)
             self.raw_constraints = []
 
         print(f"Built {self.cons.shape[0]} constraints total.")
-        
-        # Prepare visualization for attach constraints
-        self._prepare_attach_visualization(all_constraints)
-
-
-    def _prepare_attach_visualization(self, all_constraints):
-        """
-        为 attach / attachnormal 约束准备可视化数据。
-        """
-        attach_indices = []
-        for i, c in enumerate(all_constraints):
-            ctype = c['type']
-            if ctype == ATTACH:
-                attach_indices.append(i)
-            elif ctype == DISTANCELINE:
-                attach_indices.append(i)
-        
-        self.num_attach_lines = len(attach_indices)
-        if self.num_attach_lines > 0:
-            self.attach_cons_indices = ti.field(dtype=ti.i32, shape=self.num_attach_lines)
-            self.attach_cons_indices.from_numpy(np.array(attach_indices, dtype=np.int32))
-            # lines_vertices 存储 2 个端点的列表，shape = (num_lines * 2)
-            self.attach_lines_vertices = ti.Vector.field(3, dtype=ti.f32, shape=self.num_attach_lines * 2)
 
 
     def _init_fields(self):
@@ -1248,9 +1072,6 @@ class MuscleSim:
 
         self.activation.fill(0.0)
         self.total_rest_volume = ti.field(dtype=ti.f32, shape=())
-        
-        # 生成肌肉顶点颜色
-        self._generate_muscle_colors()
         
         print("Initialized fields done.")
 
@@ -1772,11 +1593,6 @@ class MuscleSim:
                     pos[pts[1]] +=   dlambda * inv_masses[1] * grad1
                     pos[pts[2]] +=   dlambda * inv_masses[2] * grad2
                     pos[pts[3]] +=   dlambda * inv_masses[3] * grad3
-                    # Apply GS (Atomic add required for parallel execution safety)
-                    ti.atomic_add(pos[pts[0]], dlambda * inv_masses[0] * grad0)
-                    ti.atomic_add(pos[pts[1]], dlambda * inv_masses[1] * grad1)
-                    ti.atomic_add(pos[pts[2]], dlambda * inv_masses[2] * grad2)
-                    ti.atomic_add(pos[pts[3]], dlambda * inv_masses[3] * grad3)
                     cons[cidx].L[loff] = cons[cidx].L[loff] + dlambda
 
 
@@ -1927,10 +1743,6 @@ class MuscleSim:
                 pos[pts[1]] +=  dL * inv_masses[1] * grad1
                 pos[pts[2]] +=  dL * inv_masses[2] * grad2
                 pos[pts[3]] +=  dL * inv_masses[3] * grad3
-                ti.atomic_add(pos[pts[0]], dL * inv_masses[0] * grad0)
-                ti.atomic_add(pos[pts[1]], dL * inv_masses[1] * grad1)
-                ti.atomic_add(pos[pts[2]], dL * inv_masses[2] * grad2)
-                ti.atomic_add(pos[pts[3]], dL * inv_masses[3] * grad3)
 
                 cons[cidx].L[0] += dL
 
@@ -2081,8 +1893,6 @@ class MuscleSim:
                     else:
                         pos[pt0] += invmass0 * dp
                         pos[pt1] -= invmass1 * dp
-                        ti.atomic_add(pos[pt0], invmass0 * dp)
-                        ti.atomic_add(pos[pt1], -invmass1 * dp)
                         cons[cidx].L[loff] = cons[cidx].L[loff] + dL
 
     @ti.func
@@ -2197,9 +2007,6 @@ class MuscleSim:
                                 pos[pt0] += dL * invmass0 * grad0
                                 pos[pt1] += dL * invmass1 * grad1
                                 pos[pt2] += dL * invmass2 * grad2
-                                ti.atomic_add(pos[pt0], dL * invmass0 * grad0)
-                                ti.atomic_add(pos[pt1], dL * invmass1 * grad1)
-                                ti.atomic_add(pos[pt2], dL * invmass2 * grad2)
                                 cons[cidx].L[loff] = cons[cidx].L[loff] + dL
 
     @ti.func
@@ -2298,10 +2105,6 @@ class MuscleSim:
                     pos[pt1] += dL * invmass1 * grad1
                     pos[pt2] += dL * invmass2 * grad2
                     pos[pt3] += dL * invmass3 * grad3
-                    ti.atomic_add(pos[pt0], dL * invmass0 * grad0)
-                    ti.atomic_add(pos[pt1], dL * invmass1 * grad1)
-                    ti.atomic_add(pos[pt2], dL * invmass2 * grad2)
-                    ti.atomic_add(pos[pt3], dL * invmass3 * grad3)
                     cons[cidx].L[0] += dL
 
     def step(self):
@@ -2327,19 +2130,25 @@ class MuscleSim:
     def run(self):  
         self.step_cnt = 1
         while self.step_cnt <= self.cfg.nsteps:
-            self._render_control()
+            self.vis._render_control()
             if not self.cfg.pause:
                 self.step_start_time = time.perf_counter()
                 self.step()
                 self.step_cnt += 1
                 self.step_end_time = time.perf_counter()
             if self.cfg.gui or self.cfg.save_image:
-                self._render_frame(self.step_cnt, self.cfg.save_image)
+                self.vis._render_frame(self.step_cnt, self.cfg.save_image)
         while self.cfg.gui and self.window.running:
-            self._render_frame(self.step_cnt, self.cfg.save_image)
+            self.vis._render_frame(self.step_cnt, self.cfg.save_image)
     
+@ti.data_oriented
+class Visualizer:
+    def __init__(self,cfg: SimConfig, muscle=None):
+        self._init_render(cfg, muscle)
 
-    def _init_render(self):
+    def _init_render(self, cfg: SimConfig, muscle=None):
+        self.cfg = cfg
+        self.muscle = muscle
         if self.cfg.render_mode is None or not self.cfg.gui:
             self.cfg.gui = False
             return
@@ -2354,28 +2163,33 @@ class MuscleSim:
         self.camera.fov(45)
         self.gui = self.window.get_gui()
 
-        if self.cfg.show_auxiliary_meshes:
-            self.ground, self.coord, self.ground_indices, self.coord_indices = read_auxiliary_meshes()
-        self.focus_camera_on_model() # focus camera on model at start
+        if self.cfg.show_auxiliary_meshes and (hasattr(self.cfg, 'ground_mesh_path') and hasattr(self.cfg, 'coord_mesh_path')):
+            self.ground, self.coord, self.ground_indices, self.coord_indices = read_auxiliary_meshes(self.cfg.ground_mesh_path, self.cfg.coord_mesh_path)
+        
+        if self.muscle is not None:
+            bbox = get_bbox(self.muscle.pos0_np)
+            self._focus_camera_on_model(bbox) # focus camera on model at start
+        
+        # 初始化 attach 可视化相关属性
+        self.num_attach_lines = 0
+        self.attach_lines_vertices = None
 
-    def focus_camera_on_model(self):
-        bbox = get_bbox(self.pos0_np)
+
+    def _focus_camera_on_model(self, bbox):
         center = (bbox[0] + bbox[1]) * 0.5
         self.camera.position(center[0], center[1], center[2] + 0.5)
         self.camera.lookat(center[0], center[1], center[2])
 
-    @ti.kernel
-    def _update_visualization_lines(self):
-        for i in range(self.num_attach_lines):
-            c_idx = self.attach_cons_indices[i]
-            pts = self.cons[c_idx].pts
-            src_pt = pts[0]
-            # 写入 2 个端点到连续的 vertices 数组
-            self.attach_lines_vertices[2 * i] = self.pos[src_pt]
-            self.attach_lines_vertices[2 * i + 1] = self.cons[c_idx].restvector.xyz
+
+    def update(self):
+        self._render_frame()
+    
 
     def _render_frame(self, step: int, save_image: bool = False):
         if self.cfg.render_mode == None:
+            return
+        
+        if self.muscle is None:
             return
         
         self.camera.track_user_inputs(self.window, movement_speed=0.03, hold_key=ti.ui.RMB)
@@ -2384,30 +2198,31 @@ class MuscleSim:
         # Render muscle mesh
         if hasattr(self, 'muscle_colors_field') and self.muscle_colors_field is not None:
             # 使用 per_vertex_color 着色
-            self.scene.mesh(vertices=self.pos, indices=self.surface_tris_field, 
+            self.scene.mesh(vertices=self.muscle.pos, indices=self.muscle.surface_tris_field, 
                            per_vertex_color=self.muscle_colors_field, two_sided=True, show_wireframe=self.cfg.show_wireframe)
         else:
             # 默认蓝色
-            self.scene.mesh(vertices=self.pos, indices=self.surface_tris_field, 
+            self.scene.mesh(vertices=self.muscle.pos, indices=self.muscle.surface_tris_field, 
                            color=(0.2, 0.6, 1.0), two_sided=True, show_wireframe=self.cfg.show_wireframe)
         
         # Render bone mesh
-        if self.bone_indices_field is not None:
+        if self.muscle.bone_indices_field is not None:
             if hasattr(self, 'bone_colors_field') and self.bone_colors_field is not None:
                 # 使用 per_vertex_color 按 muscle_id 着色
-                self.scene.mesh(vertices=self.bone_pos_field, indices=self.bone_indices_field, 
+                self.scene.mesh(vertices=self.muscle.bone_pos_field, indices=self.muscle.bone_indices_field, 
                                per_vertex_color=self.bone_colors_field, two_sided=True, show_wireframe=self.cfg.show_wireframe)
             else:
                 # 默认浅蓝色
-                self.scene.mesh(vertices=self.bone_pos_field, indices=self.bone_indices_field, 
+                self.scene.mesh(vertices=self.muscle.bone_pos_field, indices=self.muscle.bone_indices_field, 
                                color=(0.1, 0.4, 0.8), two_sided=True, show_wireframe=self.cfg.show_wireframe)
-        elif hasattr(self, 'bone_pos_field') and self.bone_pos_field is not None:
+        elif hasattr(self.muscle, 'bone_pos_field') and self.muscle.bone_pos_field is not None:
             # If no indices, just show particles? Or maybe the user prefers a mesh.
-            self.scene.particles(self.bone_pos_field, radius=0.005, color=(0.1, 0.4, 0.8))
+            self.scene.particles(self.muscle.bone_pos_field, radius=0.005, color=(0.1, 0.4, 0.8))
 
         # Render attach lines
         if self.num_attach_lines > 0:
-            self._update_visualization_lines()
+            self.muscle._update_attach_targets_kernel()
+            self._update_attach_vis(self.muscle.cons, self.muscle.pos, self.attach_cidx)
             self.scene.lines(vertices=self.attach_lines_vertices, width=1, color=(1.0, 0.0, 0.0))
 
         if self.cfg.show_auxiliary_meshes:
@@ -2416,36 +2231,29 @@ class MuscleSim:
 
         with self.gui.sub_window("Options", 0, 0, 0.25, 0.3) as w:
             self.gui.text(f"Step: {step}")
-            if self.step_cnt>1:
-                self.gui.text(f"FPS: {self.get_fps():.1f}")
-                self.gui.text(f"Volume error: {self.calc_vol_error() * 100:.2f} %")
+            if self.muscle is not None and self.muscle.step_cnt > 1:
+                self.gui.text(f"FPS: {self.muscle.get_fps():.1f}")
+                self.gui.text(f"Volume error: {self.muscle.calc_vol_error() * 100:.2f} %")
             if w.button("Pause" if not self.cfg.pause else "Resume"):
                 self.cfg.pause = not self.cfg.pause
             if w.button("Toggle Wireframe"):
                 self.cfg.show_wireframe = not self.cfg.show_wireframe
             if w.button("Reset Simulation"):
-                self.reset()
+                if self.muscle is not None:
+                    self.muscle.reset()
             if w.button("save camera settings"):
-                with open("camera.txt", "w") as f:
-                    p, l = self.camera.curr_position, self.camera.curr_lookat
-                    f.write(f"camera pos: {p[0]} {p[1]} {p[2]}\n")
-                    f.write(f"camera lookat: {l[0]} {l[1]} {l[2]}\n")
+                pass
             if w.button("load camera settings"):
-                with open("camera.txt", "r") as f:
-                    lines = f.readlines()
-                    if len(lines) >= 2:
-                        _, _, px, py, pz = lines[0].split()[:5]
-                        _, _, lx, ly, lz = lines[1].split()[:5]
-                        self.camera.position(float(px), float(py), float(pz))
-                        self.camera.lookat(float(lx), float(ly), float(lz))
+                pass
             if w.button("focus camera on model"):
-                bbox = get_bbox(self.pos0_np)
-                center = (bbox[0] + bbox[1]) * 0.5
-                self.camera.position(center[0], center[1], center[2] + 0.5)
-                self.camera.lookat(center[0], center[1], center[2])
-            # this is just for debugging
+                if self.muscle is not None:
+                    bbox = get_bbox(self.muscle.pos0_np)
+                    center = (bbox[0] + bbox[1]) * 0.5
+                    self.camera.position(center[0], center[1], center[2] + 0.5)
+                    self.camera.lookat(center[0], center[1], center[2])
             self.cfg.activation = w.slider_float("activation", self.cfg.activation, 0.0, 1.0)
-            self.activation.fill(self.cfg.activation)
+            if self.muscle is not None:
+                self.muscle.activation.fill(self.cfg.activation)
             
 
         self.scene.ambient_light((0.4, 0.4, 0.4))
@@ -2461,6 +2269,12 @@ class MuscleSim:
             self.rgb_array = self.window.get_image_buffer_as_numpy()
             return self.rgb_array
 
+    def _render_muscles(self):
+        pass
+
+    def _render_bones(self):
+        pass
+
     def _render_control(self):
         if not self.cfg.gui or self.cfg.render_mode != "human":
             return
@@ -2468,7 +2282,8 @@ class MuscleSim:
             if e.key in [ti.ui.ESCAPE]:
                 exit()
             elif e.key == 'r' or e.key == 'R':
-                self.reset()
+                if self.muscle is not None:
+                    self.muscle.reset()
                 print("Simulation reset.")
             elif e.key == 'f' or e.key == 'F':
                 self.cfg.show_wireframe = not self.cfg.show_wireframe
@@ -2480,23 +2295,106 @@ class MuscleSim:
                 else:
                     print("Simulation resumed.")
             elif e.key == 'g' or e.key == 'G':
-                bbox = get_bbox(self.pos0_np)
-                center = (bbox[0] + bbox[1]) * 0.5
-                self.camera.position(center[0], center[1], center[2] + 0.5)
-                self.camera.lookat(center[0], center[1], center[2])
+                if self.muscle is not None:
+                    bbox = get_bbox(self.muscle.pos0_np)
+                    center = (bbox[0] + bbox[1]) * 0.5
+                    self.camera.position(center[0], center[1], center[2] + 0.5)
+                    self.camera.lookat(center[0], center[1], center[2])
             else:
                 pass
 
 
-# def parse_args():
-#     parser = argparse.ArgumentParser(description="Muscle simulation.")
-#     parser.add_argument("--config", type=Path, default=Path("config/bicep.json"), help="Path to JSON config.")
-#     return parser.parse_args()
+    @ti.kernel
+    def _update_attach_vis(self, cons: ti.template(), pos: ti.template(), attach_cidx: ti.template()):
+        for i in range(self.num_attach_lines):
+            cidx = attach_cidx[i]  # Get the actual global constraint index
+            pts = cons[cidx].pts
+            src_pt = pts[0]
+            self.attach_lines_vertices[2 * i] = pos[src_pt]
+            self.attach_lines_vertices[2 * i + 1] = cons[cidx].restvector.xyz
+
+
+    def _init_attach_vis(self, attach_constraints):
+        """
+        为 attach / attachnormal 约束准备可视化数据。
+        """
+        if not attach_constraints:
+            return
+        self.num_attach_lines = len(attach_constraints)
+        if self.num_attach_lines > 0:
+            self.attach_lines_vertices = ti.Vector.field(3, dtype=ti.f32, shape=self.num_attach_lines * 2)
+            # Store the cidx values for each attach constraint， this will convert local attach index to global constraint index
+            self.attach_cidx = ti.field(dtype=ti.i32, shape=self.num_attach_lines)
+            for i, c in enumerate(attach_constraints):
+                self.attach_cidx[i] = c['cidx']
+
+    
+    def _generate_muscle_colors(self):
+        """根据 cfg.color_muscles 生成肌肉顶点颜色"""
+        self.muscle_vertex_colors = None
+        self.muscle_colors_field = None
+        
+        if self.cfg.color_muscles is None or self.muscle is None:
+            return
+        
+        if self.cfg.color_muscles == "muscle_id":
+            # 按 muscle_id 着色
+            if hasattr(self.muscle, 'geo') and hasattr(self.muscle.geo, 'pointattr') and 'muscle_id' in self.muscle.geo.pointattr:
+                muscle_ids = self.muscle.geo.pointattr['muscle_id']
+                unique_ids = sorted(set(muscle_ids))
+                id_colors = generate_muscle_id_colors(unique_ids)
+                
+                self.muscle_vertex_colors = np.zeros((self.muscle.n_verts, 3), dtype=np.float32)
+                for v_idx, mid in enumerate(muscle_ids):
+                    self.muscle_vertex_colors[v_idx] = id_colors[mid]
+                
+                print(f"Muscle coloring by muscle_id enabled ({len(unique_ids)} groups)")
+            else:
+                print("Warning: muscle_id not found in geometry, cannot color by muscle_id")
+        
+        elif self.cfg.color_muscles == "tendonmask":
+            # 按 tendonmask 着色（白色=肌腱，红色=肌肉腹部）
+            if hasattr(self.muscle, 'v_tendonmask_np') and self.muscle.v_tendonmask_np is not None:
+                self.muscle_vertex_colors = np.zeros((self.muscle.n_verts, 3), dtype=np.float32)
+                for v_idx in range(self.muscle.n_verts):
+                    mask_value = self.muscle.v_tendonmask_np[v_idx]
+                    # mask_value: 0=肌肉, 1=肌腱
+                    # 插值颜色：红色(0.9,0.1,0.1) -> 白色(1.0,1.0,1.0)
+                    r = 0.9 + mask_value * 0.1
+                    g = 0.1 + mask_value * 0.9
+                    b = 0.1 + mask_value * 0.9
+                    self.muscle_vertex_colors[v_idx] = [r, g, b]
+                
+                print("Muscle coloring by tendonmask enabled")
+            else:
+                print("Warning: tendonmask not found in geometry, cannot color by tendonmask")
+        
+        # 创建 Taichi field
+        if self.muscle_vertex_colors is not None:
+            self.muscle_colors_field = ti.Vector.field(3, dtype=ti.f32, shape=self.muscle.n_verts)
+            self.muscle_colors_field.from_numpy(self.muscle_vertex_colors)
+
+
+def generate_muscle_id_colors(muscle_ids):
+    """为每个 muscle_id 生成独特的颜色"""
+    import colorsys
+    colors = {}
+    n = len(muscle_ids)
+    for i, mid in enumerate(muscle_ids):
+        # 使用 HSV 色彩空间生成均匀分布的颜色
+        hue = i / max(n, 1)
+        saturation = 0.7 + (i % 3) * 0.1  # 0.7-0.9 之间
+        value = 0.8 + (i % 2) * 0.15  # 0.8-0.95 之间
+        rgb = colorsys.hsv_to_rgb(hue, saturation, value)
+        colors[mid] = np.array(rgb, dtype=np.float32)
+    return colors
+
 
 def get_config_path():
-    with open("config.txt", "r") as f:
-        config_path = f.readline().strip()
-    return config_path
+    parser = argparse.ArgumentParser(description="Muscle simulation.")
+    parser.add_argument("--config", type=Path, default=Path("data/muscle/config/bicep.json"), help="Path to JSON config.")
+    return parser.parse_args().config
+
 
 def main():
     config_path = get_config_path()
