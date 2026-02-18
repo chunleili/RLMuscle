@@ -15,8 +15,16 @@ import numpy as np
 
 ColorRgb = tuple[float, float, float]
 PrimvarsMap = dict[str, np.ndarray | None]
-_MeshTuple = tuple[str, np.ndarray, np.ndarray, ColorRgb, PrimvarsMap]
 _USE_NEWTON_USD_GET_MESH = True
+
+@dataclass
+class UsdMesh:
+    mesh_path: str
+    vertices: np.ndarray 
+    faces: np.ndarray | None = None 
+    color: ColorRgb | None = None
+    primvars: PrimvarsMap | None = None
+    tets: np.ndarray | None = None
 
 
 def usd_args(
@@ -55,13 +63,6 @@ def usd_args(
     return parser
 
 
-@dataclass(frozen=True)
-class UsdMesh:
-    path: str
-    vertices: np.ndarray
-    faces: np.ndarray
-    color: ColorRgb
-    primvars: PrimvarsMap
 
 
 @dataclass
@@ -80,11 +81,11 @@ class UsdMeshSet:
 
     @property
     def base_colors(self) -> dict[str, ColorRgb]:
-        return {mesh.path: mesh.color for mesh in self.meshes}
+        return {mesh.mesh_path: mesh.color for mesh in self.meshes}
 
     @property
     def primvars(self) -> dict[str, PrimvarsMap]:
-        return {mesh.path: mesh.primvars for mesh in self.meshes}
+        return {mesh.mesh_path: mesh.primvars for mesh in self.meshes}
 
     @property
     def primvar_summary(self) -> dict[str, dict[str, Any]]:
@@ -431,7 +432,7 @@ def _load_tetmesh_geometry(prim, UsdGeom) -> tuple[np.ndarray, np.ndarray] | Non
 
     if tris is None or tris.size == 0:
         return None
-    return points, np.asarray(tris, dtype=np.int32)
+    return points, np.asarray(tris, dtype=np.int32), tet_indices
 
 
 def _transform_points_world(points: np.ndarray, prim, xform_cache, Gf) -> np.ndarray:
@@ -451,12 +452,12 @@ def _iter_prims_under_root(stage, root_path: str, Usd):
     return Usd.PrimRange(root_prim)
 
 
-def _load_mesh_tuples(
+def _load_meshes(
     usd_path: str,
     *,
     root_path: str = "/",
     y_up_to_z_up: bool = False,
-) -> list[_MeshTuple]:
+) -> list[UsdMesh]:
     try:
         from pxr import Gf, Usd, UsdGeom
     except ImportError as exc:
@@ -477,7 +478,7 @@ def _load_mesh_tuples(
     prim_iter = _iter_prims_under_root(stage, root_path, Usd)
     xform_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
 
-    meshes: list[_MeshTuple] = []
+    meshes: list[UsdMesh] = []
     for prim in prim_iter:
         is_mesh = prim.IsA(UsdGeom.Mesh)
         is_tetmesh = prim.IsA(UsdGeom.TetMesh)
@@ -485,51 +486,54 @@ def _load_mesh_tuples(
             continue
 
         primvars = _read_all_primvars(prim)
+        tets: np.ndarray | None = None
         if is_mesh:
-            parsed = _load_mesh_geometry(prim, UsdGeom)
+            result = _load_mesh_geometry(prim, UsdGeom)
+            if result is None:
+                continue
+            points, tris = result
+        elif is_tetmesh:
+            result = _load_tetmesh_geometry(prim, UsdGeom)
+            if result is None:
+                continue
+            points, tris, tets = result
         else:
-            parsed = _load_tetmesh_geometry(prim, UsdGeom)
-        if parsed is None:
             continue
 
-        points, tris = parsed
         points_world = _transform_points_world(points, prim, xform_cache, Gf)
         if up_axis_rotation is not None:
             points_world = np.asarray(points_world @ up_axis_rotation.T, dtype=np.float32)
+
+        if tets is not None and tets.size > 0:
+            tets = _fix_tet_winding(points_world, tets.copy())
 
         mesh_path = str(prim.GetPath())
         mesh_color = _mesh_color_from_display_color(primvars.get("displayColor"))
         if mesh_color is None:
             mesh_color = _mesh_color_from_path(mesh_path)
-        meshes.append((mesh_path, points_world, np.asarray(tris, dtype=np.int32), mesh_color, primvars))
+
+        meshes.append(UsdMesh(
+            mesh_path=mesh_path,
+            vertices=points_world,
+            faces=np.asarray(tris, dtype=np.int32),
+            color=mesh_color,
+            primvars=primvars,
+            tets=tets,
+        ))
 
     if not meshes:
         raise ValueError(f"No renderable Mesh/TetMesh found under '{root_path}' in USD file: {usd_path}")
     return meshes
 
 
-def _center_mesh_tuples(meshes: list[_MeshTuple], up_axis: int) -> tuple[list[_MeshTuple], np.ndarray]:
-    all_points = np.vstack([vertices for _, vertices, _, _, _ in meshes])
+def _center_meshes(meshes: list[UsdMesh], up_axis: int) -> tuple[list[UsdMesh], np.ndarray]:
+    all_points = np.vstack([m.vertices for m in meshes])
     bbox_min, bbox_max = all_points.min(axis=0), all_points.max(axis=0)
     anchor = 0.5 * (bbox_min + bbox_max)
     anchor[int(up_axis)] = bbox_min[int(up_axis)]
-    shifted: list[_MeshTuple] = []
-    for mesh_path, vertices, faces, color, primvars in meshes:
-        shifted.append((mesh_path, vertices - anchor, faces, color, primvars))
-    return shifted, anchor.astype(np.float32)
-
-
-def _mesh_tuples_to_objects(meshes: list[_MeshTuple]) -> list[UsdMesh]:
-    return [
-        UsdMesh(
-            path=mesh_path,
-            vertices=np.asarray(vertices, dtype=np.float32),
-            faces=np.asarray(faces, dtype=np.int32),
-            color=(float(color[0]), float(color[1]), float(color[2])),
-            primvars=primvars,
-        )
-        for mesh_path, vertices, faces, color, primvars in meshes
-    ]
+    for m in meshes:
+        m.vertices = m.vertices - anchor
+    return meshes, anchor.astype(np.float32)
 
 
 def _summarize_primvars(primvars_by_path: dict[str, PrimvarsMap]) -> dict[str, dict[str, Any]]:
@@ -954,17 +958,17 @@ class UsdIO:
         if self._cached is not None:
             return self
 
-        mesh_tuples = _load_mesh_tuples(
+        loaded = _load_meshes(
             self.source_usd_path,
             root_path=self.root_path,
             y_up_to_z_up=self.y_up_to_z_up,
         )
         center_shift = np.zeros(3, dtype=np.float32)
         if self.center_model:
-            mesh_tuples, center_shift = _center_mesh_tuples(mesh_tuples, self.up_axis)
+            loaded, center_shift = _center_meshes(loaded, self.up_axis)
 
         self._cached = UsdMeshSet(
-            meshes=_mesh_tuples_to_objects(mesh_tuples),
+            meshes=loaded,
             center_shift=center_shift,
         )
         return self

@@ -137,7 +137,7 @@ def load_mesh_tetgen(path):
     return positions, tets, None, None, None
 
 def load_mesh_geo(path: Path):
-    from geo import Geo
+    from .geo import Geo
     geo = Geo(str(path))
     positions = np.asarray(geo.positions, dtype=np.float32)
     tets = np.asarray(geo.vert, dtype=np.int32)
@@ -427,6 +427,7 @@ class MuscleSim:
         self.build_constraints()
             
         self.use_jacobi = False
+        self.dt = self.cfg.dt / self.cfg.num_substeps
         
         print("Initializing visualization...")
         print("Renderer mode:", cfg.render_mode)
@@ -652,7 +653,7 @@ class MuscleSim:
 
     def load_bone_geo(self, target_path):
         if not hasattr(self, 'bone_pos_field') and Path(target_path).exists():
-            from geo import Geo
+            from .geo import Geo
             self.bone_geo = Geo(target_path)
             if len(self.bone_geo.positions) == 0:
                 print(f"Warning: No vertices found in {target_path}")
@@ -2109,7 +2110,7 @@ class MuscleSim:
 
     def step(self):
         self.update_attach_targets()
-        self.dt = self.cfg.dt / self.cfg.num_substeps
+        # self.dt = self.cfg.dt / self.cfg.num_substeps
         for _ in range(self.cfg.num_substeps):
             self.integrate()
             self.clear()

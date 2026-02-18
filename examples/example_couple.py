@@ -1,164 +1,217 @@
-"""Teaching example: simple muscle-bone coupling with Warp muscle core + Newton solver.
+"""Couple MuscleSim (Taichi PBD) with Newton rigid-body skeleton.
 
-This demo uses:
-1. Newton `SolverFeatherstone` for rigid-body pendulum dynamics.
-2. `SolverVolumetricMuscle` (Warp) for volumetric muscle particles.
-3. A light coupling loop: muscle activation -> motor torque on the pendulum.
-4. Layered USD output for per-frame runtime signals.
-
-Usage (GUI):
-    .venv/Scripts/python.exe examples/example_couple.py --viewer gl
-
-Usage (headless):
-    .venv/Scripts/python.exe examples/example_couple.py --viewer null --headless --num-frames 120 --use-layered-usd
+Scapula and humerus are static geometry; radius is a kinematically-driven
+rigid body connected to the world via a revolute joint at the elbow.
+Each frame the joint angle is set via a sine wave, FK computes body_q,
+bone vertex positions are synced to MuscleSim's bone_pos_field, and
+MuscleSim attach constraints pull the muscle to follow the bone.
 """
 
-import argparse
-
+import math
 import numpy as np
-import warp as wp
-
 import newton
 import newton.examples
-from RLVometricMuscle.solver_muscle_bone_coupled import SolverMuscleBoneCoupled
-from RLVometricMuscle.usd_io import UsdIO, add_usd_arguments
+import warp as wp
 
+from RLVometricMuscle.usd_io import UsdIO, usd_args
+from RLVometricMuscle.visualization import ViewerVisualization
+from RLVometricMuscle.solver_volumetric_muscle import SolverVolumetricMuscle
+from RLVometricMuscle.solver_muscle_bone_coupled import _quat_rotate_batch
 
-def _create_parser() -> argparse.ArgumentParser:
-    parser = newton.examples.create_parser()
-    add_usd_arguments(
-        parser,
-        usd_path="data/pendulum/pendulum.usda",
-        output_path="output/example_couple.anim.usda",
-    )
-    parser.add_argument("--activation-hz", type=float, default=0.25, help="Activation signal frequency.")
-    parser.add_argument("--max-motor", type=float, default=600.0, help="Max motor torque from activation.")
-    return parser
+# Elbow pivot in Z-up centered space (from USD skeleton L_lowerarm bind transform)
+ELBOW_PIVOT = wp.vec3(0.06, 0.02, 0.26)
+# Elbow flexion axis (roughly along Y in Z-up space)
+ELBOW_AXIS = wp.vec3(0.0, 1.0, 0.0)
 
 
 class Example:
-    def __init__(self, viewer, args=None):
+    def __init__(self, viewer, args):
+        self.args = args
         self.viewer = viewer
         self.fps = 60
         self.frame_dt = 1.0 / self.fps
-        self.sim_substeps = 10
+        self.sim_substeps = 1
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_time = 0.0
         self.sim_frame = 0
 
-        self.activation_hz = float(args.activation_hz)
-        self.max_motor = float(args.max_motor)
-        self.activation = 0.0
+        self._usd = UsdIO(
+            source_usd_path=str(args.usd_path),
+            root_path=str(args.usd_root_path),
+            y_up_to_z_up=True,
+            center_model=True,
+            up_axis=int(newton.Axis.Z),
+        ).read()
 
-        self.output_path = str(getattr(args, "output_path", "output/example_couple.anim.usda"))
-        self._use_layered_usd = bool(getattr(args, "use_layered_usd", True))
-        self._copy_usd = bool(getattr(args, "copy_usd", True))
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
 
-        builder = newton.ModelBuilder()
-        builder.add_articulation(key="pendulum")
-        hx, hy, hz = 1.0, 0.1, 0.1
+        self._radius_link = None
 
-        link_0 = builder.add_body()
-        builder.add_shape_box(link_0, hx=hx, hy=hy, hz=hz)
-        rot = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -wp.pi * 0.5)
+        for mesh in self._usd.meshes:
+            if mesh.tets is not None and mesh.tets.size > 0:
+                # Muscle — volumetric soft body (for Newton viewer particle rendering)
+                builder.add_soft_mesh(
+                    pos=wp.vec3(0.0, 0.0, 0.0),
+                    rot=wp.quat_identity(),
+                    scale=1.0,
+                    vel=wp.vec3(0.0, 0.0, 0.0),
+                    vertices=mesh.vertices.tolist(),
+                    indices=mesh.tets.reshape(-1).tolist(),
+                    density=1000.0,
+                    k_mu=2000.0,
+                    k_lambda=2000.0,
+                    k_damp=2.0,
+                )
+            elif "radius" in mesh.mesh_path.lower():
+                # Radius — rigid body with revolute joint (driven kinematically)
+                self._radius_link = builder.add_link(
+                    xform=wp.transform(),
+                )
+                builder.add_shape_mesh(
+                    body=self._radius_link,
+                    xform=wp.transform(),
+                    mesh=newton.Mesh(
+                        vertices=mesh.vertices,
+                        indices=mesh.faces.reshape(-1),
+                        compute_inertia=True,
+                        is_solid=True,
+                        color=mesh.color,
+                    ),
+                )
+                joint = builder.add_joint_revolute(
+                    parent=-1,
+                    child=self._radius_link,
+                    axis=ELBOW_AXIS,
+                    parent_xform=wp.transform(p=ELBOW_PIVOT),
+                    child_xform=wp.transform(p=ELBOW_PIVOT),
+                    limit_lower=-2.5,
+                    limit_upper=0.1,
+                )
+                builder.add_articulation([joint], key="elbow")
 
-        j0 = builder.add_joint_revolute(
-            parent=-1,
-            child=link_0,
-            axis=wp.vec3(0.0, 1.0, 0.0),
-            parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 3.0), q=rot),
-            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-        )
+            else:
+                # Scapula / humerus — static geometry
+                builder.add_shape_mesh(
+                    body=-1,
+                    xform=wp.transform(),
+                    mesh=newton.Mesh(
+                        vertices=mesh.vertices,
+                        indices=mesh.faces.reshape(-1),
+                        compute_inertia=True,
+                        is_solid=True,
+                        color=mesh.color,
+                    ),
+                )
 
         builder.add_ground_plane()
 
         self.model = builder.finalize()
-        self.solver = SolverMuscleBoneCoupled(self.model)
+        self.muscle_solver = SolverVolumetricMuscle(self.model)
 
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
-        self.control = self.model.control()
-        self._motor_buf = np.zeros(self.model.joint_dof_count, dtype=np.float32)
 
+        # Initialize body poses from joint configuration
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
-        self.collision_pipeline = None
-        self.contacts = self.model.collide(self.state_0)
+
+        # Tell muscle solver how to convert Y-up ↔ Z-up centered
+        self.muscle_solver.set_coord_transform(self._usd._cached.center_shift)
+
+        # Configure bone→muscle coupling
+        self._coupling_configured = False
+        if self._radius_link is not None:
+            self._configure_coupling()
 
         self.viewer.set_model(self.model)
+        self.vis = ViewerVisualization(self.viewer, self._usd.focus_points)
 
-        self._usd_io = UsdIO(source_usd_path=args.usd_path)
-        self._init_layered_usd()
+        if self.args.use_layered_usd:
+            self._usd.start(self.args.output_path, copy_usd=self.args.copy_usd)
+            self._usd.set_runtime("fps", self.fps)
 
-    def _init_layered_usd(self) -> None:
-        if not self._use_layered_usd:
+    def _configure_coupling(self):
+        """Set up the mapping from Newton's radius body to MuscleSim bone_pos_field."""
+        core = self.muscle_solver.core
+
+        if not hasattr(core, "bone_muscle_ids") or "L_radius" not in core.bone_muscle_ids:
+            print("Warning: bone_muscle_ids['L_radius'] not found, coupling disabled.")
             return
-        self._usd_io.start(self.output_path, copy_usd=self._copy_usd)
-        self._usd_io.set_runtime("fps", self.fps)
 
-    def _compute_activation(self) -> float:
-        omega = 2.0 * np.pi * self.activation_hz
-        self.activation = 0.5 * (1.0 + float(np.sin(omega * self.sim_time)))
-        return self.activation
+        self._bone_radius_indices = core.bone_muscle_ids["L_radius"]
+        self._center_shift = self._usd._cached.center_shift
 
-    def _write_layer_frame(self, frame: int) -> None:
-        if not self._use_layered_usd:
+        # Rest-pose bone positions in Z-up centered space (for FK transform)
+        bone_pos_yup = core.bone_pos[self._bone_radius_indices]
+        rest_zup = np.empty_like(bone_pos_yup)
+        rest_zup[:, 0] = bone_pos_yup[:, 0]
+        rest_zup[:, 1] = -bone_pos_yup[:, 2]
+        rest_zup[:, 2] = bone_pos_yup[:, 1]
+        self._bone_rest_verts_zup = (rest_zup - self._center_shift).astype(np.float32)
+
+        self._coupling_configured = True
+        print(f"Coupling configured: body={self._radius_link}, {len(self._bone_radius_indices)} radius verts")
+
+    def _sync_bone_to_muscle(self, state):
+        """Read body_q for radius, transform rest verts to world, convert to Y-up, update MuscleSim."""
+        if not self._coupling_configured:
             return
-        angle_rad = float(self.state_0.joint_q.numpy()[0])
-        angle_deg = float(np.degrees(angle_rad))
-        muscle_pos = self.solver.muscle_solver.core.pos.numpy()
-        centroid = np.mean(muscle_pos, axis=0)
+        body_q = state.body_q.numpy()
+        xform = body_q[self._radius_link]
+        p = xform[:3]
+        q = xform[3:]
 
-        self._usd_io.set_runtime("joint_angle", angle_rad, frame=frame)
-        self._usd_io.set_runtime("muscle_activation", float(self.activation), frame=frame)
-        self._usd_io.set_runtime("muscle_centroid_y", float(centroid[1]), frame=frame)
-        self._usd_io.set_custom("/pendulum/joint0", "xformOp:rotateY", angle_deg, frame=frame)
+        world_verts = _quat_rotate_batch(q, self._bone_rest_verts_zup) + p
+        uncenter = world_verts + self._center_shift
+        yup = np.empty_like(uncenter)
+        yup[:, 0] = uncenter[:, 0]
+        yup[:, 1] = uncenter[:, 2]
+        yup[:, 2] = -uncenter[:, 1]
 
-    def simulate(self) -> None:
-        for _ in range(self.sim_substeps):
-            self.state_0.clear_forces()
-            self.viewer.apply_forces(self.state_0)
+        self.muscle_solver.update_bone_positions(self._bone_radius_indices, yup)
 
-            a = self._compute_activation()
-            self.solver.muscle_solver.core.set_activation_from_tets(np.array([a], dtype=np.float32))
+    def simulate(self):
+        # Kinematic drive: slow sine wave for elbow flexion
+        # Range: 0 to -1.5 rad (0° to ~86° flexion)
+        target_angle = -0.75 * (1.0 - math.cos(self.sim_time * 2.0))
 
-            motor = (2.0 * a - 1.0) * self.max_motor
-            self._motor_buf[0] = motor
-            self.control.joint_f = wp.array(self._motor_buf, dtype=wp.float32, device=self.model.device)
+        # Set joint angle and compute FK → body_q
+        joint_q = self.model.joint_q.numpy()
+        joint_q[0] = target_angle
+        joint_q_wp = wp.from_numpy(joint_q, dtype=wp.float32, device=self.model.device)
+        newton.eval_fk(self.model, joint_q_wp, self.model.joint_qd, self.state_0)
 
-            self.contacts = self.model.collide(self.state_0)
-            self.solver.step(self.state_0, self.state_1, self.control, self.contacts, self.sim_dt)
-            self.state_0, self.state_1 = self.state_1, self.state_0
+        # Sync bone positions to MuscleSim
+        self._sync_bone_to_muscle(self.state_0)
 
-    def gui(self, ui) -> None:
-        ui.text("Muscle-bone coupling demo")
-        changed, value = ui.slider_float("max_motor", self.max_motor, 0.0, 1500.0, "%.1f")
-        if changed:
-            self.max_motor = float(value)
-        ui.text(f"activation = {self.activation:.3f}")
-        ui.text(f"joint_angle = {float(self.state_0.joint_q.numpy()[0]):.3f} rad")
+        # Run muscle PBD
+        self.muscle_solver.step(self.state_0, self.state_0)
 
-    def step(self) -> None:
+    def step(self):
         self.simulate()
         self.sim_time += self.frame_dt
         self.sim_frame += 1
 
-    def render(self) -> None:
+    def render(self):
+        self.vis.update_focus_hotkey()
         self.viewer.begin_frame(self.sim_time)
         self.viewer.log_state(self.state_0)
-        self.viewer.log_contacts(self.contacts, self.state_0)
+        self.vis.log_debug_visuals()
         self.viewer.end_frame()
-        self._write_layer_frame(self.sim_frame)
 
-    def close(self) -> None:
-        self._usd_io.close()
+        if self.args.use_layered_usd:
+            self._usd.set_runtime("frame", self.sim_frame, frame=self.sim_frame)
+            self._usd.set_runtime("sim_time", self.sim_time, frame=self.sim_frame)
+
+    def close(self):
+        self._usd.close()
 
 
 def main():
-    parser = _create_parser()
+    parser = usd_args("data/muscle/model/bicep.usd", "output/example_couple.anim.usda")
     viewer, args = newton.examples.init(parser)
     example = Example(viewer, args)
     try:
-        newton.examples.run(example)
+        newton.examples.run(example, args)
     finally:
         example.close()
 
