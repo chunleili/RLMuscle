@@ -16,9 +16,9 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/).
 Then install the package with:
 
 ```
-uv sync --extra viewer
+uv sync 
 ```
-If you do not need the gui, you can just run `uv sync` without the extra.
+
 
 Then run the example with:
 ```

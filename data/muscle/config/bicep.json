@@ -4,7 +4,7 @@
   "bone_geo_path": "data/muscle/model/bicep_bone.geo",
   "ground_mesh_path": "data/muscle/model/ground.obj",
   "coord_mesh_path": "data/muscle/model/coord.obj",
-  "arch": "cuda",
+  "arch": "cpu",
   "save_image": false,
   "gui": true,
   "render_mode": "human",

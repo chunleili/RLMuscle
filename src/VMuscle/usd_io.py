@@ -895,7 +895,7 @@ class UsdIO:
     """Minimal public USD API for mesh reading and layered editing.
 
     Quick start:
-        from RLVometricMuscle.usd_io import UsdIO
+        from VMuscle.usd_io import UsdIO
 
         usd = UsdIO("data/muscle/model/bicep.usd").read()
         meshes = usd.meshes

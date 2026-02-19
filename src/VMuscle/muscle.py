@@ -137,7 +137,7 @@ def load_mesh_tetgen(path):
     return positions, tets, None, None, None
 
 def load_mesh_geo(path: Path):
-    from .geo import Geo
+    from VMuscle.geo import Geo
     geo = Geo(str(path))
     positions = np.asarray(geo.positions, dtype=np.float32)
     tets = np.asarray(geo.vert, dtype=np.int32)
@@ -428,6 +428,7 @@ class MuscleSim:
             
         self.use_jacobi = False
         self.dt = self.cfg.dt / self.cfg.num_substeps
+        self.step_cnt = 0
         
         print("Initializing visualization...")
         print("Renderer mode:", cfg.render_mode)
@@ -653,7 +654,7 @@ class MuscleSim:
 
     def load_bone_geo(self, target_path):
         if not hasattr(self, 'bone_pos_field') and Path(target_path).exists():
-            from .geo import Geo
+            from VMuscle.geo import Geo
             self.bone_geo = Geo(target_path)
             if len(self.bone_geo.positions) == 0:
                 print(f"Warning: No vertices found in {target_path}")
@@ -2193,7 +2194,7 @@ class Visualizer:
         if self.muscle is None:
             return
         
-        self.camera.track_user_inputs(self.window, movement_speed=0.03, hold_key=ti.ui.RMB)
+        self.camera.track_user_inputs(self.window, movement_speed=0.01, hold_key=ti.ui.RMB)
         self.scene.set_camera(self.camera)
         
         # Render muscle mesh
@@ -2255,6 +2256,8 @@ class Visualizer:
             self.cfg.activation = w.slider_float("activation", self.cfg.activation, 0.0, 1.0)
             if self.muscle is not None:
                 self.muscle.activation.fill(self.cfg.activation)
+            if hasattr(self, 'extra_text') and self.extra_text:
+                self.gui.text(self.extra_text)
             
 
         self.scene.ambient_light((0.4, 0.4, 0.4))

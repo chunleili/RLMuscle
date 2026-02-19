@@ -3,8 +3,8 @@
 import newton
 import newton.examples
 import warp as wp
-from RLVometricMuscle.usd_io import UsdIO, usd_args
-from RLVometricMuscle.visualization import ViewerVisualization
+from VMuscle.usd_io import UsdIO, usd_args
+from VMuscle.visualization import ViewerVisualization
 
 
 class Example:

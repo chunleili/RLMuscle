@@ -6,8 +6,8 @@ import warp as wp
 
 import newton
 import newton.examples
-from RLVometricMuscle.geo import Geo
-from RLVometricMuscle.visualization import ViewerVisualization
+from VMuscle.geo import Geo
+from VMuscle.visualization import ViewerVisualization
 
 
 @dataclass(frozen=True)

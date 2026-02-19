@@ -27,7 +27,7 @@ import warp as wp
 
 import newton
 import newton.examples
-from RLVometricMuscle.solver_muscle_bone_coupled import SolverMuscleBoneCoupled
+from VMuscle.solver_muscle_bone_coupled import SolverMuscleBoneCoupled
 
 
 class Example:

@@ -20,7 +20,7 @@ import warp as wp
 import newton
 import newton.examples
 from newton.solvers import SolverFeatherstone
-from RLVometricMuscle.usd_io import UsdIO, usd_args
+from VMuscle.usd_io import UsdIO, usd_args
 
 
 def _create_parser() -> argparse.ArgumentParser:
