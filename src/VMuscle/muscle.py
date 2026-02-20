@@ -28,7 +28,7 @@ class SimConfig:
     gui: bool = True
     render_mode: str = "human"  # "human" or "rgb_array" or None, if None, no rendering 
     save_image: bool = False
-    show_auxiliary_meshes: bool = True
+    show_auxiliary_meshes: bool = False
     pause: bool = False
     show_wireframe: bool = False
     render_fps: int = 24
@@ -1055,6 +1055,9 @@ class MuscleSim:
 
         print(f"Built {self.cons.shape[0]} constraints total.")
 
+        # Reaction accumulator for bilateral attach coupling (mass-independent C×n)
+        self.reaction_accum = ti.Vector.field(3, dtype=ti.f32, shape=max(n_cons, 1))
+
 
     def _init_fields(self):
         self.pos0.from_numpy(self.pos0_np)
@@ -1317,16 +1320,13 @@ class MuscleSim:
                     kstiffcompress,
                 )
             elif self.cons[c].type == ATTACH:
-                # attach constraint: constrain point to dynamic bone target position
+                # attach constraint: bilateral update (same correction + reaction accum)
                 pts = self.cons[c].pts
                 pt_src = pts[0]
-                
-                # FIXME: the pt0 is target and pt1 is source, which is opposite to intuitive
-                self.distance_pos_update_xpbd(
+                self.attach_bilateral_update(
                     self.use_jacobi,
                     c,
                     self.cons,
-                    -1,
                     pt_src,
                     self.cons[c].restvector.xyz,
                     self.pos[pt_src],
@@ -1483,6 +1483,11 @@ class MuscleSim:
         for i in self.cons:
             self.cons[i].L = ti.Vector([0.0, 0.0, 0.0])
 
+    @ti.kernel
+    def clear_reaction(self):
+        """Clear reaction accumulator (call once per frame, NOT per substep)."""
+        for i in range(self.cons.shape[0]):
+            self.reaction_accum[i] = ti.Vector([0.0, 0.0, 0.0])
 
     @ti.kernel
     def apply_dP(self):
@@ -1747,6 +1752,73 @@ class MuscleSim:
                 pos[pts[3]] +=  dL * inv_masses[3] * grad3
 
                 cons[cidx].L[0] += dL
+
+    @ti.func
+    def attach_bilateral_update(
+        self,
+        use_jacobi: ti.template(),
+        cidx: ti.i32,
+        cons: ti.template(),
+        pt1: ti.i32,
+        p0: ti.types.vector(3, ti.f32),
+        p1: ti.types.vector(3, ti.f32),
+        pos: ti.template(),
+        pprev: ti.template(),
+        dP: ti.template(),
+        dPw: ti.template(),
+        mass: ti.template(),
+        stopped: ti.template(),
+        restlength: ti.f32,
+        kstiff: ti.f32,
+        kdampratio: ti.f32,
+        kstiffcompress: ti.f32,
+    ):
+        """Bilateral attach: same position correction as distance_pos_update_xpbd (pt0=-1)
+        plus accumulates constraint violation C×n into reaction_accum for bone coupling."""
+        invmass1 = get_inv_mass(pt1, mass, stopped)
+        wsum = invmass1
+
+        if wsum != 0.0:
+            p1_current = pos[pt1]
+            p0_current = p0
+
+            n = p1_current - p0_current
+            d = n.norm()
+            if d >= 1e-6:
+                loff = self.inCompressBand(d, restlength)
+                kstiff_val = kstiffcompress if loff else kstiff
+                if kstiff_val != 0.0:
+                    l = cons[cidx].L[loff]
+
+                    alpha = 1.0 / kstiff_val
+                    alpha /= self.dt * self.dt
+
+                    C = d - restlength
+                    n = n / d
+
+                    dsum = 0.0
+                    gamma = 1.0
+                    if kdampratio > 0.0:
+                        prev1 = pprev[pt1]
+                        beta = kstiff_val * kdampratio * self.dt * self.dt
+                        gamma = alpha * beta / self.dt
+                        dsum = gamma * n.dot(p1_current - prev1)
+                        gamma += 1.0
+
+                    dL = (-C - alpha * l - dsum) / (gamma * wsum + alpha)
+                    dp = n * (-dL)
+
+                    # Muscle side: same position correction as original
+                    if use_jacobi:
+                        updatedP(dP, dPw, -invmass1 * dp, pt1)
+                    else:
+                        pos[pt1] -= invmass1 * dp
+                        cons[cidx].L[loff] = cons[cidx].L[loff] + dL
+
+                    # Bilateral reaction: accumulate C×n (mass-independent)
+                    # C×n = constraint violation vector, represents the "virtual
+                    # displacement" the bone side would receive (Newton's 3rd law)
+                    self.reaction_accum[cidx] += C * n
 
     # FIXME: the pt0 is target and pt1 is source, which is opposite to intuitive
     @ti.func

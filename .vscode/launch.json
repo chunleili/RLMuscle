@@ -10,7 +10,9 @@
             "request": "launch",
             "program": "main.py",
             "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "python": ".venv/Scripts/python.exe",
+            "env": {"PYTHONPATH": "${workspaceFolder}/src"}
         },
         {
             "name": "this file",
@@ -18,7 +20,8 @@
             "request": "launch",
             "program": "${file}",
             "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "env": {"PYTHONPATH": "${workspaceFolder}/src"}
         }
     ]
 }
