@@ -71,7 +71,7 @@ def build_elbow_model(usd):
             axis=wp.vec3(ELBOW_AXIS),
             parent_xform=wp.transform(p=wp.vec3(ELBOW_PIVOT)),
             child_xform=wp.transform(p=wp.vec3(ELBOW_PIVOT)),
-            limit_lower=-1.0, limit_upper=3.0,
+            limit_lower=-3.0, limit_upper=3.0,
             armature=1.0, friction=0.9,
             target_ke=5.0, target_kd=5.0,
         )
@@ -102,16 +102,22 @@ def create_joint_debug_visuals():
     return pivot_field, axis_field
 
 
-def _run_auto_test(solver, state, cfg, dt, n_steps=200):
+def _run_auto_test(solver, state, cfg, dt, n_steps=300):
     """Headless test: ramp activation 0 -> 0.5 -> 1.0 over n_steps."""
     for step in range(1, n_steps + 1):
         t = step / n_steps
-        if t <= 0.33:
+        if t <= 0.2:
             cfg.activation = 0.0
-        elif t <= 0.66:
+        elif t <= 0.3:
             cfg.activation = 0.5
-        else:
+        elif t<=0.5:
             cfg.activation = 1.0
+        elif t<=0.7:
+            cfg.activation = 0.7
+        elif t<=0.8:
+            cfg.activation = 0.3
+        else:
+            cfg.activation = 0.0
         solver.step(state, state, dt=dt)
         if step % 50 == 1:
             body_q = state.body_q.numpy()[0]
@@ -147,7 +153,7 @@ def main():
     wp.set_device("cpu")
 
     auto_test = "--auto" in sys.argv
-    setup_logging(to_file=auto_test)
+    setup_logging(to_file=True)
 
     # 1. Muscle simulation
     cfg = load_config("data/muscle/config/bicep.json")

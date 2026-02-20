@@ -36,13 +36,14 @@ class SolverMuscleBoneCoupled:
         self.model = model
         self.core = core
         # self.bone_solver = SolverMuJoCo(model, solver="cg")
-        self.bone_solver = SolverFeatherstone(model, angular_damping=0.15,friction_smoothing=2.0,use_tile_gemm=False) 
+        self.bone_solver = SolverFeatherstone(model, angular_damping=0.3, friction_smoothing=2.0, use_tile_gemm=False)
         self.bone_substeps = bone_substeps
         self.k_coupling = k_coupling
         self.max_torque = max_torque
         self.torque_smoothing = torque_smoothing  # EMA alpha: 0=instant, 1=frozen
         self._coupling_configured = False
-        self._muscle_torque = np.zeros(3, dtype=np.float32)
+        self._muscle_torque = np.zeros(3, dtype=np.float32)  # last-substep torque, for external inspection
+        self._step_count = 0
 
     # -- Configuration ------------------------------------------------------
 
@@ -168,76 +169,82 @@ class SolverMuscleBoneCoupled:
             torque *= self.max_torque / mag
         return torque
 
-    # -- Debug diagnostics (uncomment when needed) --------------------------
-    # def _log_torque_debug(self, torque, inv_N):
-    #     C_total = np.zeros(3, dtype=np.float32)
-    #     for i in range(self._n_attach):
-    #         cidx = int(self._attach_cidx[i])
-    #         C_total += self.core.reaction_accum[cidx].to_numpy()
-    #     C_mag = float(np.linalg.norm(C_total))
-    #     mag = float(np.linalg.norm(torque))
-    #     axis_tau = ""
-    #     if self._joint_axis is not None:
-    #         axis_tau = f" axis_t={float(np.dot(torque, self._joint_axis)):.4f}"
-    #     log.info(f"  |C|={C_mag:.4f} F={self.k_coupling * C_mag * inv_N:.2f}N "
-    #              f"|t|={mag:.4f}{axis_tau} act={self.core.cfg.activation:.2f}")
-
     # -- Main step ----------------------------------------------------------
 
     def step(self, state_in, state_out, control=None, contacts=None, dt=None):
-        """One coupled simulation step.
+        """One coupled simulation step — interleaved substeps (no one-frame delay).
 
-        bone dynamics -> muscle PBD -> torque extraction.
+        Each substep:
+          1. muscle.integrate + solve_constraints  -> reaction_accum (this substep)
+          2. reaction -> torque -> control.joint_f (applied immediately)
+          3. bone_solver.step                      (uses current muscle torque)
+          4. sync new bone position -> muscle       (for next substep's attach targets)
         """
         if dt is None:
             dt = 1.0 / 60.0
         if control is None:
             control = self.model.control(clone_variables=False)
 
-        # 1. Apply muscle torque from previous frame
-        if self._coupling_configured and np.any(self._muscle_torque != 0.0):
-            joint_f = control.joint_f.numpy()
-            dof = self._joint_dof_index
-            n = self._joint_n_dofs
-            if n == 1 and self._joint_axis is not None:
-                # Revolute: project 3D torque onto joint axis
-                joint_f[dof] = float(np.dot(self._muscle_torque, self._joint_axis))
-            else:
-                # Ball (3 DOF) or other multi-DOF joints
-                m = min(n, 3)
-                joint_f[dof:dof + m] = self._muscle_torque[:m]
-            control.joint_f = wp.array(
-                joint_f, dtype=wp.float32, device=control.joint_f.device)
-
-        # 2. Bone rigid-body dynamics
-        bone_dt = dt / self.bone_substeps
-        for _ in range(self.bone_substeps):
-            self.bone_solver.step(state_in, state_out, control, None, bone_dt)
-
-        # 3. Sync bone positions to muscle sim
-        if self._coupling_configured:
-            self._sync_bone_positions(state_out)
-
-        # 4. Muscle PBD substeps
-        dt_sub = dt / self.core.cfg.num_substeps
+        N = self.core.cfg.num_substeps
+        dt_sub = dt / N
         self.core.dt = dt_sub
         self.core.activation.fill(self.core.cfg.activation)
-        self.core.update_attach_targets()
 
+        # Sync initial bone position to muscle before first substep
         if self._coupling_configured:
-            self.core.clear_reaction()
+            self._sync_bone_positions(state_in)
 
-        for _ in range(self.core.cfg.num_substeps):
+        joint_f_device = control.joint_f.device
+        joint_f_np = np.zeros(control.joint_f.shape[0], dtype=np.float32)
+
+        for _ in range(N):
+            # 1. Muscle: predict positions
             self.core.integrate()
             self.core.clear()
+
+            # 2. Update attach targets from current bone position, then solve constraints
+            if self._coupling_configured:
+                self.core.update_attach_targets()
+                self.core.clear_reaction()  # per-substep: fresh reaction
+
             self.core.solve_constraints()
             if self.core.use_jacobi:
                 self.core.apply_dP()
-        self.core.update_velocities()
+            self.core.update_velocities()
 
-        # 5. Extract muscle torque for next frame (EMA smoothed)
-        if self._coupling_configured:
-            inv_N = 1.0 / self.core.cfg.num_substeps
-            raw_torque = self._compute_muscle_torque(inv_N)
-            alpha = self.torque_smoothing
-            self._muscle_torque = alpha * self._muscle_torque + (1.0 - alpha) * raw_torque
+            # 3. Immediately convert this substep's reaction to torque and apply to bone
+            if self._coupling_configured:
+                torque = self._compute_muscle_torque(inv_N=1.0)
+                self._muscle_torque = torque  # expose for external inspection
+                dof = self._joint_dof_index
+                n_dofs = self._joint_n_dofs
+                joint_f_np[:] = 0.0
+                if n_dofs == 1 and self._joint_axis is not None:
+                    joint_f_np[dof] = float(np.dot(torque, self._joint_axis))
+                else:
+                    m = min(n_dofs, 3)
+                    joint_f_np[dof:dof + m] = torque[:m]
+                control.joint_f = wp.array(joint_f_np, dtype=wp.float32, device=joint_f_device)
+
+            # 4. Bone substep
+            self.bone_solver.step(state_in, state_out, control, None, dt_sub)
+
+            # 5. Sync new bone position to muscle for next substep
+            if self._coupling_configured:
+                self._sync_bone_positions(state_out)
+
+        self._step_count += 1
+        if self._coupling_configured and (self._step_count % 5 == 1):
+            mag = float(np.linalg.norm(self._muscle_torque))
+            axis_info = ""
+            if self._joint_axis is not None:
+                axis_info = f" axis_tau={float(np.dot(self._muscle_torque, self._joint_axis)):.4f}"
+            
+            # Joint angle and bone orientation
+            joint_q = state_out.joint_q.numpy()
+            joint_angle = float(joint_q[self._joint_dof_index]) if len(joint_q) > self._joint_dof_index else 0.0
+            body_q = state_out.body_q.numpy()[self._bone_body_id]
+            qx, qy, qz, qw = float(body_q[3]), float(body_q[4]), float(body_q[5]), float(body_q[6])
+            
+            log.info(f"step={self._step_count} act={self.core.cfg.activation:.2f} |tau|={mag:.4f}{axis_info}")
+            log.info(f"  q_joint={joint_angle:.4f} q_bone=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})")
