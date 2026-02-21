@@ -1,6 +1,10 @@
+import os
 
 def main():
-    example_to_run = "example_couple"  # change this to run a different example
+    example_to_run = "example_muscle_warp"  # change this to run a different example
+    if os.environ.get("RUN") is not None:
+        example_to_run = os.environ.get("RUN")
+    print(f"Running example: {example_to_run}")
 
     if example_to_run == "minimal_joint":
         from examples import example_minimal_joint
@@ -17,6 +21,12 @@ def main():
     elif example_to_run == "example_couple":
         from examples import example_couple
         example_couple.main()
+    elif example_to_run == "example_muscle_warp":
+        from examples import example_muscle_warp
+        example_muscle_warp.main()
+    elif example_to_run == "taichi_muscle":
+        from VMuscle import muscle
+        muscle.main()
 
 if __name__ == "__main__":
     main()

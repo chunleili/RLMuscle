@@ -2,7 +2,7 @@
 
 It is based on NVIDIA's [Newton](https://github.com/newton-physics/newton) physical engine, but with [my own fork](https://github.com/chunleili/newton) so there might be some differences. 
 
-# Run
+## Install & Run
 Firstly, git clone this repo with submodule. 
 
 ```
@@ -22,9 +22,16 @@ Then run the example with:
 ```
 uv run main.py 
 ```
+(Optional) To run different examples, you can hardcode change the "example_to_run" in main.py or set the environment variable "RUN" to the example name. For example, to run the muscle warp example in windows:
+```
+$env:RUN = "example_muscle_warp"
+uv run main.py 
+```
+
+Output (if any) will be saved in the "output" directory.
 
 
-# Roadmap
+## Roadmap
 - physical engine
     - [x] Implement a minimal joint demo using newton
     - [x] USD IO with layering
@@ -32,12 +39,20 @@ uv run main.py
 - reinforcement learning
     - [ ] Implement a simple RL task
 
+## Test
+You can run all the tests with:
+```
+uv run pytest -v
+```
 
-# Note
+Or you can run a specific test file with:
+```
+uv run python tests/xxx.py
+```
 
 
 
-## visualization & USD IO
+## Note
 
 ### Layered USD
 Use **"--use-layered-usd"** to enable the layered USD export. This is better than the newton's usd viewer because it just adding layers on top of the original usd file, which is the correct way to use usd. So it is incompatible with the "--viewer usd" and has to be used with usd as input. 
@@ -52,9 +67,6 @@ You can run the USD IO example in headless mode:
 ```
 It will automatically save the layered usd file after 100 frames.
 
-# Caution
-## up-axis
+### up-axis
  USD and Houdini use Y up by default. But Newton uses **Z up** by default. See [here](https://newton-physics.github.io/newton/latest/concepts/conventions.html#coordinate-system-and-up-axis-conventions) for newton's convention. We will **transfer the asset to Z up when loading it** (turn off by switching off "y_up_to_z_up"). Be careful when importing other assets.
 
-## Legacy Muscle Physics
-When prototyping the muscle physics, I made a physical engine with taichi in [this repo](https://github.com/chunleili/MusclePhysics). This is a single-file python sript so you can copy and paste to anywhere. I copied it to "src\RLVometricMuscle\muscle.py" just for reference. It can be run with `python .\src\RLVometricMuscle\muscle.py`. But it is not used in the main code.

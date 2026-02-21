@@ -7,6 +7,7 @@
 - 代码注释使用英文，文档 markdown 尽量使用中文，尽量不要更改README。
 - 当作出功能修改时，指出关键的工作流的改变（如有）。
 - 当进行bugfix时，务必反复迭代。可以写入侵入性的代码，可以采用python logging输出debug代码，输出可以放到临时性的`log.md`。
+- main.py是程序入口，使用环境变量`RUN`来指定运行的示例, 使用uv run main.py来运行。
 
 
 # Workflow
