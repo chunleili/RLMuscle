@@ -23,3 +23,17 @@ members = [
 
 [tool.uv.sources]
 newton = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "matplotlib>=3.10.8",
+    "pytest>=9.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: long-running simulation tests (>30s)",
+    "visual: generates PNG output for visual inspection",
+    "cuda: requires CUDA GPU",
+]
