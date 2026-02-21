@@ -532,10 +532,10 @@ def tet_volume_update_xpbd_fn(
                 update_dP(dP, dPw, dlambda * inv_mass2 * grad2, pts[2])
                 update_dP(dP, dPw, dlambda * inv_mass3 * grad3, pts[3])
             else:
-                pos[pts[0]] = pos[pts[0]] + dlambda * inv_mass0 * grad0
-                pos[pts[1]] = pos[pts[1]] + dlambda * inv_mass1 * grad1
-                pos[pts[2]] = pos[pts[2]] + dlambda * inv_mass2 * grad2
-                pos[pts[3]] = pos[pts[3]] + dlambda * inv_mass3 * grad3
+                wp.atomic_add(pos, pts[0], dlambda * inv_mass0 * grad0)
+                wp.atomic_add(pos, pts[1], dlambda * inv_mass1 * grad1)
+                wp.atomic_add(pos, pts[2], dlambda * inv_mass2 * grad2)
+                wp.atomic_add(pos, pts[3], dlambda * inv_mass3 * grad3)
                 new_L = cons[cidx].L
                 new_val = new_L[loff_local] + dlambda
                 if loff_local == 0:
@@ -592,11 +592,11 @@ def tet_fiber_update_xpbd_fn(
 
     # Non-anisotropic path (the default)
     wTDminvT = wp.vec3(restvector[0], restvector[1], restvector[2])
-    # FwT = wTDminvT @ _Ds^T  (vec3 @ mat33^T -> vec3, i.e. mat33^T * wTDminvT as column)
-    # In Taichi: FwT = wTDminvT @ _Ds.transpose() -> this is a row-vector * matrix product
-    # In warp: we need transpose(_Ds) * wTDminvT
-    _DsT = wp.transpose(_Ds)
-    FwT = _DsT * wTDminvT
+    # FwT = wTDminvT @ _Ds^T  (row-vec * mat = Ds * w as column-vec)
+    # In Taichi: FwT = wTDminvT @ _Ds.transpose()
+    #   result[i] = sum_j wTDminvT[j] * _Ds[i,j] = (Ds * w)[i]
+    # In Warp: M * v computes result[i] = sum_j M[i,j] * v[j], so _Ds * w gives the same.
+    FwT = _Ds * wTDminvT
     psi = 0.5 * wp.dot(FwT, FwT)
 
     if (isLINEARENERGY or isNORMSTIFFNESS):
@@ -642,10 +642,10 @@ def tet_fiber_update_xpbd_fn(
             update_dP(dP, dPw, dL * inv_mass2 * grad2, pts[2])
             update_dP(dP, dPw, dL * inv_mass3 * grad3, pts[3])
         else:
-            pos[pts[0]] = pos[pts[0]] + dL * inv_mass0 * grad0
-            pos[pts[1]] = pos[pts[1]] + dL * inv_mass1 * grad1
-            pos[pts[2]] = pos[pts[2]] + dL * inv_mass2 * grad2
-            pos[pts[3]] = pos[pts[3]] + dL * inv_mass3 * grad3
+            wp.atomic_add(pos, pts[0], dL * inv_mass0 * grad0)
+            wp.atomic_add(pos, pts[1], dL * inv_mass1 * grad1)
+            wp.atomic_add(pos, pts[2], dL * inv_mass2 * grad2)
+            wp.atomic_add(pos, pts[3], dL * inv_mass3 * grad3)
             new_L = cons[cidx].L
             new_L = wp.vec3(new_L[0] + dL, new_L[1], new_L[2])
             cons[cidx].L = new_L
@@ -727,8 +727,8 @@ def distance_pos_update_xpbd_fn(
                     update_dP(dP, dPw, -invmass1 * dp, pt1)
                 else:
                     if pt0 >= 0:
-                        pos[pt0] = pos[pt0] + invmass0 * dp
-                    pos[pt1] = pos[pt1] - invmass1 * dp
+                        wp.atomic_add(pos, pt0, invmass0 * dp)
+                    wp.atomic_add(pos, pt1, -invmass1 * dp)
                     new_L = cons[cidx].L
                     new_val = new_L[loff] + dL_val
                     if loff == 0:
@@ -799,8 +799,8 @@ def distance_update_xpbd_fn(
                     update_dP(dP, dPw, invmass0 * dp, pt0)
                     update_dP(dP, dPw, -invmass1 * dp, pt1)
                 else:
-                    pos[pt0] = pos[pt0] + invmass0 * dp
-                    pos[pt1] = pos[pt1] - invmass1 * dp
+                    wp.atomic_add(pos, pt0, invmass0 * dp)
+                    wp.atomic_add(pos, pt1, -invmass1 * dp)
                     new_L = cons[cidx].L
                     new_val = new_L[loff] + dL_val
                     if loff == 0:
@@ -928,9 +928,9 @@ def tri_arap_update_xpbd_fn(
                             update_dP(dP, dPw, dL_val * invmass1 * grad1_3d, pt1)
                             update_dP(dP, dPw, dL_val * invmass2 * grad2_3d, pt2)
                         else:
-                            pos[pt0] = pos[pt0] + dL_val * invmass0 * grad0_3d
-                            pos[pt1] = pos[pt1] + dL_val * invmass1 * grad1_3d
-                            pos[pt2] = pos[pt2] + dL_val * invmass2 * grad2_3d
+                            wp.atomic_add(pos, pt0, dL_val * invmass0 * grad0_3d)
+                            wp.atomic_add(pos, pt1, dL_val * invmass1 * grad1_3d)
+                            wp.atomic_add(pos, pt2, dL_val * invmass2 * grad2_3d)
                             new_L = cons[cidx].L
                             new_val = new_L[loff] + dL_val
                             if loff == 0:
@@ -1036,10 +1036,10 @@ def tet_arap_update_xpbd_fn(
                 update_dP(dP, dPw, dL_val * invmass2 * grad2, pt2)
                 update_dP(dP, dPw, dL_val * invmass3 * grad3, pt3)
             else:
-                pos[pt0] = pos[pt0] + dL_val * invmass0 * grad0
-                pos[pt1] = pos[pt1] + dL_val * invmass1 * grad1
-                pos[pt2] = pos[pt2] + dL_val * invmass2 * grad2
-                pos[pt3] = pos[pt3] + dL_val * invmass3 * grad3
+                wp.atomic_add(pos, pt0, dL_val * invmass0 * grad0)
+                wp.atomic_add(pos, pt1, dL_val * invmass1 * grad1)
+                wp.atomic_add(pos, pt2, dL_val * invmass2 * grad2)
+                wp.atomic_add(pos, pt3, dL_val * invmass3 * grad3)
                 new_L = cons[cidx].L
                 new_L = wp.vec3(new_L[0] + dL_val, new_L[1], new_L[2])
                 cons[cidx].L = new_L
@@ -1410,7 +1410,7 @@ class MuscleSim:
         self._build_surface_tris()
         self.build_constraints()
 
-        self.use_jacobi = False
+        self.use_jacobi = True
         self.dt = self.cfg.dt / self.cfg.num_substeps
         self.step_cnt = 0
 
