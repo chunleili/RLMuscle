@@ -1,5 +1,7 @@
 # 下一步
 
+- 将当前推荐参数迁移到真实 `example_couple.py` 场景复测。
+- 把回归阈值指标（peak/tail_mae）接入耦合求解器日志与自动检查。
 - 在 CUDA 上做完整的 Taichi vs Warp 可视化对比（当前 Taichi 在同进程下有 LLVM 崩溃问题，需分进程运行）
 - 骨骼-肌肉耦合（`reaction_accum`）Warp 版尚未移植
 
@@ -14,6 +16,13 @@
 - 删除：`UsdMeshSet` 中间类、Rodrigues 旋转公式（→ 硬编码 `_Y_TO_Z`）、`_mesh_color_from_path` 启发式、`_USE_NEWTON_USD_GET_MESH` 全局标记
 - `UsdIO` 删除 `up_axis` 参数（从 `y_up_to_z_up` 推导）；`usd_args` 加默认值、修正 `__all__`
 - 数值验证：新旧代码 vertices/faces/tets bit-exact 一致
+
+## 2026-02-21: 耦合计划与测试脚手架
+
+- 按要求仅修改 `pyproject.toml`：去除 `newton` 的 `editable=true`。
+- 使用 `uv run --no-project` 完成 benchmark 执行与扩展实验（矩阵、质量敏感性、子步对比）。
+- 新增 `tests/test_plan_couple_regression.py` 回归测试，覆盖 4 个关键稳定性结论。
+- 在 `doc/plan-couple.md` 增补质量敏感性与子步/solver profile 对比表格。
 
 ## 2026-02-21: Warp 移植审查与修复
 
