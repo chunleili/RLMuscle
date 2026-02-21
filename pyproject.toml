@@ -9,59 +9,17 @@ description = "A Volumetric Muscle implementation for Reinforcement Learning env
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "newton",
-
-    # --- from newton[sim] ---
-    "mujoco-warp>=3.5.0",         # MuJoCo, warp-accelerated
-    "mujoco>=3.5.0",              # MuJoCo physics engine
-
-    # --- from newton[importers] ---
-    "requests>=2.25.0",                    # HTTP client for downloading meshes
-    "scipy",                               # for convex hull approximation
-    "fast-simplification>=0.1.11",         # for mesh simplification
-    "alphashape>=1.3.1",                   # for alphashape remeshing
-    "coacd>=1.0.7",                        # for convex decomposition
-    "trimesh>=4.6.8",                      # for mesh operations and V-HACD
-    "meshio>=5.3.0",                       # alternative mesh file loader (fallback)
-    "pycollada>=0.9",                      # transitive dependency for COLLADA (.dae) mesh support
-    "resolve-robotics-uri-py>=0.4.0",      # for resolving ROS/Gazebo-style URIs
-    "usd-core>=25.11",                     # USD core libraries
-    "usd-exchange>=2.1.0a3 ; platform_machine == 'aarch64'",
-    "newton-usd-schemas>=0.1.0a2",         # Newton USD Schemas
-
-    # --- from newton[examples] ---
-    "pyglet>=2.1.6",                       # for OpenGL viewer
-    "GitPython>=3.1.44",                   # for downloading assets
-    "imgui_bundle>=1.92.0",                # for viewer GUI
-    "pyyaml>=6.0.2",
-    "cbor2>=5.7.0",                        # for binary recording format (.bin files)
-    "PyOpenGL>=3.1.5",                     # for viewer UI (imgui)
+    "newton[examples]",
     "taichi"
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/RLVometricMuscle"]
+packages = ["src/VMuscle"]
 
 [tool.uv.workspace]
 members = [
     "external/newton",
 ]
 
-[[tool.uv.index]]
-url = "https://pypi.org/simple"
-
-[[tool.uv.index]]
-name = "nvidia"
-url = "https://pypi.nvidia.com/"
-explicit = true
-
-[[tool.uv.index]]
-name = "mujoco"
-url = "https://py.mujoco.org"
-explicit = true
-
 [tool.uv.sources]
-newton = { workspace = true, editable = true }
-mujoco-warp = { git = "https://github.com/google-deepmind/mujoco_warp" }
-warp-lang = { index = "nvidia" }
-mujoco = { index = "mujoco" }
+newton = { workspace = true }

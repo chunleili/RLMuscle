@@ -1,0 +1,3 @@
+[submodule "external/newton"]
+	path = external/newton
+	url = https://github.com/chunleili/newton.git

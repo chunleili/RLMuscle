@@ -3,12 +3,11 @@
 It is based on NVIDIA's [Newton](https://github.com/newton-physics/newton) physical engine, but with [my own fork](https://github.com/chunleili/newton) so there might be some differences. 
 
 # Run
-Firstly, git clone this repo and [my fork](https://github.com/chunleili/newton) of newton. 
+Firstly, git clone this repo with submodule. 
 
 ```
-git clone https://github.com/chunleili/RLMuscle
-cd RLMuscle
-git clone https://github.com/chunleili/newton external/newton
+git clone https://github.com/chunleili/RLMuscle 
+git submodule update --init --recursive
 ```
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/). 
@@ -19,15 +18,9 @@ Then install the package with:
 uv sync 
 ```
 
-
 Then run the example with:
 ```
 uv run main.py 
-```
-
-Or run the USD IO teaching example directly:
-```
-.\.venv\Scripts\python.exe examples\example_usd_io.py --viewer gl
 ```
 
 
