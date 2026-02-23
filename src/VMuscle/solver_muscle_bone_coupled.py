@@ -1,6 +1,6 @@
 """Bidirectional muscle-bone coupling solver.
 
-Couples Newton rigid-body dynamics with Taichi MuscleSim PBD.
+Couples Newton MuJoCo rigid-body dynamics with Taichi MuscleSim PBD.
 Spring force model: F = -k_coupling * sum(C*n) / N_substeps.
 """
 
@@ -10,7 +10,7 @@ import numpy as np
 import taichi as ti
 import warp as wp
 
-from newton.solvers import SolverMuJoCo, SolverFeatherstone
+from newton.solvers import SolverMuJoCo
 from .muscle import MuscleSim
 
 log = logging.getLogger("couple")
@@ -32,15 +32,13 @@ class SolverMuscleBoneCoupled:
 
     def __init__(self, model, core: MuscleSim, bone_substeps: int = 5,
                  k_coupling: float = 5000.0,
-                 max_torque: float = 50.0, torque_smoothing: float = 0.3):
+                 max_torque: float = 50.0):
         self.model = model
         self.core = core
-        # self.bone_solver = SolverMuJoCo(model, solver="cg")
-        self.bone_solver = SolverFeatherstone(model, angular_damping=0.3, friction_smoothing=2.0, use_tile_gemm=False)
+        self.bone_solver = SolverMuJoCo(model, solver="cg", use_mujoco_cpu=True)
         self.bone_substeps = bone_substeps
         self.k_coupling = k_coupling
         self.max_torque = max_torque
-        self.torque_smoothing = torque_smoothing  # EMA alpha: 0=instant, 1=frozen
         self._coupling_configured = False
         self._muscle_torque = np.zeros(3, dtype=np.float32)  # last-substep torque, for external inspection
         self._step_count = 0

@@ -178,7 +178,7 @@ def main():
 
     # 4. Coupled solver
     solver = SolverMuscleBoneCoupled(
-        model, sim, k_coupling=5000.0, max_torque=50.0, torque_smoothing=0.3,
+        model, sim, k_coupling=5000.0, max_torque=50.0,
     )
     if radius_link is not None and "L_radius" in sim.bone_muscle_ids:
         indices = sim.bone_muscle_ids["L_radius"]
