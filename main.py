@@ -1,9 +1,9 @@
 import os
+from dotenv import load_dotenv
 
 def main():
-    example_to_run = "example_muscle_warp"  # change this to run a different example
-    if os.environ.get("RUN") is not None:
-        example_to_run = os.environ.get("RUN")
+    load_dotenv()
+    example_to_run = os.environ.get("RUN")
     print(f"Running example: {example_to_run}")
 
     if example_to_run == "minimal_joint":

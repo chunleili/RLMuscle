@@ -170,7 +170,6 @@ def main():
         source_usd_path="data/muscle/model/bicep.usd",
         root_path="/character",
         y_up_to_z_up=False,
-        center_model=False,
     ).read()
 
     # 3. Build Newton skeleton

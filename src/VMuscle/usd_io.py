@@ -248,14 +248,6 @@ def _load_meshes(
     return meshes
 
 
-def _center_meshes(meshes: list[UsdMesh], up_axis: int) -> list[UsdMesh]:
-    all_pts = np.vstack([m.vertices for m in meshes])
-    anchor = 0.5 * (all_pts.min(axis=0) + all_pts.max(axis=0))
-    anchor[up_axis] = all_pts[:, up_axis].min()
-    for m in meshes:
-        m.vertices = m.vertices - anchor
-    return meshes
-
 
 # ---------------------------------------------------------------------------
 # _UsdLayerEditor – layered USD editing (direct pxr API)
@@ -265,8 +257,8 @@ class _UsdLayerEditor:
     """Layered USD editor: overlay stage on top of source USD via sublayers."""
 
     def __init__(self, source_usd_path: str, output_path: str, *, copy_usd: bool = True):
-        from pxr import Gf, Sdf, Usd, UsdGeom
-        self.Gf, self.Sdf, self.Usd, self.UsdGeom = Gf, Sdf, Usd, UsdGeom
+        from pxr import Gf, Sdf, Usd, UsdGeom, Vt
+        self.Gf, self.Sdf, self.Usd, self.UsdGeom, self.Vt = Gf, Sdf, Usd, UsdGeom, Vt
 
         self.source_usd_path = os.path.abspath(source_usd_path)
         self.output_path = os.path.abspath(output_path)
@@ -432,6 +424,47 @@ class _UsdLayerEditor:
         return self.set_primvar(prim_path, "displayColor", [rgb],
                                 value_type="Color3fArray", interpolation="constant", frame=frame)
 
+    # -- Xform writing --
+
+    def set_translate(self, prim_path: str, translate, *, frame: int | None = None) -> bool:
+        """Set a translate xform op on a prim. Creates the op if needed."""
+        prim = self.stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            return False
+        xformable = self.UsdGeom.Xformable(prim)
+        # Reuse existing translate op or add a new one
+        op = None
+        for existing in xformable.GetOrderedXformOps():
+            if existing.GetOpType() == self.UsdGeom.XformOp.TypeTranslate:
+                op = existing
+                break
+        if op is None:
+            op = xformable.AddTranslateOp()
+        t = self.Gf.Vec3d(float(translate[0]), float(translate[1]), float(translate[2]))
+        if frame is None:
+            op.Set(t)
+        else:
+            op.Set(t, int(frame))
+            self.mark_frame(int(frame))
+        return True
+
+    def set_points(self, prim_path: str, points, *, frame: int | None = None) -> bool:
+        """Write per-vertex positions to a Mesh prim's points attribute."""
+        prim = self.stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            return False
+        mesh = self.UsdGeom.Mesh(prim)
+        attr = mesh.GetPointsAttr()
+        import numpy as np
+        pts_np = points.numpy() if hasattr(points, 'numpy') else np.asarray(points, dtype=np.float32)
+        vt_points = self.Vt.Vec3fArray.FromNumpy(pts_np.astype(np.float32))
+        if frame is None:
+            attr.Set(vt_points)
+        else:
+            attr.Set(vt_points, int(frame))
+            self.mark_frame(int(frame))
+        return True
+
     # -- Save / close --
 
     def save(self):
@@ -468,12 +501,10 @@ class UsdIO:
     """
 
     def __init__(self, source_usd_path: str, *, root_path: str = "/",
-                 y_up_to_z_up: bool = False, center_model: bool = False):
+                 y_up_to_z_up: bool = False):
         self.source_usd_path = os.path.abspath(str(source_usd_path))
         self.root_path = root_path.strip() or "/"
         self.y_up_to_z_up = bool(y_up_to_z_up)
-        self.center_model = bool(center_model)
-        self._up_axis = 2 if y_up_to_z_up else 1
         self._meshes: list[UsdMesh] | None = None
         self._editor: _UsdLayerEditor | None = None
         self._runtime_prim = "/anim/runtime"
@@ -486,8 +517,6 @@ class UsdIO:
             return self
         self._meshes = _load_meshes(
             self.source_usd_path, root_path=self.root_path, y_up_to_z_up=self.y_up_to_z_up)
-        if self.center_model:
-            _center_meshes(self._meshes, self._up_axis)
         return self
 
     @property
@@ -500,6 +529,29 @@ class UsdIO:
     def focus_points(self) -> np.ndarray:
         m = self.meshes
         return np.vstack([x.vertices for x in m]).astype(np.float32) if m else np.zeros((0, 3), np.float32)
+
+    def warp_mesh_data(self) -> list[dict]:
+        """Return per-mesh warp arrays ready for viewer.log_mesh() rendering.
+
+        Each dict contains:
+            name: prim path (str)
+            src:  rest-pose vertices (wp.array, vec3, immutable)
+            pts:  deformed vertices  (wp.array, vec3, written each frame)
+            idx:  triangle indices   (wp.array, int32)
+        """
+        import warp as wp
+        result = []
+        for mesh in self.meshes:
+            verts_np = mesh.vertices.numpy() if isinstance(mesh.vertices, wp.array) else np.asarray(mesh.vertices, dtype=np.float32)
+            faces_np = mesh.faces.reshape(-1)
+            faces_np = faces_np.numpy() if isinstance(faces_np, wp.array) else np.asarray(faces_np, dtype=np.int32)
+            result.append(dict(
+                name=mesh.mesh_path,
+                src=wp.array(verts_np, dtype=wp.vec3),
+                pts=wp.array(verts_np, dtype=wp.vec3),
+                idx=wp.array(faces_np, dtype=wp.int32),
+            ))
+        return result
 
     def start(self, output_path: str | None = None, *,
               copy_usd: bool = True, runtime_prim: str = "/anim/runtime") -> "UsdIO":
@@ -533,6 +585,19 @@ class UsdIO:
 
     def set_color(self, prim_path: str, color: ColorRgb, *, frame: int | None = None) -> bool:
         return self._editor.set_display_color(prim_path, color, frame=frame)
+
+    def set_translate(self, prim_path: str, translate, *, frame: int | None = None) -> bool:
+        return self._editor.set_translate(prim_path, translate, frame=frame)
+
+    def set_points(self, prim_path: str, points, *, frame: int | None = None) -> bool:
+        return self._editor.set_points(prim_path, points, frame=frame)
+
+    def to_usd_points(self, points) -> np.ndarray:
+        """Convert points from Newton space (Z-up) back to USD local space (Y-up)."""
+        pts = points.numpy() if hasattr(points, 'numpy') else np.asarray(points, dtype=np.float32)
+        if self.y_up_to_z_up:
+            pts = (pts @ _Y_TO_Z).astype(np.float32)  # Z-up -> Y-up
+        return pts
 
     def save(self):
         if self._editor:

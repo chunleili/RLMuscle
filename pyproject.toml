@@ -10,7 +10,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "newton[examples]",
-    "taichi"
+    "python-dotenv>=1.2.1",
+    "taichi",
 ]
 
 [tool.hatch.build.targets.wheel]

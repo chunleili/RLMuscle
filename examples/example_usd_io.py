@@ -1,10 +1,33 @@
-"""Minimal USD IO example: load USD meshes, render, and write layered runtime values."""
+"""Minimal USD IO example: load USD meshes, render, and write layered runtime values.
+
+Demonstrates per-vertex deformation using viewer.log_mesh() instead of rigid-body
+add_shape_mesh(). Each frame the vertices are modified directly and re-uploaded to
+the GL vertex buffer.
+"""
 
 import newton
 import newton.examples
 import warp as wp
 from VMuscle.usd_io import UsdIO, usd_args
 from VMuscle.visualization import ViewerVisualization
+
+
+@wp.kernel
+def _single_vertex_deform_kernel(
+    src: wp.array(dtype=wp.vec3),
+    dst: wp.array(dtype=wp.vec3),
+    target_vertex: int,
+    time: float,
+    amplitude: float,
+):
+    """Move only one vertex along Z; all others stay at rest pose."""
+    i = wp.tid()
+    p = src[i]
+    if i == target_vertex:
+        dz = amplitude * wp.sin(time * 4.0)
+        dst[i] = wp.vec3(p[0], p[1], p[2] + dz)
+    else:
+        dst[i] = p
 
 
 class Example:
@@ -20,24 +43,12 @@ class Example:
             source_usd_path=str(args.usd_path),
             root_path=str(args.usd_root_path),
             y_up_to_z_up=True,
-            center_model=True,
         ).read()
 
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
-        for mesh in self._usd.meshes:
-            builder.add_shape_mesh(
-                body=-1,
-                xform=wp.transform(),
-                mesh=newton.Mesh(
-                    vertices=mesh.vertices,
-                    indices=mesh.faces.reshape(-1),
-                    compute_inertia=False,
-                    is_solid=True,
-                    color=mesh.color,
-                ),
-            )
-        builder.add_ground_plane()
+        self.mesh_data = self._usd.warp_mesh_data()
 
+        # Still need a Newton model for viewer camera / focus handling
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
         self.model = builder.finalize()
         self.state_0 = self.model.state()
         self.viewer.set_model(self.model)
@@ -48,19 +59,30 @@ class Example:
             self._usd.set_runtime("fps", self.fps)
 
     def step(self):
+        # Move a single vertex to demonstrate per-vertex modification
+        for md in self.mesh_data:
+            wp.launch(
+                _single_vertex_deform_kernel,
+                dim=md["src"].shape[0],
+                inputs=[md["src"], md["pts"], 0, self.sim_time, 0.5],
+            )
         self.sim_frame += 1
         self.sim_time += self.frame_dt
 
     def render(self):
         self.vis.update_focus_hotkey()
         self.viewer.begin_frame(self.sim_time)
-        self.viewer.log_state(self.state_0)
+        # Render deformed meshes directly (bypasses rigid-body state)
+        for md in self.mesh_data:
+            self.viewer.log_mesh(md["name"], md["pts"], md["idx"])
         self.vis.log_debug_visuals()
         self.viewer.end_frame()
 
         if self.args.use_layered_usd:
-            self._usd.set_runtime("frame", self.sim_frame, frame=self.sim_frame)
-            self._usd.set_runtime("sim_time", self.sim_time, frame=self.sim_frame)
+            # Write per-vertex deformed points to USD (Z-up centered → Y-up original)
+            for md in self.mesh_data:
+                pts_usd = self._usd.to_usd_points(md["pts"])
+                self._usd.set_points(md["name"], pts_usd, frame=self.sim_frame)
 
     def close(self):
         self._usd.close()
