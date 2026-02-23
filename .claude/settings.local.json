@@ -11,7 +11,10 @@
       "Bash(cd D:/dev/RLMuscle-refac && RUN=couple uv run main.py --auto 2>&1)",
       "Bash(python3:*)",
       "Bash(RUN=usd_io uv run:*)",
-      "Read(//c/Users/lichu/Documents/WindowsPowerShell/**)"
+      "Read(//c/Users/lichu/Documents/WindowsPowerShell/**)",
+      "Bash(RUN=example_couple uv run:*)",
+      "Bash(RUN=example_dynamics uv run:*)",
+      "Bash(RUN=couple uv run:*)"
     ]
   }
 }

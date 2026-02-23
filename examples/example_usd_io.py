@@ -63,8 +63,8 @@ class Example:
         for md in self.mesh_data:
             wp.launch(
                 _single_vertex_deform_kernel,
-                dim=md["src"].shape[0],
-                inputs=[md["src"], md["pts"], 0, self.sim_time, 0.5],
+                dim=md.rest_pos.shape[0],
+                inputs=[md.rest_pos, md.pos, 0, self.sim_time, 0.5],
             )
         self.sim_frame += 1
         self.sim_time += self.frame_dt
@@ -74,15 +74,13 @@ class Example:
         self.viewer.begin_frame(self.sim_time)
         # Render deformed meshes directly (bypasses rigid-body state)
         for md in self.mesh_data:
-            self.viewer.log_mesh(md["name"], md["pts"], md["idx"])
+            self.viewer.log_mesh(md.name, md.pos, md.tri_indices)
         self.vis.log_debug_visuals()
         self.viewer.end_frame()
 
         if self.args.use_layered_usd:
-            # Write per-vertex deformed points to USD (Z-up centered → Y-up original)
             for md in self.mesh_data:
-                pts_usd = self._usd.to_usd_points(md["pts"])
-                self._usd.set_points(md["name"], pts_usd, frame=self.sim_frame)
+                self._usd.set_points(md.name, md.pos, frame=self.sim_frame)
 
     def close(self):
         self._usd.close()
