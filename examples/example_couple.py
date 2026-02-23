@@ -171,7 +171,6 @@ def main():
         root_path="/character",
         y_up_to_z_up=False,
         center_model=False,
-        up_axis=int(newton.Axis.Y),
     ).read()
 
     # 3. Build Newton skeleton

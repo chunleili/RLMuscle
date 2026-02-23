@@ -4,6 +4,7 @@ from __future__ import annotations
 
 Public API:
 - `UsdIO`: one object for read + layered edit operations.
+- `usd_args`: CLI argument helper for teaching examples.
 """
 
 import argparse
@@ -15,20 +16,23 @@ import numpy as np
 
 ColorRgb = tuple[float, float, float]
 PrimvarsMap = dict[str, np.ndarray | None]
-_USE_NEWTON_USD_GET_MESH = True
+
+# Hardcoded Y-up -> Z-up rotation: 90 deg around X axis.
+_Y_TO_Z = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=np.float32)
+
 
 @dataclass
 class UsdMesh:
     mesh_path: str
-    vertices: np.ndarray 
-    faces: np.ndarray | None = None 
-    color: ColorRgb | None = None
-    primvars: PrimvarsMap | None = None
-    tets: np.ndarray | None = None
+    vertices: np.ndarray          # (N, 3) float32
+    faces: np.ndarray             # (T, 3) int32
+    color: ColorRgb = (0.7, 0.7, 0.7)
+    tets: np.ndarray | None = None          # (M, 4) int32
+    primvars: PrimvarsMap = field(default_factory=dict)
 
 
 def usd_args(
-    usd_path: str,
+    usd_path: str = "data/muscle/model/bicep.usd",
     output_path: str = "output.usd",
     parser: argparse.ArgumentParser | None = None,
 ) -> argparse.ArgumentParser:
@@ -36,156 +40,26 @@ def usd_args(
     if parser is None:
         import newton.examples
         parser = newton.examples.create_parser()
-
     parser.set_defaults(output_path=output_path)
-    parser.add_argument("--usd-path", 
-                        type=str, 
-                        default=usd_path,
+    parser.add_argument("--usd-path", type=str, default=usd_path,
                         help="data/muscle/model/bicep.usd")
-    parser.add_argument("--usd-root-path", 
-                        type=str,
-                        default="/",
+    parser.add_argument("--usd-root-path", type=str, default="/",
                         help="USD prim path to load.")
-    parser.add_argument(
-        "--use_layered_usd",
-        "--use-layered-usd",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Write runtime edits into a layered USD file.",
-    )
-    parser.add_argument(
-        "--copy_usd",
-        "--copy-usd",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Copy source USD to output directory before writing layered edits.",
-    )
+    parser.add_argument("--use_layered_usd", "--use-layered-usd",
+                        action=argparse.BooleanOptionalAction, default=True,
+                        help="Write runtime edits into a layered USD file.")
+    parser.add_argument("--copy_usd", "--copy-usd",
+                        action=argparse.BooleanOptionalAction, default=True,
+                        help="Copy source USD to output directory before writing layered edits.")
     return parser
 
 
-
-
-@dataclass
-class UsdMeshSet:
-    meshes: list[UsdMesh]
-    center_shift: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
-
-    def __post_init__(self) -> None:
-        self.center_shift = np.asarray(self.center_shift, dtype=np.float32)
-
-    @property
-    def focus_points(self) -> np.ndarray:
-        if not self.meshes:
-            return np.zeros((0, 3), dtype=np.float32)
-        return np.vstack([mesh.vertices for mesh in self.meshes]).astype(np.float32)
-
-    @property
-    def base_colors(self) -> dict[str, ColorRgb]:
-        return {mesh.mesh_path: mesh.color for mesh in self.meshes}
-
-    @property
-    def primvars(self) -> dict[str, PrimvarsMap]:
-        return {mesh.mesh_path: mesh.primvars for mesh in self.meshes}
-
-    @property
-    def primvar_summary(self) -> dict[str, dict[str, Any]]:
-        return _summarize_primvars(self.primvars)
-
-
-def _axis_index_from_any(axis: Any | None) -> int | None:
-    if axis is None:
-        return None
-
-    if isinstance(axis, str):
-        name = axis.strip().upper()
-        if name in ("X", "Y", "Z"):
-            return "XYZ".index(name)
-        raise ValueError(f"Invalid axis string: {axis!r}. Expected one of 'X', 'Y', 'Z'.")
-
-    try:
-        value = int(axis)
-    except Exception:
-        name = getattr(axis, "name", None)
-        if isinstance(name, str):
-            name = name.strip().upper()
-            if name in ("X", "Y", "Z"):
-                return "XYZ".index(name)
-        value_attr = getattr(axis, "value", None)
-        if value_attr is None:
-            raise ValueError(f"Unsupported axis value: {axis!r}.")
-        value = int(value_attr)
-
-    if value not in (0, 1, 2):
-        raise ValueError(f"Invalid axis index: {value}. Expected 0/1/2 for X/Y/Z.")
-    return int(value)
-
-
-def _normalize_root_path(root_path: str | None) -> str:
-    value = "/" if root_path is None else str(root_path).strip()
-    if not value:
-        value = "/"
-    if not value.startswith("/"):
-        raise ValueError("USD root path must start with '/'.")
-    return value
-
-
-def _resolve_up_axis_index(up_axis: Any | None, *, default: int = 2) -> int:
-    resolved = _axis_index_from_any(up_axis)
-    if resolved is None:
-        return int(default)
-    return int(resolved)
-
-
-def _rotation_matrix_align_up(source_up_axis: int, target_up_axis: int) -> np.ndarray:
-    if source_up_axis == target_up_axis:
-        return np.eye(3, dtype=np.float32)
-
-    src = np.zeros(3, dtype=np.float64)
-    dst = np.zeros(3, dtype=np.float64)
-    src[source_up_axis] = 1.0
-    dst[target_up_axis] = 1.0
-
-    v = np.cross(src, dst)
-    s = float(np.linalg.norm(v))
-    c = float(np.dot(src, dst))
-
-    if s < 1.0e-12:
-        if c > 0.0:
-            return np.eye(3, dtype=np.float32)
-        ortho = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-        if abs(src[0]) > 0.9:
-            ortho = np.array([0.0, 1.0, 0.0], dtype=np.float64)
-        axis = np.cross(src, ortho)
-        axis /= np.linalg.norm(axis)
-        K = np.array(
-            [
-                [0.0, -axis[2], axis[1]],
-                [axis[2], 0.0, -axis[0]],
-                [-axis[1], axis[0], 0.0],
-            ],
-            dtype=np.float64,
-        )
-        R = np.eye(3, dtype=np.float64) + 2.0 * (K @ K)
-        return R.astype(np.float32)
-
-    K = np.array(
-        [
-            [0.0, -v[2], v[1]],
-            [v[2], 0.0, -v[0]],
-            [-v[1], v[0], 0.0],
-        ],
-        dtype=np.float64,
-    )
-    R = np.eye(3, dtype=np.float64) + K + (K @ K) * ((1.0 - c) / (s * s))
-    return R.astype(np.float32)
-
+# ---------------------------------------------------------------------------
+# Internal helpers – mesh loading
+# ---------------------------------------------------------------------------
 
 def _triangulate_faces(face_counts: np.ndarray, face_indices: np.ndarray) -> np.ndarray:
-    if face_counts.ndim != 1 or face_indices.ndim != 1:
-        raise ValueError("Invalid USD mesh face arrays.")
-    if int(face_counts.sum()) != int(face_indices.size):
-        raise ValueError("USD mesh face counts and indices are inconsistent.")
-
+    """Fan-triangulate polygonal faces into (T, 3) int32 triangle array."""
     tris: list[tuple[int, int, int]] = []
     offset = 0
     for count in face_counts.tolist():
@@ -201,255 +75,57 @@ def _triangulate_faces(face_counts: np.ndarray, face_indices: np.ndarray) -> np.
 
 
 def _fix_tet_winding(vertices: np.ndarray, tets: np.ndarray) -> np.ndarray:
-    p0 = vertices[tets[:, 0]]
-    p1 = vertices[tets[:, 1]]
-    p2 = vertices[tets[:, 2]]
-    p3 = vertices[tets[:, 3]]
+    """Ensure all tets have positive signed volume."""
+    p0, p1, p2, p3 = (vertices[tets[:, i]] for i in range(4))
     signed6v = np.einsum("ij,ij->i", np.cross(p1 - p0, p2 - p0), p3 - p0)
-    inverted = signed6v < 0.0
-    if np.any(inverted):
-        t0 = tets[inverted, 0].copy()
-        tets[inverted, 0] = tets[inverted, 1]
-        tets[inverted, 1] = t0
+    inv = signed6v < 0.0
+    if np.any(inv):
+        tets[inv, 0], tets[inv, 1] = tets[inv, 1].copy(), tets[inv, 0].copy()
     return tets
 
 
 def _extract_surface_tris(tets: np.ndarray) -> np.ndarray:
-    faces = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
-    counts: dict[tuple[int, int, int], list[tuple[int, int, int]]] = {}
+    """Extract boundary triangles from tet mesh (faces shared by exactly one tet)."""
+    tet_faces = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
+    counts: dict[tuple, list] = {}
     for tet in tets:
-        for f in faces:
+        for f in tet_faces:
             tri = (int(tet[f[0]]), int(tet[f[1]]), int(tet[f[2]]))
-            key = tuple(sorted(tri))
-            counts.setdefault(key, []).append(tri)
-    surface = [tris[0] for tris in counts.values() if len(tris) == 1]
-    return np.asarray(surface, dtype=np.int32)
+            counts.setdefault(tuple(sorted(tri)), []).append(tri)
+    return np.asarray([v[0] for v in counts.values() if len(v) == 1], dtype=np.int32)
 
 
-def _indices_from_value(value, width: int) -> np.ndarray | None:
-    if value is None:
-        return None
-    raw = np.asarray(value, dtype=np.int32)
-    if raw.size == 0:
-        return None
-    if raw.ndim == 1 and raw.size % width == 0:
-        out = raw.reshape(-1, width)
-    elif raw.ndim == 2 and raw.shape[1] == width:
-        out = raw
-    else:
-        return None
-    return np.asarray(out, dtype=np.int32)
-
-
-def _points_from_point_based(point_based) -> np.ndarray | None:
-    points_attr = point_based.GetPointsAttr()
-    if not points_attr or not points_attr.IsValid():
-        return None
-    points_value = points_attr.Get()
-    if points_value is None:
-        return None
-    points = np.asarray(points_value, dtype=np.float32)
-    if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
-        return None
-    return points
-
-
-def _tet_indices_from_tetmesh(tetmesh) -> np.ndarray | None:
-    attr = tetmesh.GetTetVertexIndicesAttr()
-    if not attr or not attr.IsValid():
-        return None
-    return _indices_from_value(attr.Get(), width=4)
-
-
-def _surface_tris_from_tetmesh(tetmesh) -> np.ndarray | None:
-    attr = tetmesh.GetSurfaceFaceVertexIndicesAttr()
-    if not attr or not attr.IsValid():
-        return None
-    return _indices_from_value(attr.Get(), width=3)
-
-
-def _mesh_color_from_path(path: str) -> ColorRgb:
-    name = path.lower()
-    if "bone" in name:
-        return (0.75, 0.78, 0.82)
-    if "muscle" in name or "bicep" in name:
-        return (0.92, 0.35, 0.35)
-    return (0.35, 0.62, 0.95)
-
-
-def _mesh_color_from_display_color(display_color: np.ndarray | None) -> ColorRgb | None:
-    if display_color is None:
-        return None
-    arr = np.asarray(display_color, dtype=np.float32)
-    if arr.size == 0:
-        return None
-
-    if arr.ndim == 1:
-        if arr.shape[0] < 3:
-            return None
-        rgb = arr[:3]
-    else:
-        if arr.shape[-1] < 3:
-            return None
-        rgb = arr[..., :3].reshape(-1, 3).mean(axis=0)
-
-    rgb = np.clip(rgb, 0.0, 1.0)
-    return float(rgb[0]), float(rgb[1]), float(rgb[2])
-
-
-def _read_primvar(prim, name: str) -> np.ndarray | None:
-    attr = prim.GetAttribute(f"primvars:{name}")
-    if not attr or not attr.IsValid():
-        return None
-    value = attr.Get()
-    if value is None:
-        return None
-    values = np.asarray(value)
-    if values.ndim == 0:
-        values = np.asarray(list(value))
-    if values.size == 0:
-        return None
-
-    idx_attr = prim.GetAttribute(f"primvars:{name}:indices")
-    if idx_attr and idx_attr.IsValid():
-        idx_value = idx_attr.Get()
-        if idx_value is not None:
-            indices = np.asarray(idx_value, dtype=np.int32)
-            if indices.ndim > 0 and indices.size > 0:
-                if np.any(indices < 0) or np.any(indices >= values.shape[0]):
-                    raise ValueError(f"Invalid primvar indices for {name} on {prim.GetPath()}")
-                return np.asarray(values[indices])
-    return np.asarray(values)
-
-
-def _list_primvar_names(prim) -> list[str]:
-    names = set()
-    for attr in prim.GetAttributes():
-        attr_name = attr.GetName()
-        if not attr_name.startswith("primvars:"):
+def _read_primvars(prim) -> PrimvarsMap:
+    """Read all authored primvars from a prim via PrimvarsAPI."""
+    from pxr import UsdGeom
+    result: PrimvarsMap = {}
+    for pv in UsdGeom.PrimvarsAPI(prim).GetAuthoredPrimvars():
+        name = str(pv.GetPrimvarName())
+        raw = pv.Get()
+        if raw is None:
+            result[name] = None
             continue
-        suffix = attr_name[len("primvars:") :]
-        base = suffix.split(":", 1)[0]
-        if base:
-            names.add(base)
-    return sorted(names)
+        arr = np.asarray(raw)
+        # Expand indexed primvars
+        indices = pv.GetIndices()
+        if indices is not None and len(indices) > 0:
+            idx = np.asarray(indices, dtype=np.int32)
+            if idx.max() < arr.shape[0]:
+                arr = arr[idx]
+        result[name] = arr
+    return result
 
 
-def _read_all_primvars(prim) -> PrimvarsMap:
-    primvars: PrimvarsMap = {}
-    for name in _list_primvar_names(prim):
-        primvars[name] = _read_primvar(prim, name)
-    return primvars
-
-
-def _load_mesh_with_newton_usd(prim) -> tuple[np.ndarray, np.ndarray] | None:
-    global _USE_NEWTON_USD_GET_MESH
-    if not _USE_NEWTON_USD_GET_MESH:
-        return None
-
-    try:
-        import newton.usd as newton_usd
-    except Exception:
-        _USE_NEWTON_USD_GET_MESH = False
-        return None
-
-    try:
-        mesh = newton_usd.get_mesh(prim)
-    except Exception:
-        _USE_NEWTON_USD_GET_MESH = False
-        return None
-
-    vertices = np.asarray(mesh.vertices, dtype=np.float32)
-    if vertices.ndim != 2 or vertices.shape[1] != 3 or vertices.shape[0] == 0:
-        return None
-
-    indices = np.asarray(mesh.indices, dtype=np.int32)
-    if indices.size == 0:
-        return None
-    if indices.ndim == 1:
-        if indices.size % 3 != 0:
-            return None
-        tris = indices.reshape(-1, 3)
-    elif indices.ndim == 2 and indices.shape[1] == 3:
-        tris = indices
-    else:
-        return None
-
-    return vertices, np.asarray(tris, dtype=np.int32)
-
-
-def _load_mesh_fallback(prim, UsdGeom) -> tuple[np.ndarray, np.ndarray] | None:
-    mesh_prim = UsdGeom.Mesh(prim)
-    points_value = mesh_prim.GetPointsAttr().Get()
-    counts_value = mesh_prim.GetFaceVertexCountsAttr().Get()
-    indices_value = mesh_prim.GetFaceVertexIndicesAttr().Get()
-    if points_value is None or counts_value is None or indices_value is None:
-        return None
-
-    points = np.asarray(points_value, dtype=np.float32)
-    face_counts = np.asarray(counts_value, dtype=np.int32)
-    face_indices = np.asarray(indices_value, dtype=np.int32)
-    if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
-        return None
-
-    tris = _triangulate_faces(face_counts, face_indices)
-    if tris.size == 0:
-        return None
-    return points, tris
-
-
-def _load_mesh_geometry(prim, UsdGeom) -> tuple[np.ndarray, np.ndarray] | None:
-    parsed = _load_mesh_with_newton_usd(prim)
-    if parsed is not None:
-        return parsed
-    return _load_mesh_fallback(prim, UsdGeom)
-
-
-def _load_tetmesh_geometry(prim, UsdGeom) -> tuple[np.ndarray, np.ndarray] | None:
-    tetmesh = UsdGeom.TetMesh(prim)
-    if not tetmesh:
-        return None
-
-    points = _points_from_point_based(tetmesh)
-    if points is None:
-        return None
-
-    tris = _surface_tris_from_tetmesh(tetmesh)
-    tet_indices = _tet_indices_from_tetmesh(tetmesh)
-
-    if (tris is None or tris.size == 0) and hasattr(UsdGeom.TetMesh, "ComputeSurfaceFaces"):
-        try:
-            tris = _indices_from_value(UsdGeom.TetMesh.ComputeSurfaceFaces(tetmesh), width=3)
-        except Exception:
-            tris = None
-
-    if (tris is None or tris.size == 0) and tet_indices is not None and tet_indices.shape[0] > 0:
-        valid = np.all((tet_indices >= 0) & (tet_indices < points.shape[0]), axis=1)
-        tet_indices = tet_indices[valid]
-        if tet_indices.shape[0] > 0:
-            tet_indices = _fix_tet_winding(points, tet_indices.copy())
-            tris = _extract_surface_tris(tet_indices)
-
-    if tris is None or tris.size == 0:
-        return None
-    return points, np.asarray(tris, dtype=np.int32), tet_indices
-
-
-def _transform_points_world(points: np.ndarray, prim, xform_cache, Gf) -> np.ndarray:
-    world_xform = xform_cache.GetLocalToWorldTransform(prim)
-    return np.asarray(
-        [world_xform.Transform(Gf.Vec3d(float(p[0]), float(p[1]), float(p[2]))) for p in points],
-        dtype=np.float32,
-    )
-
-
-def _iter_prims_under_root(stage, root_path: str, Usd):
-    if root_path == "/":
-        return stage.Traverse()
-    root_prim = stage.GetPrimAtPath(root_path)
-    if not root_prim.IsValid():
-        raise ValueError(f"USD root path does not exist: {root_path}")
-    return Usd.PrimRange(root_prim)
+def _color_from_primvars(primvars: PrimvarsMap) -> ColorRgb:
+    """Extract display color from primvars dict, default gray."""
+    dc = primvars.get("displayColor")
+    if dc is None:
+        return (0.7, 0.7, 0.7)
+    arr = np.asarray(dc, dtype=np.float32)
+    if arr.size < 3:
+        return (0.7, 0.7, 0.7)
+    rgb = np.clip(arr.reshape(-1, 3).mean(axis=0) if arr.ndim > 1 else arr[:3], 0.0, 1.0)
+    return (float(rgb[0]), float(rgb[1]), float(rgb[2]))
 
 
 def _load_meshes(
@@ -458,686 +134,420 @@ def _load_meshes(
     root_path: str = "/",
     y_up_to_z_up: bool = False,
 ) -> list[UsdMesh]:
-    try:
-        from pxr import Gf, Usd, UsdGeom
-    except ImportError as exc:
-        raise ImportError(
-            "USD import requires `pxr` (`usd-core`). Install with `uv add usd-core` or `pip install usd-core`."
-        ) from exc
+    from pxr import Gf, Usd, UsdGeom
 
-    root_path = _normalize_root_path(root_path)
+    root_path = root_path.strip() or "/"
     stage = Usd.Stage.Open(usd_path)
     if stage is None:
         raise FileNotFoundError(f"Failed to open USD file: {usd_path}")
 
-    stage_up_axis = _axis_index_from_any(str(UsdGeom.GetStageUpAxis(stage)))
-    up_axis_rotation = None
-    if y_up_to_z_up and stage_up_axis == 1:
-        up_axis_rotation = _rotation_matrix_align_up(1, 2)
-
-    prim_iter = _iter_prims_under_root(stage, root_path, Usd)
+    apply_rotation = y_up_to_z_up and str(UsdGeom.GetStageUpAxis(stage)).upper() == "Y"
     xform_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+
+    # Iterate prims under root
+    if root_path == "/":
+        prim_iter = stage.Traverse()
+    else:
+        root_prim = stage.GetPrimAtPath(root_path)
+        if not root_prim.IsValid():
+            raise ValueError(f"USD root path does not exist: {root_path}")
+        prim_iter = Usd.PrimRange(root_prim)
 
     meshes: list[UsdMesh] = []
     for prim in prim_iter:
         is_mesh = prim.IsA(UsdGeom.Mesh)
-        is_tetmesh = prim.IsA(UsdGeom.TetMesh)
-        if not is_mesh and not is_tetmesh:
+        is_tet = prim.IsA(UsdGeom.TetMesh)
+        if not is_mesh and not is_tet:
             continue
 
-        primvars = _read_all_primvars(prim)
-        tets: np.ndarray | None = None
+        tets = None
         if is_mesh:
-            result = _load_mesh_geometry(prim, UsdGeom)
-            if result is None:
+            # Try newton.usd.get_mesh (handles triangulation, normals)
+            verts, tris = None, None
+            try:
+                import newton.usd as nusd
+                nm = nusd.get_mesh(prim)
+                verts = np.asarray(nm.vertices, dtype=np.float32)
+                idx = np.asarray(nm.indices, dtype=np.int32)
+                tris = idx.reshape(-1, 3) if idx.ndim == 1 else idx
+            except Exception:
+                pass
+            # Fallback: direct pxr
+            if verts is None:
+                m = UsdGeom.Mesh(prim)
+                pts, cnts, idx = m.GetPointsAttr().Get(), m.GetFaceVertexCountsAttr().Get(), m.GetFaceVertexIndicesAttr().Get()
+                if pts is None or cnts is None or idx is None:
+                    continue
+                verts = np.asarray(pts, dtype=np.float32)
+                tris = _triangulate_faces(np.asarray(cnts, dtype=np.int32), np.asarray(idx, dtype=np.int32))
+                if tris.size == 0:
+                    continue
+
+        elif is_tet:
+            # Direct pxr for TetMesh
+            tm = UsdGeom.TetMesh(prim)
+            pts_val = tm.GetPointsAttr().Get()
+            if pts_val is None:
                 continue
-            points, tris = result
-        elif is_tetmesh:
-            result = _load_tetmesh_geometry(prim, UsdGeom)
-            if result is None:
+            verts = np.asarray(pts_val, dtype=np.float32)
+
+            # Surface triangles
+            tris = None
+            surf_attr = tm.GetSurfaceFaceVertexIndicesAttr()
+            if surf_attr and surf_attr.IsValid():
+                sv = surf_attr.Get()
+                if sv is not None:
+                    raw = np.asarray(sv, dtype=np.int32)
+                    if raw.size > 0:
+                        tris = raw.reshape(-1, 3) if raw.ndim == 1 else raw
+
+            # Tet indices
+            tet_attr = tm.GetTetVertexIndicesAttr()
+            if tet_attr and tet_attr.IsValid():
+                tv = tet_attr.Get()
+                if tv is not None:
+                    raw = np.asarray(tv, dtype=np.int32)
+                    if raw.size > 0:
+                        tets = raw.reshape(-1, 4) if raw.ndim == 1 else raw
+
+            # Compute surface from tets if needed
+            if (tris is None or tris.size == 0) and tets is not None and tets.shape[0] > 0:
+                valid = np.all((tets >= 0) & (tets < verts.shape[0]), axis=1)
+                tets = _fix_tet_winding(verts, tets[valid].copy())
+                tris = _extract_surface_tris(tets)
+
+            if tris is None or tris.size == 0:
                 continue
-            points, tris, tets = result
-        else:
+
+        if verts.ndim != 2 or verts.shape[1] != 3 or verts.shape[0] == 0:
             continue
 
-        points_world = _transform_points_world(points, prim, xform_cache, Gf)
-        if up_axis_rotation is not None:
-            points_world = np.asarray(points_world @ up_axis_rotation.T, dtype=np.float32)
-
+        # World transform
+        world = xform_cache.GetLocalToWorldTransform(prim)
+        verts = np.asarray(
+            [world.Transform(Gf.Vec3d(*p.astype(float))) for p in verts],
+            dtype=np.float32,
+        )
+        if apply_rotation:
+            verts = (verts @ _Y_TO_Z.T).astype(np.float32)
         if tets is not None and tets.size > 0:
-            tets = _fix_tet_winding(points_world, tets.copy())
+            tets = _fix_tet_winding(verts, tets.copy())
 
-        mesh_path = str(prim.GetPath())
-        mesh_color = _mesh_color_from_display_color(primvars.get("displayColor"))
-        if mesh_color is None:
-            mesh_color = _mesh_color_from_path(mesh_path)
-
+        primvars = _read_primvars(prim)
         meshes.append(UsdMesh(
-            mesh_path=mesh_path,
-            vertices=points_world,
+            mesh_path=str(prim.GetPath()),
+            vertices=verts,
             faces=np.asarray(tris, dtype=np.int32),
-            color=mesh_color,
-            primvars=primvars,
+            color=_color_from_primvars(primvars),
             tets=tets,
+            primvars=primvars,
         ))
 
     if not meshes:
-        raise ValueError(f"No renderable Mesh/TetMesh found under '{root_path}' in USD file: {usd_path}")
+        raise ValueError(f"No renderable Mesh/TetMesh found under '{root_path}' in: {usd_path}")
     return meshes
 
 
-def _center_meshes(meshes: list[UsdMesh], up_axis: int) -> tuple[list[UsdMesh], np.ndarray]:
-    all_points = np.vstack([m.vertices for m in meshes])
-    bbox_min, bbox_max = all_points.min(axis=0), all_points.max(axis=0)
-    anchor = 0.5 * (bbox_min + bbox_max)
-    anchor[int(up_axis)] = bbox_min[int(up_axis)]
+def _center_meshes(meshes: list[UsdMesh], up_axis: int) -> list[UsdMesh]:
+    all_pts = np.vstack([m.vertices for m in meshes])
+    anchor = 0.5 * (all_pts.min(axis=0) + all_pts.max(axis=0))
+    anchor[up_axis] = all_pts[:, up_axis].min()
     for m in meshes:
         m.vertices = m.vertices - anchor
-    return meshes, anchor.astype(np.float32)
+    return meshes
 
 
-def _summarize_primvars(primvars_by_path: dict[str, PrimvarsMap]) -> dict[str, dict[str, Any]]:
-    summary: dict[str, dict[str, Any]] = {}
-    for path, primvars in primvars_by_path.items():
-        info: dict[str, Any] = {}
-        for key, value in sorted(primvars.items()):
-            if value is None:
-                info[key] = "None"
-                continue
-            arr = np.asarray(value)
-            shape = tuple(arr.shape)
-            if arr.dtype.kind in {"U", "S", "O"}:
-                info[key] = f"shape={shape}, unique={np.unique(arr).tolist()}"
-            else:
-                info[key] = f"shape={shape}, dtype={arr.dtype}"
-        summary[path] = info
-    return summary
-
-
-def _as_vec3(value, Gf):
-    arr = np.asarray(value, dtype=np.float32).reshape(-1)
-    if arr.size != 3:
-        raise ValueError(f"Expected 3 values for vec3, got {arr.size}.")
-    return Gf.Vec3f(float(arr[0]), float(arr[1]), float(arr[2]))
-
+# ---------------------------------------------------------------------------
+# _UsdLayerEditor – layered USD editing (direct pxr API)
+# ---------------------------------------------------------------------------
 
 class _UsdLayerEditor:
-    """Layered USD editor with simple prim/property editing methods."""
+    """Layered USD editor: overlay stage on top of source USD via sublayers."""
 
-    def __init__(self, source_usd_path: str, output_path: str, copy_usd: bool = True):
-        try:
-            from pxr import Gf, Sdf, Usd, UsdGeom
-        except ImportError as exc:
-            raise ImportError(
-                "USD export requires `pxr` (`usd-core`). Install with `uv add usd-core` or `pip install usd-core`."
-            ) from exc
-
-        self.Gf = Gf
-        self.Sdf = Sdf
-        self.Usd = Usd
-        self.UsdGeom = UsdGeom
+    def __init__(self, source_usd_path: str, output_path: str, *, copy_usd: bool = True):
+        from pxr import Gf, Sdf, Usd, UsdGeom
+        self.Gf, self.Sdf, self.Usd, self.UsdGeom = Gf, Sdf, Usd, UsdGeom
 
         self.source_usd_path = os.path.abspath(source_usd_path)
         self.output_path = os.path.abspath(output_path)
-        self.copy_usd = bool(copy_usd)
 
-        if not os.path.isfile(self.source_usd_path):
-            raise FileNotFoundError(f"USD source file not found: {self.source_usd_path}")
+        os.makedirs(os.path.dirname(self.output_path) or ".", exist_ok=True)
+        if copy_usd:
+            self._copy_source()
 
-        self._ensure_output_dir()
-        if self.copy_usd:
-            self._copy_source_to_output_dir()
-
-        self.stage, self._edit_layer = self._open_overlay_stage()
+        # Open overlay stage with source as sublayer
+        layer = Sdf.Layer.FindOrOpen(self.output_path) or Sdf.Layer.CreateNew(self.output_path)
+        src_rel = os.path.relpath(self.source_usd_path, os.path.dirname(self.output_path)).replace("\\", "/")
+        if src_rel not in list(layer.subLayerPaths):
+            layer.subLayerPaths = list(layer.subLayerPaths) + [src_rel]
+            layer.Save()
+        self.stage = Usd.Stage.Open(layer)
+        self.stage.SetEditTarget(layer)
+        self._layer = layer
         self._time_start: int | None = None
         self._time_end: int | None = None
-        self._init_metadata_scope()
 
-    def _ensure_output_dir(self) -> None:
-        output_dir = os.path.dirname(self.output_path)
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
+        # Metadata scope
+        dp = self.stage.GetDefaultPrim()
+        scope_path = f"{dp.GetPath()}/anim" if dp and dp.IsValid() else "/anim"
+        scope = self.stage.DefinePrim(scope_path, "Scope")
+        self._frame_attr = scope.CreateAttribute("frameNum", Sdf.ValueTypeNames.Int, custom=True)
+        scope.CreateAttribute("sourceUsd", Sdf.ValueTypeNames.String, custom=True).Set(
+            self.source_usd_path.replace("\\", "/"))
+        scope.CreateAttribute("copyUsd", Sdf.ValueTypeNames.Bool, custom=True).Set(copy_usd)
 
-    def _copy_source_to_output_dir(self) -> None:
+    def _copy_source(self):
         import shutil
-
         dst = os.path.join(os.path.dirname(self.output_path), os.path.basename(self.source_usd_path))
         dst = os.path.abspath(dst)
         if os.path.normcase(dst) != os.path.normcase(self.source_usd_path):
             shutil.copy2(self.source_usd_path, dst)
         self.source_usd_path = dst
 
-    @staticmethod
-    def _to_layer_path(path: str, relative_to: str | None = None) -> str:
-        abs_path = os.path.abspath(path)
-        if relative_to is not None:
-            abs_path = os.path.relpath(abs_path, os.path.dirname(os.path.abspath(relative_to)))
-        return abs_path.replace("\\", "/")
-
-    def _open_overlay_stage(self):
-        root_layer = self.Sdf.Layer.FindOrOpen(self.output_path)
-        if root_layer is None:
-            root_layer = self.Sdf.Layer.CreateNew(self.output_path)
-        if root_layer is None:
-            raise RuntimeError(f"Failed to create USD layer: {self.output_path}")
-
-        src_layer = self._to_layer_path(self.source_usd_path, self.output_path)
-        sublayers = list(root_layer.subLayerPaths)
-        if src_layer not in sublayers:
-            sublayers.append(src_layer)
-            root_layer.subLayerPaths = sublayers
-            root_layer.Save()
-
-        stage = self.Usd.Stage.Open(root_layer)
-        if stage is None:
-            raise RuntimeError(f"Failed to open composed USD stage: {root_layer.identifier}")
-        stage.SetEditTarget(root_layer)
-        return stage, root_layer
-
-    def _init_metadata_scope(self) -> None:
-        default_prim = self.stage.GetDefaultPrim()
-        if default_prim is not None and default_prim.IsValid():
-            scope_path = f"{default_prim.GetPath()}/anim"
-        else:
-            scope_path = "/anim"
-        scope = self.stage.DefinePrim(scope_path, "Scope")
-        self._frame_attr = scope.CreateAttribute("frameNum", self.Sdf.ValueTypeNames.Int, custom=True)
-        src_attr = scope.CreateAttribute("sourceUsd", self.Sdf.ValueTypeNames.String, custom=True)
-        copy_attr = scope.CreateAttribute("copyUsd", self.Sdf.ValueTypeNames.Bool, custom=True)
-        src_attr.Set(self.source_usd_path.replace("\\", "/"))
-        copy_attr.Set(self.copy_usd)
-
-    def _touch_time(self, frame: int) -> None:
+    def _touch_time(self, frame: int):
         if self._time_start is None or frame < self._time_start:
             self._time_start = frame
         if self._time_end is None or frame > self._time_end:
             self._time_end = frame
-        root_layer = self.stage.GetRootLayer()
-        if root_layer is not None:
-            root_layer.startTimeCode = float(self._time_start)
-            root_layer.endTimeCode = float(self._time_end)
-        if self._edit_layer is not None and self._edit_layer != root_layer:
-            self._edit_layer.startTimeCode = float(self._time_start)
-            self._edit_layer.endTimeCode = float(self._time_end)
+        for layer in (self.stage.GetRootLayer(), self._layer):
+            if layer:
+                layer.startTimeCode = float(self._time_start)
+                layer.endTimeCode = float(self._time_end)
 
-    def mark_frame(self, frame: int) -> None:
-        f = int(frame)
-        self._frame_attr.Set(f, f)
-        self._touch_time(f)
+    def mark_frame(self, frame: int):
+        self._frame_attr.Set(frame, frame)
+        self._touch_time(frame)
 
-    def define_prim(self, prim_path: str, prim_type: str = "Scope") -> bool:
-        path = str(prim_path).strip()
-        if not path.startswith("/"):
-            raise ValueError(f"Invalid prim path: {prim_path!r}")
-        prim = self.stage.DefinePrim(path, prim_type)
-        return bool(prim and prim.IsValid())
+    # -- Scalar / custom property writing --
 
-    def remove_prim(self, prim_path: str) -> bool:
-        path = str(prim_path).strip()
-        if not path.startswith("/"):
-            raise ValueError(f"Invalid prim path: {prim_path!r}")
-        prim = self.stage.GetPrimAtPath(path)
-        if prim is None or not prim.IsValid():
-            return False
-        self.stage.RemovePrim(path)
-        return True
-
-    def _resolve_value_type(self, value: Any, value_type: str | None):
+    def _sdf_type(self, value, value_type: str | None):
+        """Resolve Sdf type: explicit name or infer from Python type."""
         if value_type:
-            t = getattr(self.Sdf.ValueTypeNames, str(value_type), None)
-            if t is None:
-                raise ValueError(f"Unsupported value_type: {value_type!r}")
-            return t
+            return getattr(self.Sdf.ValueTypeNames, value_type)
         if isinstance(value, bool):
             return self.Sdf.ValueTypeNames.Bool
-        if isinstance(value, int) and not isinstance(value, bool):
+        if isinstance(value, int):
             return self.Sdf.ValueTypeNames.Int
         if isinstance(value, float):
             return self.Sdf.ValueTypeNames.Float
         if isinstance(value, str):
             return self.Sdf.ValueTypeNames.String
-        arr = np.asarray(value)
-        if arr.ndim == 1 and arr.size == 3:
-            return self.Sdf.ValueTypeNames.Float3
-        raise ValueError("Cannot infer USD type from value. Pass value_type explicitly.")
+        raise ValueError(f"Cannot infer USD type from {type(value).__name__}. Pass value_type=.")
 
-    def _coerce_value(self, value: Any, value_type):
-        type_name = str(value_type)
-        if "Float3" in type_name or "Color3f" in type_name:
-            return _as_vec3(value, self.Gf)
-        if "Bool" in type_name:
+    def _coerce(self, value, sdf_type):
+        """Coerce Python value to USD-compatible type."""
+        tn = str(sdf_type)
+        if "Float3" in tn or "Color3f" in tn:
+            a = np.asarray(value, dtype=np.float32).ravel()
+            return self.Gf.Vec3f(float(a[0]), float(a[1]), float(a[2]))
+        if "Bool" in tn:
             return bool(value)
-        if "Int" in type_name:
+        if "Int" in tn:
             return int(value)
-        if "Float" in type_name or "Double" in type_name:
+        if "Float" in tn or "Double" in tn:
             return float(value)
-        if "String" in type_name:
+        if "String" in tn:
             return str(value)
         return value
 
-    def _resolve_primvar_type(self, value: Any, value_type: str | None):
-        if value_type:
-            t = getattr(self.Sdf.ValueTypeNames, str(value_type), None)
-            if t is None:
-                raise ValueError(f"Unsupported value_type: {value_type!r}")
-            return t
-
-        arr = np.asarray(value)
-        if arr.ndim == 2 and arr.shape[1] == 3:
-            return self.Sdf.ValueTypeNames.Float3Array
-        if arr.ndim == 1 and arr.size > 0:
-            if arr.dtype.kind in {"b"}:
-                return self.Sdf.ValueTypeNames.BoolArray
-            if arr.dtype.kind in {"i", "u"}:
-                return self.Sdf.ValueTypeNames.IntArray
-            if arr.dtype.kind in {"f"}:
-                return self.Sdf.ValueTypeNames.FloatArray
-
-        return self._resolve_value_type(value, None)
-
-    def _resolve_interpolation_token(self, interpolation: str | None):
-        if interpolation is None:
-            return None
-        key = str(interpolation).strip()
-        if not key:
-            return None
-        token = getattr(self.UsdGeom.Tokens, key, None)
-        if token is None:
-            token = getattr(self.UsdGeom.Tokens, key.lower(), None)
-        if token is None and key.lower() == "facevarying":
-            token = self.UsdGeom.Tokens.faceVarying
-        if token is None:
-            raise ValueError(
-                f"Unsupported interpolation: {interpolation!r}. "
-                "Use one of constant/uniform/varying/vertex/faceVarying."
-            )
-        return token
-
-    def _coerce_primvar_value(self, value: Any, value_type):
-        type_name = str(value_type)
-        if "Array" not in type_name:
-            return self._coerce_value(value, value_type)
-
-        if any(k in type_name for k in ("Color3fArray", "Float3Array", "Vector3fArray", "Point3fArray", "Normal3fArray")):
-            arr = np.asarray(value, dtype=np.float32)
-            if arr.ndim == 1:
-                arr = arr.reshape(1, -1)
-            if arr.ndim != 2 or arr.shape[1] != 3:
-                raise ValueError(f"Expected Nx3 array for {type_name}, got shape {tuple(arr.shape)}.")
-            return [self.Gf.Vec3f(float(x), float(y), float(z)) for x, y, z in arr]
-
-        arr = np.asarray(value)
-        if "BoolArray" in type_name:
-            return [bool(v) for v in arr.reshape(-1).tolist()]
-        if "IntArray" in type_name:
-            return np.asarray(value, dtype=np.int32).reshape(-1).tolist()
-        if "FloatArray" in type_name or "DoubleArray" in type_name:
-            return np.asarray(value, dtype=np.float32).reshape(-1).astype(float).tolist()
-        if "StringArray" in type_name or "TokenArray" in type_name:
-            return [str(v) for v in arr.reshape(-1).tolist()]
-        return value
-
-    def set_custom_property(
-        self,
-        prim_path: str,
-        name: str,
-        value: Any,
-        *,
-        value_type: str | None = None,
-        frame: int | None = None,
-        custom: bool = True,
-        create_prim_type: str | None = None,
-    ) -> bool:
+    def set_custom_property(self, prim_path: str, name: str, value, *,
+                            value_type: str | None = None, frame: int | None = None,
+                            create_prim: str | None = None) -> bool:
         prim = self.stage.GetPrimAtPath(prim_path)
-        if (prim is None or not prim.IsValid()) and create_prim_type is not None:
-            self.define_prim(prim_path, create_prim_type)
+        if not prim.IsValid() and create_prim:
+            self.stage.DefinePrim(prim_path, create_prim)
             prim = self.stage.GetPrimAtPath(prim_path)
-        if prim is None or not prim.IsValid():
+        if not prim.IsValid():
             return False
 
-        usd_type = self._resolve_value_type(value, value_type)
-        attr = prim.CreateAttribute(name, usd_type, custom=bool(custom))
-        if not attr or not attr.IsValid():
-            return False
-
-        v = self._coerce_value(value, usd_type)
+        sdf_t = self._sdf_type(value, value_type)
+        attr = prim.CreateAttribute(name, sdf_t, custom=True)
+        v = self._coerce(value, sdf_t)
         if frame is None:
             attr.Set(v)
         else:
-            f = int(frame)
-            attr.Set(v, f)
-            self.mark_frame(f)
+            attr.Set(v, int(frame))
+            self.mark_frame(int(frame))
         return True
 
-    def set_primvar(
-        self,
-        prim_path: str,
-        name: str,
-        value: Any,
-        *,
-        value_type: str | None = None,
-        interpolation: str | None = None,
-        frame: int | None = None,
-        create_prim_type: str | None = None,
-    ) -> bool:
+    # -- Primvar writing (direct PrimvarsAPI) --
+
+    def _sdf_primvar_type(self, value, value_type: str | None):
+        """Resolve Sdf type for array primvar values."""
+        if value_type:
+            return getattr(self.Sdf.ValueTypeNames, value_type)
+        arr = np.asarray(value)
+        if arr.ndim == 2 and arr.shape[1] == 3:
+            return self.Sdf.ValueTypeNames.Float3Array
+        if arr.ndim >= 1 and arr.dtype.kind == "f":
+            return self.Sdf.ValueTypeNames.FloatArray
+        if arr.ndim >= 1 and arr.dtype.kind in ("i", "u"):
+            return self.Sdf.ValueTypeNames.IntArray
+        return self._sdf_type(value, None)
+
+    def _coerce_primvar(self, value, sdf_type):
+        """Coerce value for primvar Set()."""
+        tn = str(sdf_type)
+        if "Array" not in tn:
+            return self._coerce(value, sdf_type)
+        arr = np.asarray(value, dtype=np.float32 if "Float" in tn or "Color" in tn else None)
+        if "Color3fArray" in tn or "Float3Array" in tn or "Normal3fArray" in tn or "Point3fArray" in tn:
+            if arr.ndim == 1:
+                arr = arr.reshape(1, -1)
+            return [self.Gf.Vec3f(float(x), float(y), float(z)) for x, y, z in arr]
+        if "IntArray" in tn:
+            return np.asarray(value, dtype=np.int32).ravel().tolist()
+        if "FloatArray" in tn or "DoubleArray" in tn:
+            return np.asarray(value, dtype=np.float32).ravel().astype(float).tolist()
+        if "BoolArray" in tn:
+            return [bool(v) for v in np.asarray(value).ravel()]
+        return value
+
+    def set_primvar(self, prim_path: str, name: str, value, *,
+                    value_type: str | None = None, interpolation: str = "constant",
+                    frame: int | None = None) -> bool:
         prim = self.stage.GetPrimAtPath(prim_path)
-        if (prim is None or not prim.IsValid()) and create_prim_type is not None:
-            self.define_prim(prim_path, create_prim_type)
-            prim = self.stage.GetPrimAtPath(prim_path)
-        if prim is None or not prim.IsValid():
+        if not prim.IsValid():
             return False
 
-        gprim = self.UsdGeom.Gprim(prim)
-        if not gprim:
-            return False
-
-        usd_type = self._resolve_primvar_type(value, value_type)
-        interpolation_token = self._resolve_interpolation_token(interpolation)
-
-        primvars_api = self.UsdGeom.PrimvarsAPI(prim)
-        pv = primvars_api.GetPrimvar(name)
+        sdf_t = self._sdf_primvar_type(value, value_type)
+        interp = getattr(self.UsdGeom.Tokens, interpolation, self.UsdGeom.Tokens.constant)
+        api = self.UsdGeom.PrimvarsAPI(prim)
+        pv = api.GetPrimvar(name)
         if not pv:
-            if interpolation_token is None:
-                interpolation_token = self.UsdGeom.Tokens.constant
-            pv = primvars_api.CreatePrimvar(name, usd_type, interpolation_token)
-        elif interpolation_token is not None:
-            pv.SetInterpolation(interpolation_token)
+            pv = api.CreatePrimvar(name, sdf_t, interp)
+        else:
+            pv.SetInterpolation(interp)
 
-        coerced = self._coerce_primvar_value(value, usd_type)
+        coerced = self._coerce_primvar(value, sdf_t)
         if frame is None:
             pv.Set(coerced)
         else:
-            f = int(frame)
-            pv.Set(coerced, f)
-            self.mark_frame(f)
+            pv.Set(coerced, int(frame))
+            self.mark_frame(int(frame))
         return True
 
     def set_display_color(self, prim_path: str, color: ColorRgb, *, frame: int | None = None) -> bool:
-        rgb = np.clip(np.asarray(color, dtype=np.float32), 0.0, 1.0)
-        return self.set_primvar(
-            prim_path=prim_path,
-            name="displayColor",
-            value=[[float(rgb[0]), float(rgb[1]), float(rgb[2])]],
-            value_type="Color3fArray",
-            interpolation="constant",
-            frame=frame,
-        )
+        rgb = np.clip(color, 0.0, 1.0).tolist() if isinstance(color, np.ndarray) else [max(0, min(1, c)) for c in color]
+        return self.set_primvar(prim_path, "displayColor", [rgb],
+                                value_type="Color3fArray", interpolation="constant", frame=frame)
 
-    def set_display_colors(self, colors_by_prim: dict[str, ColorRgb], *, frame: int | None = None) -> dict[str, int]:
-        written = 0
-        missing = 0
-        for prim_path, color in colors_by_prim.items():
-            if self.set_display_color(prim_path, color, frame=frame):
-                written += 1
-            else:
-                missing += 1
-        return {"written": written, "missing": missing}
+    # -- Save / close --
 
-    def save(self) -> None:
-        root_layer = self.stage.GetRootLayer()
-        if root_layer is not None:
-            root_layer.Save()
-        if self._edit_layer is not None and self._edit_layer != root_layer:
-            self._edit_layer.Save()
+    def save(self):
+        for layer in (self.stage.GetRootLayer(), self._layer):
+            if layer:
+                layer.Save()
 
-    def close(self) -> None:
+    def close(self):
         self.save()
 
-    def __enter__(self) -> "_UsdLayerEditor":
+    def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
-        del exc_type, exc, tb
+    def __exit__(self, *_):
         self.close()
 
+
+# ---------------------------------------------------------------------------
+# UsdIO – public API
+# ---------------------------------------------------------------------------
 
 class UsdIO:
     """Minimal public USD API for mesh reading and layered editing.
 
-    Quick start:
-        from VMuscle.usd_io import UsdIO
+    Quick start::
 
         usd = UsdIO("data/muscle/model/bicep.usd").read()
-        meshes = usd.meshes
-        focus_points = usd.focus_points
+        for mesh in usd.meshes:
+            print(mesh.mesh_path, mesh.vertices.shape, mesh.primvars.keys())
 
-        with usd.start("output/bicep.anim.usda", copy_usd=True):
-            usd.add_prim("/anim/debug", "Scope")
-            usd.set_custom("/anim/debug", "note", "hello")
+        with usd.start("output/bicep.anim.usda"):
             usd.set_runtime("activation", 0.5, frame=0)
-            usd.set_primvar("/character/muscle/bicep", "displayColor", [[1.0, 0.2, 0.2]], value_type="Color3fArray")
-            usd.set_color("/character/muscle/bicep", (1.0, 0.2, 0.2), frame=0)
-
-    Reading API:
-    - read(): load meshes from source USD.
-    - meshes / mesh_count / focus_points / base_colors / center_shift: loaded data.
-
-    Layer editing API:
-    - start(output_path, copy_usd=True): open a layered output stage.
-    - add_prim(path, prim_type="Scope")
-    - remove_prim(path)
-    - set_custom(path, name, value, ...)
-    - set_primvar(path, name, value, ...)
-    - set_runtime(name, value, ...): write under runtime scope.
-    - set_color(path, color, frame=None)
-    - set_colors({path: color}, frame=None)
-    - save() / close()
+            usd.set_primvar("/character/muscle", "displayColor", [[1,0,0]], value_type="Color3fArray")
     """
 
-    def __init__(
-        self,
-        source_usd_path: str,
-        *,
-        root_path: str = "/",
-        y_up_to_z_up: bool = False,
-        center_model: bool = False,
-        up_axis: Any = 2,
-    ):
+    def __init__(self, source_usd_path: str, *, root_path: str = "/",
+                 y_up_to_z_up: bool = False, center_model: bool = False):
         self.source_usd_path = os.path.abspath(str(source_usd_path))
-        self.root_path = _normalize_root_path(root_path)
+        self.root_path = root_path.strip() or "/"
         self.y_up_to_z_up = bool(y_up_to_z_up)
         self.center_model = bool(center_model)
-        self.up_axis = _resolve_up_axis_index(up_axis, default=2)
-        self._cached: UsdMeshSet | None = None
+        self._up_axis = 2 if y_up_to_z_up else 1
+        self._meshes: list[UsdMesh] | None = None
         self._editor: _UsdLayerEditor | None = None
         self._runtime_prim = "/anim/runtime"
 
         if not os.path.isfile(self.source_usd_path):
             raise FileNotFoundError(f"USD source file not found: {self.source_usd_path}")
 
-    @staticmethod
-    def is_usd_path(path: str) -> bool:
-        return str(path).lower().endswith((".usd", ".usda", ".usdc", ".usdz"))
-
-    @staticmethod
-    def default_anim_path(source_usd_path: str, *, output_dir: str = "output") -> str:
-        stem = os.path.splitext(os.path.basename(str(source_usd_path)))[0]
-        return os.path.abspath(os.path.join(str(output_dir), f"{stem}.anim.usda"))
-
     def read(self) -> "UsdIO":
-        if self._cached is not None:
+        if self._meshes is not None:
             return self
-
-        loaded = _load_meshes(
-            self.source_usd_path,
-            root_path=self.root_path,
-            y_up_to_z_up=self.y_up_to_z_up,
-        )
-        center_shift = np.zeros(3, dtype=np.float32)
+        self._meshes = _load_meshes(
+            self.source_usd_path, root_path=self.root_path, y_up_to_z_up=self.y_up_to_z_up)
         if self.center_model:
-            loaded, center_shift = _center_meshes(loaded, self.up_axis)
-
-        self._cached = UsdMeshSet(
-            meshes=loaded,
-            center_shift=center_shift,
-        )
+            _center_meshes(self._meshes, self._up_axis)
         return self
-
-    def _require_data(self) -> UsdMeshSet:
-        if self._cached is None:
-            raise RuntimeError("USD meshes are not loaded. Call read() first.")
-        return self._cached
 
     @property
     def meshes(self) -> list[UsdMesh]:
-        return self._require_data().meshes
-
-    @property
-    def mesh_count(self) -> int:
-        return len(self.meshes)
+        if self._meshes is None:
+            raise RuntimeError("Call read() first.")
+        return self._meshes
 
     @property
     def focus_points(self) -> np.ndarray:
-        return self._require_data().focus_points
+        m = self.meshes
+        return np.vstack([x.vertices for x in m]).astype(np.float32) if m else np.zeros((0, 3), np.float32)
 
-    @property
-    def base_colors(self) -> dict[str, ColorRgb]:
-        return self._require_data().base_colors
-
-    @property
-    def center_shift(self) -> np.ndarray:
-        return self._require_data().center_shift
-
-    def start(
-        self,
-        output_path: str | None = None,
-        *,
-        copy_usd: bool = True,
-        runtime_prim: str = "/anim/runtime",
-    ) -> "UsdIO":
+    def start(self, output_path: str | None = None, *,
+              copy_usd: bool = True, runtime_prim: str = "/anim/runtime") -> "UsdIO":
         if output_path is None:
-            output_path = self.default_anim_path(self.source_usd_path)
+            stem = os.path.splitext(os.path.basename(self.source_usd_path))[0]
+            output_path = os.path.abspath(os.path.join("output", f"{stem}.anim.usda"))
         self.close()
-        self._editor = _UsdLayerEditor(
-            source_usd_path=self.source_usd_path,
-            output_path=output_path,
-            copy_usd=copy_usd,
-        )
-        self._runtime_prim = _normalize_root_path(runtime_prim)
-        self.add_prim(self._runtime_prim, "Scope")
+        self._editor = _UsdLayerEditor(self.source_usd_path, output_path, copy_usd=copy_usd)
+        self._runtime_prim = runtime_prim.strip() or "/anim/runtime"
+        self._editor.stage.DefinePrim(self._runtime_prim, "Scope")
         return self
 
     @property
     def output_path(self) -> str | None:
-        if self._editor is None:
-            return None
-        return self._editor.output_path
+        return self._editor.output_path if self._editor else None
 
-    @property
-    def source_path(self) -> str:
-        if self._editor is None:
-            return self.source_usd_path
-        return self._editor.source_usd_path
+    def set_custom(self, prim_path: str, name: str, value, *,
+                   value_type: str | None = None, frame: int | None = None) -> bool:
+        return self._editor.set_custom_property(
+            prim_path, name, value, value_type=value_type, frame=frame, create_prim="Scope")
 
-    def _require_editor(self) -> _UsdLayerEditor:
-        if self._editor is None:
-            raise RuntimeError("Layer editor is not open. Call start(output_path, copy_usd=...) first.")
-        return self._editor
+    def set_runtime(self, name: str, value, *,
+                    value_type: str | None = None, frame: int | None = None) -> bool:
+        return self.set_custom(self._runtime_prim, name, value, value_type=value_type, frame=frame)
 
-    def mark_frame(self, frame: int) -> None:
-        self._require_editor().mark_frame(frame)
-
-    def add_prim(self, prim_path: str, prim_type: str = "Scope") -> bool:
-        return self._require_editor().define_prim(prim_path, prim_type)
-
-    def remove_prim(self, prim_path: str) -> bool:
-        return self._require_editor().remove_prim(prim_path)
-
-    def set_custom(
-        self,
-        prim_path: str,
-        name: str,
-        value: Any,
-        *,
-        value_type: str | None = None,
-        frame: int | None = None,
-        custom: bool = True,
-        create_prim_type: str | None = "Scope",
-    ) -> bool:
-        return self._require_editor().set_custom_property(
-            prim_path=prim_path,
-            name=name,
-            value=value,
-            value_type=value_type,
-            frame=frame,
-            custom=custom,
-            create_prim_type=create_prim_type,
-        )
-
-    def set_runtime(
-        self,
-        name: str,
-        value: Any,
-        *,
-        value_type: str | None = None,
-        frame: int | None = None,
-        custom: bool = True,
-    ) -> bool:
-        return self.set_custom(
-            self._runtime_prim,
-            name,
-            value,
-            value_type=value_type,
-            frame=frame,
-            custom=custom,
-            create_prim_type="Scope",
-        )
-
-    def set_primvar(
-        self,
-        prim_path: str,
-        name: str,
-        value: Any,
-        *,
-        value_type: str | None = None,
-        interpolation: str | None = None,
-        frame: int | None = None,
-        create_prim_type: str | None = None,
-    ) -> bool:
-        return self._require_editor().set_primvar(
-            prim_path=prim_path,
-            name=name,
-            value=value,
-            value_type=value_type,
-            interpolation=interpolation,
-            frame=frame,
-            create_prim_type=create_prim_type,
-        )
+    def set_primvar(self, prim_path: str, name: str, value, *,
+                    value_type: str | None = None, interpolation: str = "constant",
+                    frame: int | None = None) -> bool:
+        return self._editor.set_primvar(
+            prim_path, name, value, value_type=value_type, interpolation=interpolation, frame=frame)
 
     def set_color(self, prim_path: str, color: ColorRgb, *, frame: int | None = None) -> bool:
-        rgb = np.clip(np.asarray(color, dtype=np.float32), 0.0, 1.0)
-        return self.set_primvar(
-            prim_path=prim_path,
-            name="displayColor",
-            value=[[float(rgb[0]), float(rgb[1]), float(rgb[2])]],
-            value_type="Color3fArray",
-            interpolation="constant",
-            frame=frame,
-        )
+        return self._editor.set_display_color(prim_path, color, frame=frame)
 
-    def set_colors(self, colors_by_prim: dict[str, ColorRgb], *, frame: int | None = None) -> dict[str, int]:
-        return self._require_editor().set_display_colors(colors_by_prim, frame=frame)
+    def save(self):
+        if self._editor:
+            self._editor.save()
 
-    def save(self) -> None:
-        if self._editor is None:
-            return
-        self._editor.save()
+    def close(self):
+        if self._editor:
+            self._editor.close()
+            self._editor = None
 
-    def close(self) -> None:
-        if self._editor is None:
-            return
-        self._editor.close()
-        self._editor = None
-
-    def __enter__(self) -> "UsdIO":
+    def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
-        del exc_type, exc, tb
+    def __exit__(self, *_):
         self.close()
 
 
-__all__ = [
-    "UsdIO",
-    "add_usd_arguments",
-]
+__all__ = ["UsdIO", "usd_args", "UsdMesh"]

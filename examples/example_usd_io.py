@@ -21,7 +21,6 @@ class Example:
             root_path=str(args.usd_root_path),
             y_up_to_z_up=True,
             center_model=True,
-            up_axis=int(newton.Axis.Z),
         ).read()
 
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
