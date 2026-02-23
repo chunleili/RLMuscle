@@ -14,3 +14,4 @@ imgui.ini
 .cache/
 output/
 log.md
+.env
