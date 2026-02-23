@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import taichi as ti
+from scipy.spatial import cKDTree
 
 @dataclass
 class SimConfig:
@@ -470,6 +471,25 @@ class MuscleSim:
 
 
     # Reference: C:\Program Files\Side Effects Software\Houdini 21.0.440\houdini\vex\include\pbd_constraints.h:L1291 
+    def _batch_compute_tet_rest_matrices(self):
+        """Batch compute rest matrices for all tets using vectorized numpy.
+        Returns cached (restmatrices, volumes, valid) tuple.
+        restmatrices: (N_tet, 3, 3), volumes: (N_tet,), valid: (N_tet,) bool mask."""
+        if hasattr(self, '_cached_tet_rest'):
+            return self._cached_tet_rest
+        tet_pos = self.pos0_np[self.tet_np]             # (N_tet, 4, 3)
+        # M = transpose(set(p0-p3, p1-p3, p2-p3)), i.e. columns are edge vectors
+        cols = tet_pos[:, :3, :] - tet_pos[:, 3:4, :]   # (N_tet, 3, 3): rows are edges
+        M = np.transpose(cols, (0, 2, 1))                # (N_tet, 3, 3): columns are edges
+        dets = np.linalg.det(M)                          # (N_tet,)
+        volumes = dets / 6.0
+        valid = np.abs(dets) > 1e-30
+        restmatrices = np.zeros_like(M)
+        if np.any(valid):
+            restmatrices[valid] = np.linalg.inv(M[valid])
+        self._cached_tet_rest = (restmatrices, volumes, valid)
+        return self._cached_tet_rest
+
     def compute_tet_rest_matrix(self, pt0, pt1, pt2, pt3, scale=1.0):
         """
         计算四面体的逆材料矩阵(restmatrix)和体积(volume)。
@@ -549,33 +569,50 @@ class MuscleSim:
         return volume, materialW
 
 
-    # Reference: C:\Program Files\Side Effects Software\Houdini 21.0.440\houdini\vex\include\pbd_constraints.h:L1291 
+    # Reference: C:\Program Files\Side Effects Software\Houdini 21.0.440\houdini\vex\include\pbd_constraints.h:L1291
     def create_tet_fiber_constraint(self, params):
-        """
-        遍历所有四面体，调用compute_tet_fiber_rest_length，返回restlength和restvector。
-        返回: List[dict]，每个dict包含pts, restlength, restvector
-        """
-        constraints = []
+        """Vectorized: compute fiber constraints for all tets using batch rest matrices."""
         stiffness = params.get('stiffness', 1.0)
         dampingratio = params.get('dampingratio', 0.0)
+        restmatrices, volumes, valid = self._batch_compute_tet_rest_matrices()
 
-        for i, tet in enumerate(self.tet_np):
-            pt0, pt1, pt2, pt3 = tet
-            # 这里只处理所有四面体，不做分组过滤
-            volume, materialW = self.compute_tet_fiber_rest_length(pt0, pt1, pt2, pt3)
-            # restvector输出为vector4，最后一位补1.0 (Houdini convention)
-            restvec4 = materialW.astype(float).tolist()[:3] + [1.0]
+        n_tet = len(self.tet_np)
+        # Batch compute materialW for all tets
+        if self.v_fiber_np is not None:
+            fiber_verts = self.v_fiber_np[self.tet_np]  # (N_tet, 4, 3)
+            w = fiber_verts.sum(axis=1)                 # (N_tet, 3)
+            norms = np.linalg.norm(w, axis=1, keepdims=True)
+            default_w = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float32), (n_tet, 1))
+            norm_ok = (norms > 1e-8).ravel()
+            materialW = default_w.copy()
+            materialW[norm_ok] = w[norm_ok] / norms[norm_ok]
+        else:
+            materialW = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float32), (n_tet, 1))
+
+        # materialW[i] @ restmatrices[i].T = einsum('j,kj->k', materialW[i], restmatrices[i])
+        materialW_transformed = np.einsum('nj,nkj->nk', materialW, restmatrices)
+
+        constraints = []
+        for i in range(n_tet):
+            tet = self.tet_np[i]
+            if not valid[i]:
+                vol = 0.0
+                mw_t = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+            else:
+                vol = float(volumes[i])
+                mw_t = materialW_transformed[i]
+            restvec4 = [float(mw_t[0]), float(mw_t[1]), float(mw_t[2]), 1.0]
             c = dict(
                 type=TETFIBERNORM,
-                pts=ti.Vector([int(pt0), int(pt1), int(pt2), int(pt3)]),
+                pts=ti.Vector([int(tet[0]), int(tet[1]), int(tet[2]), int(tet[3])]),
                 stiffness=stiffness,
                 dampingratio=dampingratio,
                 tetid=i,
                 L=ti.Vector([0.0, 0.0, 0.0]),
-                restlength=float(volume),
-                restvector=ti.Vector(restvec4), # wT DminvT
-                restdir=ti.Vector([0.0, 0.0, 0.0]),#  fiber is not used
-                compressionstiffness=-1.0 # fiber is not used, just since ti struct needs to be consistent, so we have to add this field
+                restlength=float(vol),
+                restvector=ti.Vector(restvec4),
+                restdir=ti.Vector([0.0, 0.0, 0.0]),
+                compressionstiffness=-1.0
             )
             constraints.append(c)
         return constraints
@@ -763,27 +800,24 @@ class MuscleSim:
             Warning(f"Warning: No vertices with mask > {mask_threshold}")
             return []
             
-        # 对每个source点，找最近的骨骼target点
-        for src_idx in valid_src_indices:
-            src_pos = self.pos0_np[src_idx]
-            
-            # 计算到所有骨骼点的距离
-            diff = self.bone_pos - src_pos
-            dists_sq = np.einsum('ij,ij->i', diff, diff)
-            tgt_idx = np.argmin(dists_sq)
-            
-            target_pos = self.bone_pos[tgt_idx]
+        # Build KDTree for bone positions and batch nearest-neighbor search
+        bone_tree = cKDTree(self.bone_pos)
+        src_positions = self.pos0_np[valid_src_indices]
+        dists, tgt_indices = bone_tree.query(src_positions, k=1)
 
-             # 找到肌肉点所在的tet
-            if not hasattr(self, 'pt2tet'):
-                self.pt2tet = self.map_pts2tets(self.tet_np)
+        # Build pt2tet mapping once
+        if not hasattr(self, 'pt2tet'):
+            self.pt2tet = self.map_pts2tets(self.tet_np)
+
+        for j, src_idx in enumerate(valid_src_indices):
+            tgt_idx = int(tgt_indices[j])
+            target_pos = self.bone_pos[tgt_idx]
+            src_pos = src_positions[j]
             tetid = self.pt2tet.get(src_idx, [-1])[0]
-            
-            restlength = np.linalg.norm(target_pos - src_pos)
+            restlength = float(dists[j])
 
             c = dict(
                 type=ATTACH,
-                # Set pts[1] to -1 for point-position constraint, and store bone index in pts[2]
                 pts=ti.Vector([int(src_idx), -1, int(tgt_idx), 0]),
                 stiffness=stiffness,
                 dampingratio=dampingratio,
@@ -792,11 +826,10 @@ class MuscleSim:
                 restlength=restlength,
                 restvector=ti.Vector([float(target_pos[0]), float(target_pos[1]), float(target_pos[2]), 1.0]),
                 restdir=ti.Vector([0.0, 0.0, 0.0]),
-                # compressionstiffness=0 表示只在拉伸时起作用（单向约束）
                 compressionstiffness=-1.0,
             )
             constraints.append(c)
-        
+
         return constraints
 
     def create_distance_line_constraints(self, params):
@@ -847,35 +880,30 @@ class MuscleSim:
             Warning(f"Warning: No vertices with mask > {mask_threshold}")
             return []
             
-        # 对每个source点，找最近的骨骼target点
-        for src_idx in valid_src_indices:
-            src_pos = self.pos0_np[src_idx]
-            
-            # 计算到所有骨骼点的距离
-            diff = self.bone_pos - src_pos
-            dists_sq = np.einsum('ij,ij->i', diff, diff)
-            tgt_idx = np.argmin(dists_sq)
-            
-            target_pos = self.bone_pos[tgt_idx]
+        # Build KDTree for bone positions and batch nearest-neighbor search
+        bone_tree = cKDTree(self.bone_pos)
+        src_positions = self.pos0_np[valid_src_indices]
+        dists, tgt_indices = bone_tree.query(src_positions, k=1)
 
-             # 找到肌肉点所在的tet
-            if not hasattr(self, 'pt2tet'):
-                self.pt2tet = self.map_pts2tets(self.tet_np)
-            tetid = self.pt2tet.get(src_idx, [-1])[0]
-            
-            # 计算restdir
-            direction = target_pos - src_pos
-            norm = np.linalg.norm(direction)
-            if norm > 1e-9:
-                direction = direction / norm
-            else:
-                raise ValueError(f"source point and target point are too close: src_idx={src_idx}, tgt_idx={tgt_idx}")
+        # Vectorized direction computation
+        target_positions = self.bone_pos[tgt_indices]
+        directions = target_positions - src_positions
+        norms = np.linalg.norm(directions, axis=1, keepdims=True)
+        if np.any(norms < 1e-9):
+            bad = np.where(norms.ravel() < 1e-9)[0]
+            raise ValueError(f"source and target points too close at indices: {valid_src_indices[bad]}")
+        directions = directions / norms
 
-            # 找到肌肉点所在的tet
-            if not hasattr(self, 'pt2tet'):
-                self.pt2tet = self.map_pts2tets(self.tet_np)
+        # Build pt2tet mapping once
+        if not hasattr(self, 'pt2tet'):
+            self.pt2tet = self.map_pts2tets(self.tet_np)
+
+        for j, src_idx in enumerate(valid_src_indices):
+            tgt_idx = int(tgt_indices[j])
+            target_pos = target_positions[j]
+            direction = directions[j]
             tetid = self.pt2tet.get(src_idx, [-1])[0]
-            
+
             c = dict(
                 type=DISTANCELINE,
                 pts=ti.Vector([int(src_idx), int(tgt_idx), 0, 0]),
@@ -889,27 +917,27 @@ class MuscleSim:
                 compressionstiffness=-1.0,
             )
             constraints.append(c)
-        
+
         return constraints
 
     def create_tet_arap_constraints(self, params):
-        constraints = []
+        """Vectorized: uses cached batch rest matrices."""
         stiffness = params.get('stiffness', 1e10)
         dampingratio = params.get('dampingratio', 0.0)
+        restmatrices, volumes, valid = self._batch_compute_tet_rest_matrices()
 
-        for i, tet in enumerate(self.tet_np):
-            pt0, pt1, pt2, pt3 = tet
-            restm, volume = self.compute_tet_rest_matrix(pt0, pt1, pt2, pt3, scale=1.0)
-            if restm is None:
-                continue
+        valid_indices = np.where(valid)[0]
+        constraints = []
+        for i in valid_indices:
+            tet = self.tet_np[i]
             c = dict(
                 type=TETARAP,
-                pts=ti.Vector([int(pt0), int(pt1), int(pt2), int(pt3)]),
+                pts=ti.Vector([int(tet[0]), int(tet[1]), int(tet[2]), int(tet[3])]),
                 stiffness=stiffness,
                 dampingratio=dampingratio,
-                tetid=i,
+                tetid=int(i),
                 L=ti.Vector([0.0, 0.0, 0.0]),
-                restlength=float(volume),
+                restlength=float(volumes[i]),
                 restvector=ti.Vector([0.0, 0.0, 0.0, 1.0]),
                 restdir=ti.Vector([0.0, 0.0, 0.0]),
                 compressionstiffness=-1.0,
@@ -918,27 +946,70 @@ class MuscleSim:
         return constraints
 
     def create_tri_arap_constraints(self, params):
-        constraints = []
+        """Vectorized: batch compute 2x2 rest matrices for surface triangles."""
         stiffness = params.get('stiffness', 1e10)
         dampingratio = params.get('dampingratio', 0.0)
 
         if not hasattr(self, 'surface_tris'):
             self.surface_tris = build_surface_tris(self.tet_np)
         tris = self.surface_tris
-        for i, tri in enumerate(tris):
-            pt0, pt1, pt2 = tri
-            restm, area = self.compute_tri_rest_matrix(pt0, pt1, pt2, scale=1.0)
-            if restm is None:
-                continue
-            restvec4 = [restm[0, 0], restm[0, 1], restm[1, 0], restm[1, 1]]
+        if len(tris) == 0:
+            return []
+
+        # Batch compute tri rest matrices
+        p = self.pos0_np
+        tri_arr = np.asarray(tris)  # (N_tri, 3)
+        p0 = p[tri_arr[:, 0]]  # (N, 3)
+        p1 = p[tri_arr[:, 1]]
+        p2 = p[tri_arr[:, 2]]
+        e0 = p1 - p0
+        e1 = p2 - p0
+        n = np.cross(e1, e0)
+        nlen = np.linalg.norm(n, axis=1)
+        valid1 = nlen > 1e-12
+        z = np.zeros_like(n)
+        z[valid1] = n[valid1] / nlen[valid1, None]
+        y = np.cross(e0, z)
+        ylen = np.linalg.norm(y, axis=1)
+        valid2 = ylen > 1e-12
+        valid = valid1 & valid2
+        y[valid] = y[valid] / ylen[valid, None]
+        x = np.cross(y, z)
+
+        xform = np.stack([x, y, z], axis=1)  # (N, 3, 3)
+        xformT = np.transpose(xform, (0, 2, 1))
+        P0 = np.einsum('ni,nij->nj', p0, xformT)
+        P1 = np.einsum('ni,nij->nj', p1, xformT)
+        P2 = np.einsum('ni,nij->nj', p2, xformT)
+        col0 = P0[:, :2] - P2[:, :2]
+        col1 = P1[:, :2] - P2[:, :2]
+        M = np.stack([col0, col1], axis=2)  # (N, 2, 2)
+        dets = M[:, 0, 0] * M[:, 1, 1] - M[:, 0, 1] * M[:, 1, 0]
+        valid = valid & (np.abs(dets) > 1e-30)
+        areas = np.abs(dets / 2.0)
+        # Batch 2x2 inverse using analytical formula
+        restm_all = np.zeros((len(tris), 2, 2), dtype=np.float64)
+        inv_dets = np.zeros(len(tris))
+        inv_dets[valid] = 1.0 / dets[valid]
+        restm_all[valid, 0, 0] = M[valid, 1, 1] * inv_dets[valid]
+        restm_all[valid, 0, 1] = -M[valid, 0, 1] * inv_dets[valid]
+        restm_all[valid, 1, 0] = -M[valid, 1, 0] * inv_dets[valid]
+        restm_all[valid, 1, 1] = M[valid, 0, 0] * inv_dets[valid]
+
+        valid_indices = np.where(valid)[0]
+        constraints = []
+        for i in valid_indices:
+            tri = tri_arr[i]
+            rm = restm_all[i]
+            restvec4 = [float(rm[0, 0]), float(rm[0, 1]), float(rm[1, 0]), float(rm[1, 1])]
             c = dict(
                 type=TRIARAP,
-                pts=ti.Vector([int(pt0), int(pt1), int(pt2), 0]),
+                pts=ti.Vector([int(tri[0]), int(tri[1]), int(tri[2]), 0]),
                 stiffness=stiffness,
                 dampingratio=dampingratio,
-                tetid=i,
+                tetid=int(i),
                 L=ti.Vector([0.0, 0.0, 0.0]),
-                restlength=float(area),
+                restlength=float(areas[i]),
                 restvector=ti.Vector(restvec4),
                 restdir=ti.Vector([0.0, 0.0, 0.0]),
                 compressionstiffness=-1.0,
@@ -948,37 +1019,24 @@ class MuscleSim:
 
     # Reference: C:\Program Files\Side Effects Software\Houdini 21.0.440\houdini\vex\include\pbd_constraints.h:L980
     def create_tet_volume_constraint(self, params):
-        """
-        遍历所有四面体，计算体积restlength，返回体积约束信息。
-        返回: List[dict]，每个dict包含pts, restlength
-        """
-        constraints = []
+        """Vectorized: compute volume constraints for all tets using batch rest matrices."""
         stiffness = params.get('stiffness', 1e10)
         dampingratio = params.get('dampingratio', 0.0)
+        restmatrices, volumes, valid = self._batch_compute_tet_rest_matrices()
 
-        for i, tet in enumerate(self.tet_np):
-            pt0, pt1, pt2, pt3 = tet
-            # 这里只处理所有四面体，不做分组过滤
-            p = self.pos0_np
-            p0 = p[pt0]
-            p1 = p[pt1]
-            p2 = p[pt2]
-            p3 = p[pt3]
-            # 体积restlength公式: dot(cross(p0-p1, p0-p2), p0-p3)/6
-            restm, volume = self.compute_tet_rest_matrix(pt0, pt1, pt2, pt3, scale=1.0)
-            if restm is None:
-                continue
-            v = volume
-
+        valid_indices = np.where(valid)[0]
+        constraints = []
+        for i in valid_indices:
+            tet = self.tet_np[i]
             c = dict(
-                type= TETVOLUME,
-                pts=ti.Vector([int(pt0), int(pt1), int(pt2), int(pt3)]),
+                type=TETVOLUME,
+                pts=ti.Vector([int(tet[0]), int(tet[1]), int(tet[2]), int(tet[3])]),
                 stiffness=stiffness,
                 dampingratio=dampingratio,
                 compressionstiffness=-1.0,
-                tetid=i,
+                tetid=int(i),
                 L=ti.Vector([0.0, 0.0, 0.0]),
-                restlength=float(v),
+                restlength=float(volumes[i]),
                 restvector=ti.Vector([0.0, 0.0, 0.0, 0.0]),
                 restdir=ti.Vector([0.0, 0.0, 0.0]),
             )
@@ -1011,6 +1069,7 @@ class MuscleSim:
         self.tetarap_constraints = []
 
         all_constraints = []
+        _t_total = time.perf_counter()
         for params in self.constraint_configs:
             ctype = constraint_alias(params['type'])
             new_constraints = []
@@ -1035,7 +1094,7 @@ class MuscleSim:
             elif ctype == 'triarap':
                 new_constraints = self.create_tri_arap_constraints(params)
                 self.triarap_constraints.extend(new_constraints)
-            
+
             if new_constraints:
                 all_constraints.extend(new_constraints)
                 print(f"  {params.get('name', ctype)} ({ctype}): {len(new_constraints)} constraints")
@@ -1045,15 +1104,41 @@ class MuscleSim:
 
         n_cons = len(all_constraints)
         if n_cons > 0:
-            self.cons = constraint_struct.field(shape=n_cons)
+            # Assign cidx to each constraint
             for i, c in enumerate(all_constraints):
-                c['cidx'] = i  # Add constraint index to each constraint
-                self.cons[i] = c
+                c['cidx'] = i
+
+            # Batch extract constraint data into numpy arrays for from_numpy
+            type_arr = np.array([c['type'] for c in all_constraints], dtype=np.int32)
+            cidx_arr = np.arange(n_cons, dtype=np.int32)
+            pts_arr = np.array([[c['pts'][j] for j in range(4)] for c in all_constraints], dtype=np.int32)
+            stiffness_arr = np.array([c['stiffness'] for c in all_constraints], dtype=np.float32)
+            dampingratio_arr = np.array([c['dampingratio'] for c in all_constraints], dtype=np.float32)
+            tetid_arr = np.array([c['tetid'] for c in all_constraints], dtype=np.int32)
+            L_arr = np.array([[c['L'][j] for j in range(3)] for c in all_constraints], dtype=np.float32)
+            restlength_arr = np.array([c['restlength'] for c in all_constraints], dtype=np.float32)
+            restvector_arr = np.array([[c['restvector'][j] for j in range(4)] for c in all_constraints], dtype=np.float32)
+            restdir_arr = np.array([[c['restdir'][j] for j in range(3)] for c in all_constraints], dtype=np.float32)
+            compressionstiffness_arr = np.array([c['compressionstiffness'] for c in all_constraints], dtype=np.float32)
+
+            self.cons = constraint_struct.field(shape=n_cons)
+            self.cons.type.from_numpy(type_arr)
+            self.cons.cidx.from_numpy(cidx_arr)
+            self.cons.pts.from_numpy(pts_arr)
+            self.cons.stiffness.from_numpy(stiffness_arr)
+            self.cons.dampingratio.from_numpy(dampingratio_arr)
+            self.cons.tetid.from_numpy(tetid_arr)
+            self.cons.L.from_numpy(L_arr)
+            self.cons.restlength.from_numpy(restlength_arr)
+            self.cons.restvector.from_numpy(restvector_arr)
+            self.cons.restdir.from_numpy(restdir_arr)
+            self.cons.compressionstiffness.from_numpy(compressionstiffness_arr)
         else:
             self.cons = constraint_struct.field(shape=0)
             self.raw_constraints = []
 
-        print(f"Built {self.cons.shape[0]} constraints total.")
+        _dt_total = time.perf_counter() - _t_total
+        print(f"Built {self.cons.shape[0]} constraints total. [{_dt_total*1000:.0f}ms]")
 
         # Reaction accumulator for bilateral attach coupling (mass-independent C×n)
         self.reaction_accum = ti.Vector.field(3, dtype=ti.f32, shape=max(n_cons, 1))
