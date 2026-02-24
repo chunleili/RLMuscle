@@ -1,7 +1,7 @@
 # INSTRUCTION
 - 如果你是初次运行，请注意初始化git submodule，阅读`@README.md`中的运行说明。
 - 使用 uv 运行和测试代码，必要时可以写测试文件放到tests/文件夹下。总是测试直到正常运行后才结束任务。
-- `@PROGRESS.md` 放日志（下一步 + 已完成）。`@PLAN.md`放最详细的执行方案。两者需要不断更新。
+- `@docs/progress/*.md` 放日志（下一步 + 已完成）。`@docs/plans/*.md`放详细的执行方案。`@docs/experiments/*.md`放实验总结。
 - 每一步都要谨慎，改动最小化，结构清晰易读。这是快速原型，之后可以重构。
 - 可复用代码放 `@src/`，示例放 `@examples/`（各自独立可运行，简单有教学意义）。
 - 代码注释使用英文，文档 markdown 尽量使用中文，不要更改README， 实验总结放在`docs/experiments/*.md`。
