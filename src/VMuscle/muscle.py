@@ -35,6 +35,8 @@ class SimConfig:
     render_fps: int = 24
     color_bones: bool = False  # 是否按 muscle_id 给骨骼着色
     color_muscles: str = "tendonmask"  # 肌肉着色模式: None, "muscle_id", "tendonmask"
+    contraction_ratio: float = 0.4       # max fiber contraction ratio (act=1.0 → fiber shortens to 60% of rest length)
+    fiber_stiffness_scale: float = 200.0  # fiber stiffness multiplier (replaces hardcoded 10000.0)
     HAS_compressstiffness = False  # 如需关闭压缩带，设为False
     
 # enum of constraint types, referecne from pbd_types.h
@@ -428,6 +430,8 @@ class MuscleSim:
         self.build_constraints()
             
         self.use_jacobi = False
+        self.contraction_ratio = self.cfg.contraction_ratio
+        self.fiber_stiffness_scale = self.cfg.fiber_stiffness_scale
         self.dt = self.cfg.dt / self.cfg.num_substeps
         self.step_cnt = 0
         
@@ -1358,13 +1362,18 @@ class MuscleSim:
                 tetid = self.cons[c].tetid
                 Dminv = self.rest_matrix[tetid]
                 acti = self.activation[tetid]
-
-                stiffness = self.cons[c].stiffness
                 _tendonmask = self.tendonmask[tetid]
+                belly_factor = 1.0 - _tendonmask
+
+                # stiffness: activation-dependent via transfer_tension (muscle gets stiffer when activated)
                 fiberscale = self.transfer_tension(acti, _tendonmask)
-                stiffness = stiffness * fiberscale * 10000.0
+                stiffness = self.cons[c].stiffness * fiberscale * self.fiber_stiffness_scale
                 if stiffness <= 0.0: #if activation is zero, stiffness can be zero
                     continue
+
+                # target fiber stretch: higher activation → shorter target length
+                target_stretch = 1.0 - belly_factor * acti * self.contraction_ratio
+
                 self.tet_fiber_update_xpbd(
                     self.use_jacobi,
                     self.pos,
@@ -1384,6 +1393,7 @@ class MuscleSim:
                     acti,
                     self.mass,
                     self.stopped,
+                    target_stretch,
                 )
             elif self.cons[c].type == DISTANCE:
                 # distance constraint
@@ -1710,6 +1720,7 @@ class MuscleSim:
         acti: ti.f32,
         mass: ti.template(),
         stopped: ti.template(),
+        target_stretch: ti.f32 = 1.0,
     ):
         isLINEARENERGY = True
         isNORMSTIFFNESS = True
@@ -1823,7 +1834,7 @@ class MuscleSim:
                 dsum *= gamma
                 gamma += 1.0
 
-            C = psi
+            C = psi - target_stretch
             dL = (-C - alpha * l - dsum) / (gamma * w_sum + alpha)
             if use_jacobi:
                 updatedP(dP, dPw, dL * inv_masses[0] * grad0, pts[0])

@@ -99,8 +99,6 @@ def _build_scene_once():
         source_usd_path="data/muscle/model/bicep.usd",
         root_path="/character",
         y_up_to_z_up=False,
-        center_model=False,
-        up_axis=int(newton.Axis.Y),
     ).read()
 
     builder = newton.ModelBuilder(up_axis=newton.Axis.Y, gravity=0.0)

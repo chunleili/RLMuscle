@@ -11,8 +11,6 @@
             "program": "main.py",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
-            "python": ".venv/Scripts/python.exe",
-            "env": {"PYTHONPATH": "${workspaceFolder}/src"}
         },
         {
             "name": "this file",
@@ -21,7 +19,6 @@
             "program": "${file}",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
-            "env": {"PYTHONPATH": "${workspaceFolder}/src"}
         }
     ]
 }
