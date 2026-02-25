@@ -31,6 +31,7 @@ class SimConfig:
     save_image: bool = False
     show_auxiliary_meshes: bool = False
     pause: bool = False
+    reset: bool = False
     show_wireframe: bool = False
     render_fps: int = 24
     color_bones: bool = False  # 是否按 muscle_id 给骨骼着色
@@ -1174,7 +1175,7 @@ class MuscleSim:
         self.pos.from_numpy(self.pos0_np)
         self.pprev.from_numpy(self.pos0_np)
         self.vel.fill(0)
-        self.force.fill(0)  
+        self.force.fill(0)
         self.activation.fill(0.0)
         self.clear()
         self.step_cnt = 1
@@ -2301,6 +2302,10 @@ class MuscleSim:
         self.step_cnt = 1
         while self.step_cnt <= self.cfg.nsteps:
             self.vis._render_control()
+            if self.cfg.reset:
+                self.reset()
+                self.step_cnt = 1
+                self.cfg.reset = False
             if not self.cfg.pause:
                 self.step_start_time = time.perf_counter()
                 self.step()
@@ -2409,8 +2414,7 @@ class Visualizer:
             if w.button("Toggle Wireframe"):
                 self.cfg.show_wireframe = not self.cfg.show_wireframe
             if w.button("Reset Simulation"):
-                if self.muscle is not None:
-                    self.muscle.reset()
+                self.cfg.reset = True
             if w.button("save camera settings"):
                 pass
             if w.button("load camera settings"):
@@ -2454,8 +2458,7 @@ class Visualizer:
             if e.key in [ti.ui.ESCAPE]:
                 exit()
             elif e.key == 'r' or e.key == 'R':
-                if self.muscle is not None:
-                    self.muscle.reset()
+                self.cfg.reset = True
                 print("Simulation reset.")
             elif e.key == 'f' or e.key == 'F':
                 self.cfg.show_wireframe = not self.cfg.show_wireframe

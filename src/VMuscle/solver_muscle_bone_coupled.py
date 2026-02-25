@@ -10,6 +10,7 @@ import numpy as np
 import taichi as ti
 import warp as wp
 
+import newton
 from newton.solvers import SolverMuJoCo
 from .muscle import MuscleSim
 
@@ -30,7 +31,8 @@ class SolverMuscleBoneCoupled:
       5. Extract muscle torque for next frame (EMA smoothed)
     """
 
-    def __init__(self, model, core: MuscleSim, bone_substeps: int = 5,
+    def __init__(self, model, core: MuscleSim,
+                 bone_substeps: int = 5,
                  k_coupling: float = 5000.0,
                  max_torque: float = 50.0):
         self.model = model
@@ -246,3 +248,20 @@ class SolverMuscleBoneCoupled:
             
             log.info(f"step={self._step_count} act={self.core.cfg.activation:.2f} |tau|={mag:.4f}{axis_info}")
             log.info(f"  q_joint={joint_angle:.4f} q_bone=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})")
+
+    # -- Reset ---------------------------------------------------------------
+
+    def reset_bone(self, state):
+        """Reset bone rigid-body state to initial pose and sync to muscle."""
+        # Restore initial joint angles and zero velocities
+        state.joint_q = wp.clone(self.model.joint_q)
+        state.joint_qd.zero_()
+        # Recompute body transforms from joint state
+        newton.eval_fk(self.model, state.joint_q, state.joint_qd, state)
+        # Sync bone vertex positions to muscle PBD
+        if self._coupling_configured:
+            self._sync_bone_positions(state)
+        self._muscle_torque = np.zeros(3, dtype=np.float32)
+        self._step_count = 0
+        log.info("Bone reset to initial pose")
+

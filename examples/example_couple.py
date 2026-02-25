@@ -136,6 +136,11 @@ def _run_interactive(solver, sim, state, cfg, dt):
 
     while sim.vis.window.running:
         sim.vis._render_control()
+        if cfg.reset:
+            sim.reset()
+            solver.reset_bone(state)
+            step_cnt = 0
+            cfg.reset = False
         if not cfg.pause:
             with wp.ScopedTimer("Couple", synchronize=True, print=False) as timer:
                 solver.step(state, state, dt=dt)
