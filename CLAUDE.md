@@ -4,9 +4,11 @@
 - `@docs/progress/*.md` 放日志（下一步 + 已完成）。`@docs/plans/*.md`放详细的执行方案。`@docs/experiments/*.md`放实验总结。
 - 每一步都要谨慎，改动最小化，结构清晰易读。这是快速原型，之后可以重构。
 - 可复用代码放 `@src/`，示例放 `@examples/`（各自独立可运行，简单有教学意义）。
-- 代码注释使用英文，文档 markdown 尽量使用中文，不要更改README， 实验总结放在`docs/experiments/*.md`。
+- 代码注释使用英文，文档 markdown 尽量使用中文，不要更改README， 实验总结放在`@docs/experiments/*.md`。
 - 当作出功能修改时，指出关键的工作流的改变（如有）。
-- 当进行bugfix时，务必反复迭代。可以采用python logging输出debug代码，输出可以放到临时性的`log.md`。
+- 当进行bugfix时，务必反复迭代。可以采用python logging输出debug代码，输出可以放到临时性的`@log.md`。
 - main.py是程序入口，使用环境变量`RUN`来指定运行的示例, 使用uv run main.py来运行。
 - 进行重构时，需要简化代码结构，去除冗余，增加注释，保持代码清晰易读。重构后需要进行测试，确保功能正确。必要时可以改动外部API。
 - 在feature分支工作，如合并均应该合并到dev分支，master分支应保持稳定。
+- 在worktree工作应在项目目录外部创建../<PRJ_NAME>-<WORKTREE_NAME>，并建立分支<WORKTREE_NAME>，在该分支上进行开发，完成后合并到dev分支。
+- 需要可视化的测试应把截图/图片放到output/下对比。
