@@ -5,13 +5,26 @@ bone; bilateral attach constraints couple muscle forces back to the joint.
 Both systems operate in Y-up coordinate space.
 """
 
+# -- Fix LLVM CommandLine option conflict between Taichi and Warp on macOS --
+# `import taichi` immediately loads Taichi's LLVM C-extension and registers
+# LLVM cl::opt options. If warp is imported/initialized first, Warp's LLVM is
+# already resident and Taichi reuses it without re-registering. Reversed order
+# triggers "Assertion failed: Option already exists!" because Warp's LLVM init
+# asserts an option doesn't already exist (registered by Taichi's earlier load).
+# Fix: import and init warp BEFORE importing taichi.
 import logging
 import sys
 
 import numpy as np
+import warp as wp
+
+# Initialize Warp's LLVM runtime BEFORE taichi is imported.
+# On macOS this prevents the "Option already exists!" assertion.
+wp.init()
+wp.set_device("cpu")
+
 import taichi as ti
 import newton
-import warp as wp
 
 from VMuscle.muscle import MuscleSim, load_config
 from VMuscle.usd_io import UsdIO
@@ -154,9 +167,6 @@ def _run_interactive(solver, sim, state, cfg, dt):
 
 
 def main():
-    wp.init()
-    wp.set_device("cpu")
-
     auto_test = "--auto" in sys.argv
     setup_logging(to_file=True)
 

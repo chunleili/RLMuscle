@@ -70,3 +70,5 @@ It will automatically save the layered usd file after 100 frames.
 ### up-axis
  USD and Houdini use Y up by default. But Newton uses **Z up** by default. See [here](https://newton-physics.github.io/newton/latest/concepts/conventions.html#coordinate-system-and-up-axis-conventions) for newton's convention. We will **transfer the asset to Z up when loading it** (turn off by switching off "y_up_to_z_up"). Be careful when importing other assets.
 
+## macOS Related
+If you are simultaneously using Taichi and Warp, you have to first initialize Warp (`wp.init()`) then import Taichi, otherwise their LLVM will conflict with each other.
