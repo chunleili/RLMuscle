@@ -9,7 +9,6 @@ Spring force model: F = -k_coupling * sum(C*n) / N_substeps.
 import os
 import sys
 
-_orig_dlflags = sys.getdlopenflags()
 if sys.platform == "darwin" and hasattr(os, "RTLD_LOCAL"):
     sys.setdlopenflags(os.RTLD_LAZY | os.RTLD_LOCAL)
 
@@ -18,9 +17,6 @@ import logging
 import numpy as np
 import taichi as ti
 import warp as wp
-
-sys.setdlopenflags(_orig_dlflags)
-
 import newton
 from newton.solvers import SolverMuJoCo
 from .muscle import MuscleSim

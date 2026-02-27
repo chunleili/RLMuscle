@@ -9,12 +9,12 @@ Both systems operate in Y-up coordinate space.
 # Both libraries embed LLVM.  Python's default RTLD_GLOBAL merges their
 # static cl::opt registries, triggering:
 #   "Assertion failed: Option already exists!"
-# Switching to RTLD_LOCAL before importing either library isolates the two
-# LLVM instances so their option tables don't collide.
+# RTLD_LOCAL isolates each library's LLVM symbol table.  We must keep it
+# active for the ENTIRE process because the actual LLVM shared objects are
+# loaded lazily — at wp.init() / ti.init() time, not at import time.
 import os
 import sys
 
-_orig_dlflags = sys.getdlopenflags()
 if sys.platform == "darwin" and hasattr(os, "RTLD_LOCAL"):
     sys.setdlopenflags(os.RTLD_LAZY | os.RTLD_LOCAL)
 
@@ -23,10 +23,6 @@ import logging
 import numpy as np
 import taichi as ti
 import warp as wp
-
-# Restore original dlopen flags after both LLVM-bearing libraries are loaded.
-sys.setdlopenflags(_orig_dlflags)
-
 import newton
 
 from VMuscle.muscle import MuscleSim, load_config
