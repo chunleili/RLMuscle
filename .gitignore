@@ -16,3 +16,9 @@ output/
 log.md
 .env
 .claude/settings.local.json
+
+# houdini
+backup
+
+# mac
+.DS_Store
