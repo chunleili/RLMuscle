@@ -4,11 +4,22 @@ Couples Newton MuJoCo rigid-body dynamics with Taichi MuscleSim PBD.
 Spring force model: F = -k_coupling * sum(C*n) / N_substeps.
 """
 
+# -- Fix LLVM CommandLine option conflict between Taichi and Warp on macOS --
+# See example_couple.py header comment for full explanation.
+import os
+import sys
+
+_orig_dlflags = sys.getdlopenflags()
+if sys.platform == "darwin" and hasattr(os, "RTLD_LOCAL"):
+    sys.setdlopenflags(os.RTLD_LAZY | os.RTLD_LOCAL)
+
 import logging
 
 import numpy as np
 import taichi as ti
 import warp as wp
+
+sys.setdlopenflags(_orig_dlflags)
 
 import newton
 from newton.solvers import SolverMuJoCo
