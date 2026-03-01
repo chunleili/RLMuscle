@@ -22,3 +22,6 @@ backup
 
 # mac
 .DS_Store
+
+# test
+newton_sim_out.usd
