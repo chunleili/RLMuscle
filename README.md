@@ -39,6 +39,12 @@ Output (if any) will be saved in the "output" directory.
 - reinforcement learning
     - [ ] Implement a simple RL task
 
+## Examples
+
+![import_human](docs/imgs/import_human.png)
+
+`uv run examples.example_human_import.py` 
+
 ## Test
 You can run all the tests with:
 ```

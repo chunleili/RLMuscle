@@ -22,6 +22,7 @@ builder.add_usd(
     source=INPUT_USD.as_posix(),  # USD 文件路径
     root_path="/Human",                    # 如果你的场景主层级在 /World，就写 "/World"
     # apply_up_axis_from_stage=True,    # 按 USD 的 upAxis 处理（Houdini/Omni 的 upAxis 不一致时很有用）
+    skip_mesh_approximation = True, #This will show detailed bone mesh, but it will slow down the program dramatically.
 )
 builder.add_ground_plane()
 model = builder.finalize()
