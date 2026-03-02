@@ -27,6 +27,9 @@ def main():
     elif example_to_run == "taichi_muscle":
         from VMuscle import muscle
         muscle.main()
+    elif example_to_run == "human_import":
+        from examples import example_human_import
+        example_human_import.main()
 
 if __name__ == "__main__":
     main()
