@@ -102,17 +102,24 @@ def load_config(path: Path) -> SimConfig:
 
     # Use dataclass field list so defaults live in SimConfig and we only override provided keys
     from dataclasses import fields
+    from types import SimpleNamespace
     kwargs = {}
     for fld in fields(SimConfig):
         name = fld.name
         if name in data:
             # special-case Path field
-            if name == "geo_path" or name == "bone_geo_path":  
+            if name == "geo_path" or name == "bone_geo_path":
                 kwargs[name] = Path(data[name])
             else:
                 kwargs[name] = data[name]
 
-    return SimConfig(**kwargs)
+    cfg = SimConfig(**kwargs)
+
+    # Attach coupling config as a namespace if present
+    if "coupling" in data:
+        cfg.coupling = SimpleNamespace(**data["coupling"])
+
+    return cfg
 
 def load_mesh_json(path):
     import json
@@ -173,6 +180,10 @@ def load_mesh_one_tet(path: Path=None):
     ], dtype=np.float32)
     return positions, tets, fibers, tendon_mask, None
 
+def load_mesh_usd(path: Path):
+    from VMuscle.mesh_io import load_mesh_usd as _load_mesh_usd
+    return _load_mesh_usd(path, y_up_to_z_up=False)
+
 def load_mesh(path: Path):
     if path is None:
         print("Using built-in one-tet mesh for testing.")
@@ -183,6 +194,8 @@ def load_mesh(path: Path):
         return load_mesh_tetgen(str(path))
     elif str(path).endswith(".geo"):
         return load_mesh_geo(path)
+    elif str(path).endswith((".usd", ".usdc", ".usda")):
+        return load_mesh_usd(path)
 
 
 
@@ -696,51 +709,11 @@ class MuscleSim:
 
     def load_bone_geo(self, target_path):
         if not hasattr(self, 'bone_pos_field') and Path(target_path).exists():
-            from VMuscle.geo import Geo
-            self.bone_geo = Geo(target_path)
-            if len(self.bone_geo.positions) == 0:
-                print(f"Warning: No vertices found in {target_path}")
-                self.bone_pos = np.zeros((0, 3), dtype=np.float32)
-                self.bone_muscle_ids = {}  # muscle_id -> vertex indices
+            is_usd = str(target_path).endswith((".usd", ".usdc", ".usda"))
+            if is_usd:
+                self._load_bone_from_usd(target_path)
             else:
-                self.bone_pos = np.asarray(self.bone_geo.positions, dtype=np.float32)
-                # Load indices for visualization
-                if hasattr(self.bone_geo, 'indices'):
-                    self.bone_indices_np = np.asarray(self.bone_geo.indices, dtype=np.int32)
-                elif hasattr(self.bone_geo, 'vert'):
-                    # Flatten vert if it's a list of lists (e.g. triangles/quads)
-                    self.bone_indices_np = np.array(self.bone_geo.vert, dtype=np.int32).flatten()
-                else:
-                    self.bone_indices_np = np.zeros(0, dtype=np.int32)
-
-                # Parse muscle_id from point attributes
-                self.bone_muscle_ids = {}  # muscle_id -> vertex indices
-                self.bone_vertex_colors = None  # 顶点颜色数组
-                
-                if hasattr(self.bone_geo, 'pointattr') and 'muscle_id' in self.bone_geo.pointattr:
-                    muscle_ids = self.bone_geo.pointattr['muscle_id']
-                    # muscle_ids is per-vertex, group vertices by muscle_id
-                    for v_idx, mid in enumerate(muscle_ids):
-                        if mid not in self.bone_muscle_ids:
-                            self.bone_muscle_ids[mid] = []
-                        self.bone_muscle_ids[mid].append(v_idx)
-                    # Convert lists to numpy arrays
-                    for mid in self.bone_muscle_ids:
-                        self.bone_muscle_ids[mid] = np.array(self.bone_muscle_ids[mid], dtype=np.int32)
-                    
-                    print(f"Bone muscle_id groups: {list(self.bone_muscle_ids.keys())}")
-                    
-                    # 仅当 color_bones=True 时生成颜色
-                    if self.cfg.color_bones:
-                        # 为每个 muscle_id 分配颜色
-                        unique_ids = sorted(self.bone_muscle_ids.keys())
-                        self.bone_id_colors = self._generate_muscle_id_colors(unique_ids)
-                        
-                        # 创建顶点颜色数组
-                        self.bone_vertex_colors = np.zeros((len(muscle_ids), 3), dtype=np.float32)
-                        for v_idx, mid in enumerate(muscle_ids):
-                            self.bone_vertex_colors[v_idx] = self.bone_id_colors[mid]
-                        print("Bone coloring by muscle_id enabled")
+                self._load_bone_from_geo(target_path)
 
             if self.bone_pos.shape[0] > 0:
                 self.bone_pos_field = ti.Vector.field(3, dtype=ti.f32, shape=self.bone_pos.shape[0])
@@ -748,15 +721,72 @@ class MuscleSim:
                 if self.bone_indices_np.shape[0] > 0:
                     self.bone_indices_field = ti.field(dtype=ti.i32, shape=self.bone_indices_np.shape[0])
                     self.bone_indices_field.from_numpy(self.bone_indices_np)
-                # 创建颜色 field
                 if self.bone_vertex_colors is not None:
                     self.bone_colors_field = ti.Vector.field(3, dtype=ti.f32, shape=self.bone_vertex_colors.shape[0])
                     self.bone_colors_field.from_numpy(self.bone_vertex_colors)
 
         if hasattr(self, 'bone_pos'):
             return self.bone_geo, self.bone_pos
-        else: # file does not exist or is empty
+        else:
             return None, np.zeros((0,3), dtype=np.float32)
+
+    def _load_bone_from_geo(self, target_path):
+        from VMuscle.geo import Geo
+        self.bone_geo = Geo(target_path)
+        if len(self.bone_geo.positions) == 0:
+            print(f"Warning: No vertices found in {target_path}")
+            self.bone_pos = np.zeros((0, 3), dtype=np.float32)
+            self.bone_muscle_ids = {}
+        else:
+            self.bone_pos = np.asarray(self.bone_geo.positions, dtype=np.float32)
+            if hasattr(self.bone_geo, 'indices'):
+                self.bone_indices_np = np.asarray(self.bone_geo.indices, dtype=np.int32)
+            elif hasattr(self.bone_geo, 'vert'):
+                self.bone_indices_np = np.array(self.bone_geo.vert, dtype=np.int32).flatten()
+            else:
+                self.bone_indices_np = np.zeros(0, dtype=np.int32)
+
+            self.bone_muscle_ids = {}
+            self.bone_vertex_colors = None
+
+            if hasattr(self.bone_geo, 'pointattr') and 'muscle_id' in self.bone_geo.pointattr:
+                muscle_ids = self.bone_geo.pointattr['muscle_id']
+                self._build_bone_muscle_id_mapping(muscle_ids)
+
+    def _load_bone_from_usd(self, usd_path):
+        from VMuscle.mesh_io import load_bone_usd_data
+        positions, indices, muscle_id_per_vertex = load_bone_usd_data(usd_path)
+        self.bone_geo = None
+        if len(positions) == 0:
+            print(f"Warning: No bone vertices found in {usd_path}")
+            self.bone_pos = np.zeros((0, 3), dtype=np.float32)
+            self.bone_muscle_ids = {}
+        else:
+            self.bone_pos = positions
+            self.bone_indices_np = indices
+            self.bone_muscle_ids = {}
+            self.bone_vertex_colors = None
+            if muscle_id_per_vertex:
+                self._build_bone_muscle_id_mapping(muscle_id_per_vertex)
+
+    def _build_bone_muscle_id_mapping(self, muscle_ids):
+        """Build bone_muscle_ids dict and optional vertex coloring."""
+        for v_idx, mid in enumerate(muscle_ids):
+            if mid not in self.bone_muscle_ids:
+                self.bone_muscle_ids[mid] = []
+            self.bone_muscle_ids[mid].append(v_idx)
+        for mid in self.bone_muscle_ids:
+            self.bone_muscle_ids[mid] = np.array(self.bone_muscle_ids[mid], dtype=np.int32)
+
+        print(f"Bone muscle_id groups: {list(self.bone_muscle_ids.keys())}")
+
+        if self.cfg.color_bones:
+            unique_ids = sorted(self.bone_muscle_ids.keys())
+            self.bone_id_colors = self._generate_muscle_id_colors(unique_ids)
+            self.bone_vertex_colors = np.zeros((len(muscle_ids), 3), dtype=np.float32)
+            for v_idx, mid in enumerate(muscle_ids):
+                self.bone_vertex_colors[v_idx] = self.bone_id_colors[mid]
+            print("Bone coloring by muscle_id enabled")
 
 
 
