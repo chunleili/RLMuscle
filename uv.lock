@@ -3762,28 +3762,41 @@ name = "rlmuscle"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "newton", extra = ["examples"] },
+    { name = "newton" },
     { name = "python-dotenv" },
+]
+
+[package.optional-dependencies]
+optional = [
+    { name = "matplotlib" },
+    { name = "newton", extra = ["examples"] },
+    { name = "pytest" },
     { name = "taichi" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "matplotlib" },
-    { name = "pytest" },
+    { name = "mujoco" },
+    { name = "mujoco-warp" },
+    { name = "scipy" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "newton", extras = ["examples"], editable = "external/newton" },
+    { name = "matplotlib", marker = "extra == 'optional'", specifier = ">=3.10.8" },
+    { name = "newton", editable = "external/newton" },
+    { name = "newton", extras = ["examples"], marker = "extra == 'optional'", editable = "external/newton" },
+    { name = "pytest", marker = "extra == 'optional'", specifier = ">=9.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
-    { name = "taichi" },
+    { name = "taichi", marker = "extra == 'optional'" },
 ]
+provides-extras = ["optional"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "matplotlib", specifier = ">=3.10.8" },
-    { name = "pytest", specifier = ">=9.0" },
+    { name = "mujoco" },
+    { name = "mujoco-warp", git = "https://github.com/google-deepmind/mujoco_warp" },
+    { name = "scipy" },
 ]
 
 [[package]]

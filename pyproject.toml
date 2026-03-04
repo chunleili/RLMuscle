@@ -9,9 +9,24 @@ description = "A Volumetric Muscle implementation for Reinforcement Learning env
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "newton[examples]",
+    "newton",
     "python-dotenv>=1.2.1",
+]
+
+[dependency-groups]
+dev = [
+    "mujoco",
+    "mujoco-warp @ git+https://github.com/google-deepmind/mujoco_warp",
+    "scipy",
+]
+
+
+[project.optional-dependencies]
+optional = [
+    "matplotlib>=3.10.8",
+    "pytest>=9.0",
     "taichi",
+    "newton[examples]",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -25,11 +40,6 @@ members = [
 [tool.uv.sources]
 newton = { workspace = true }
 
-[dependency-groups]
-dev = [
-    "matplotlib>=3.10.8",
-    "pytest>=9.0",
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -38,3 +48,4 @@ markers = [
     "visual: generates PNG output for visual inspection",
     "cuda: requires CUDA GPU",
 ]
+
