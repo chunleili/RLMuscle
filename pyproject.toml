@@ -19,6 +19,10 @@ dev = [
     "mujoco-warp @ git+https://github.com/google-deepmind/mujoco_warp",
     "scipy",
 ]
+usd = [
+    "usd-core-arm64>=26.3 ; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "usd-core>=25.5 ; sys_platform != 'linux' or platform_machine != 'aarch64'",
+]
 
 
 [project.optional-dependencies]
@@ -31,6 +35,9 @@ optional = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/VMuscle"]
+
+[tool.uv]
+default-groups = ["dev", "usd"]
 
 [tool.uv.workspace]
 members = [

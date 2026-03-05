@@ -4066,6 +4066,10 @@ dev = [
     { name = "mujoco-warp" },
     { name = "scipy" },
 ]
+usd = [
+    { name = "usd-core", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "usd-core-arm64", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -4083,6 +4087,10 @@ dev = [
     { name = "mujoco" },
     { name = "mujoco-warp", git = "https://github.com/google-deepmind/mujoco_warp" },
     { name = "scipy" },
+]
+usd = [
+    { name = "usd-core", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=25.5" },
+    { name = "usd-core-arm64", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=26.3" },
 ]
 
 [[package]]
@@ -5019,6 +5027,14 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/3b/c6/91f44f09b8a0436e99a57d9bb6d11fb38aec9defdc9a64b5e43abd61f2e8/usd_core-25.11-cp313-none-macosx_10_9_universal2.whl", hash = "sha256:c6871fd788f78ff3cb1c7999a4eb7ac23d943744bddfe07e0b47590b504e2d91", size = 38510628, upload-time = "2025-10-24T19:01:34.204Z" },
     { url = "https://files.pythonhosted.org/packages/5a/49/e46c50175c68219f1535214176f0f899c8df7fc5b3ef89dc17b6c8c99718/usd_core-25.11-cp313-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cefc3517806a9f8e59e14616160cb61071aebd52ec29bd18d358addaab21ae29", size = 27393899, upload-time = "2025-10-24T19:01:37.251Z" },
     { url = "https://files.pythonhosted.org/packages/74/36/a39933cfe372913588614c0e69e450f4d49067cc9c9ed5765cb230cc026d/usd_core-25.11-cp313-none-win_amd64.whl", hash = "sha256:cd7a873eff6a83f9c4a8b779ec392b53e960f2dc149a91a4f6900bd1aafc3e30", size = 13061641, upload-time = "2025-10-24T19:01:40.192Z" },
+]
+
+[[package]]
+name = "usd-core-arm64"
+version = "26.3.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/89/46ce7700cfdc053f0e066920c3bd12c705dd5906c8a0a99b04307b4bf510/usd_core_arm64-26.3.0-cp311-cp311-manylinux_2_38_aarch64.whl", hash = "sha256:4783ad9d684abdd09102e38be33528d1eefb4b6fc938a2c3907588ed07bc8459", size = 34299668, upload-time = "2026-03-05T03:23:46.314Z" },
 ]
 
 [[package]]
