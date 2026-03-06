@@ -10,7 +10,14 @@ git clone https://github.com/chunleili/RLMuscle
 git submodule update --init --recursive
 ```
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/). 
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) with following script:
+
+``` sh
+# Linux or macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
 
 Then install the package with:
 
@@ -22,20 +29,35 @@ Then run the example with:
 ```
 uv run main.py 
 ```
-(Optional) To run different examples, you can hardcode change the "example_to_run" in main.py or set the environment variable "RUN" to the example name. For example, to run the muscle warp example in windows:
-```
-$env:RUN = "example_muscle_warp"
+
+(Optional) To run a different example, set environment variable `RUN` or change .env file. The RUN case names are exactly the same as those in `examples/*`. E.g.,
+```sh
+# linux or macOS
+$env:RUN = "exmaple_couple"
+
+# Windows
+RUN=exmaple_couple 
+
 uv run main.py 
 ```
 
+(Optional) You can also use `uv run -m examples.example_XXX` to run an example.
+
+
 Output (if any) will be saved in the "output" directory.
 
+## Assets download
+We use Git LFS to manage large assets. If you have git-lfs installed and LFS smudge is enabled (default), then the assets will be downloaded automatically when you git clone. Otherwise you should first install git lfs run
+```
+git lfs pull
+```
 
 ## Roadmap
 - physical engine
     - [x] Implement a minimal joint demo using newton
-    - [x] USD IO with layering
-    - [ ] Add muscle coupling solver
+    - [x] USD IO
+    - [x] Add muscle coupling solver
+    - [ ] Full body USD simulation
 - reinforcement learning
     - [ ] Implement a simple RL task
 
@@ -43,7 +65,7 @@ Output (if any) will be saved in the "output" directory.
 
 ![import_human](docs/imgs/import_human.png)
 
-`uv run examples.example_human_import.py` 
+`uv run -m examples.example_human_import` 
 
 ## Test
 You can run all the tests with:
