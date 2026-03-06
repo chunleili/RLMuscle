@@ -39,6 +39,7 @@ members = [
 
 [tool.uv.sources]
 newton = { workspace = true }
+mujoco-warp = { git = "https://github.com/google-deepmind/mujoco_warp" }
 
 
 [tool.pytest.ini_options]
