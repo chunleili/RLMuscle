@@ -7,8 +7,8 @@ and writes deformed vertices + bone transforms into a layered USD file.
 The source USD is never modified; all edits go into the output layer.
 
 Usage:
-    RUN=example_couple_usd_export uv run main.py --viewer usd
-    RUN=example_couple_usd_export uv run main.py --viewer null --headless --num-frames 60
+    RUN=example_bicep_usd_io uv run main.py --viewer usd
+    RUN=example_bicep_usd_io uv run main.py --viewer null --headless --num-frames 60
 """
 
 import logging
@@ -38,7 +38,7 @@ class Example:
             root_path=str(args.usd_root_path),
             y_up_to_z_up=False,
         ).read()
-
+        
         # Identify muscle and bone meshes by prim path
         self.muscle_mesh = self.usd.find_mesh("muscle")
         self.bone_meshes = self.usd.find_meshes("bone")
