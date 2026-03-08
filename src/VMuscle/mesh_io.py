@@ -185,4 +185,31 @@ def load_bone_usd_data(usd_path: Path, bone_root: str = "/character/bone"):
     return positions, indices, all_mid
 
 
-__all__ = ["build_surface_tris", "load_mesh_usd", "load_bone_usd_data"]
+
+def read_auxiliary_meshes(ground_path="data/muscle/model/ground.obj", coord_path="data/muscle/model/coord.obj"):
+    """
+    读取辅助网格，包括地面和坐标系。
+
+    Examples::
+
+        # (before the render loop)
+        ground, coord, ground_indices, coord_indices = read_auxiliary_meshes()
+        # ...
+        # (in the render loop)
+        scene.mesh(ground, indices=ground_indices, color=(0.5,0.5,0.5))
+        scene.mesh(coord, indices=coord_indices, color=(0.5, 0, 0))
+    """
+    def read_mesh(mesh_path, scale=[1.0, 1.0, 1.0], shift=[0, 0, 0]):
+        import trimesh
+        print("Using trimesh read ", mesh_path)
+        mesh = trimesh.load(mesh_path)
+        mesh.vertices *= scale
+        mesh.vertices += shift
+        return mesh.vertices, mesh.faces
+
+    ground, ground_indices = read_mesh(ground_path)
+    coord, coord_indices = read_mesh(coord_path)
+
+    return ground, coord, ground_indices, coord_indices
+
+

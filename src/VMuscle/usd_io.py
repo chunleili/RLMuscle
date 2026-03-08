@@ -160,15 +160,22 @@ class UsdIO:
         self._Gf = None
         self._Sdf = None
         self._Vt = None
+        self._has_read = False
 
         if not os.path.isfile(self.source_usd_path):
             raise FileNotFoundError(f"USD source file not found: {self.source_usd_path}")
+        
+        if not self._has_read:
+            self.read()
+            
 
     # -------------------------------------------------------------------
     # Read
     # -------------------------------------------------------------------
 
     def read(self) -> "UsdIO":
+        if self._has_read:
+            return
         if self._meshes is not None:
             return self
         from pxr import Gf, Usd, UsdGeom
@@ -177,6 +184,7 @@ class UsdIO:
         stage = Usd.Stage.Open(self.source_usd_path)
         if stage is None:
             raise FileNotFoundError(f"Failed to open USD file: {self.source_usd_path}")
+        self._stage = stage
 
         apply_rotation = self.y_up_to_z_up and str(UsdGeom.GetStageUpAxis(stage)).upper() == "Y"
         xform_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
@@ -288,6 +296,7 @@ class UsdIO:
         if not meshes:
             raise ValueError(f"No renderable Mesh/TetMesh found under '{root_path}' in: {self.source_usd_path}")
         self._meshes = meshes
+        self._has_read = True
         return self
 
     # -------------------------------------------------------------------
