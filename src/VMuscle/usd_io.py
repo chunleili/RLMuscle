@@ -30,6 +30,7 @@ class UsdMesh:
     faces: np.ndarray             # (T, 3) int32
     color: ColorRgb = (0.7, 0.7, 0.7)
     tets: np.ndarray | None = None          # (M, 4) int32
+    primvars: dict | None = None            # {"materialW": ndarray, ...}
 
 
 @dataclass
@@ -264,12 +265,24 @@ class UsdIO:
             if tets is not None and tets.size > 0:
                 tets = _fix_tet_winding(verts, tets.copy())
 
+            # Read primvars (skip display-only ones)
+            pv_api = UsdGeom.PrimvarsAPI(prim)
+            primvars = {}
+            for pv in pv_api.GetPrimvars():
+                name = pv.GetPrimvarName()
+                if name in ("displayColor", "displayOpacity"):
+                    continue
+                val = pv.Get()
+                if val is not None:
+                    primvars[name] = np.asarray(val)
+
             meshes.append(UsdMesh(
                 mesh_path=str(prim.GetPath()),
                 vertices=verts,
                 faces=np.asarray(tris, dtype=np.int32),
                 color=_read_display_color(prim),
                 tets=tets,
+                primvars=primvars if primvars else None,
             ))
 
         if not meshes:
@@ -295,6 +308,17 @@ class UsdIO:
     @property
     def output_path(self) -> str | None:
         return self._output_path
+
+    def find_mesh(self, keyword: str) -> UsdMesh | None:
+        """Find first mesh whose prim_path contains *keyword*."""
+        for m in self.meshes:
+            if keyword in m.mesh_path:
+                return m
+        return None
+
+    def find_meshes(self, keyword: str) -> list[UsdMesh]:
+        """Find all meshes whose prim_path contains *keyword*."""
+        return [m for m in self.meshes if keyword in m.mesh_path]
 
     # -------------------------------------------------------------------
     # Warp integration
@@ -328,7 +352,7 @@ class UsdIO:
 
         if output_path is None:
             stem = os.path.splitext(os.path.basename(self.source_usd_path))[0]
-            output_path = os.path.abspath(os.path.join("output", f"{stem}.anim.usda"))
+            output_path = os.path.abspath(os.path.join("output", f"{stem}.anim.usd"))
         self.close()
 
         self._output_path = os.path.abspath(output_path)
@@ -336,7 +360,12 @@ class UsdIO:
         if copy_usd:
             self._copy_source()
 
-        layer = Sdf.Layer.FindOrOpen(self._output_path) or Sdf.Layer.CreateNew(self._output_path)
+        # Always start fresh: clear existing layer or create new one.
+        layer = Sdf.Layer.FindOrOpen(self._output_path)
+        if layer:
+            layer.Clear()
+        else:
+            layer = Sdf.Layer.CreateNew(self._output_path)
         src_rel = os.path.relpath(self.source_usd_path, os.path.dirname(self._output_path)).replace("\\", "/")
         if src_rel not in list(layer.subLayerPaths):
             layer.subLayerPaths = list(layer.subLayerPaths) + [src_rel]
@@ -401,6 +430,41 @@ class UsdIO:
             attr.Set(vt_points)
         else:
             attr.Set(vt_points, int(frame))
+            self._mark_frame(int(frame))
+        return True
+
+    def set_xform(self, prim_path: str, pos, quat_wxyz, *,
+                  frame: int | None = None) -> bool:
+        """Write a rigid-body transform (translate + orient) to a prim.
+
+        Args:
+            pos: Translation array-like [x, y, z].
+            quat_wxyz: Quaternion [w, x, y, z] (USD convention).
+        """
+        from pxr import UsdGeom
+        prim = self._stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            return False
+
+        xf = UsdGeom.Xformable(prim)
+        ops = xf.GetOrderedXformOps()
+        if not ops:
+            xf.AddTranslateOp()
+            xf.AddOrientOp()
+            ops = xf.GetOrderedXformOps()
+
+        p = np.asarray(pos, dtype=np.float64).ravel()
+        q = np.asarray(quat_wxyz, dtype=np.float64).ravel()
+
+        if self.y_up_to_z_up:
+            p = (p.astype(np.float32) @ _Y_TO_Z).astype(np.float64)
+
+        t = int(frame) if frame is not None else self._Sdf.TimeCode.Default()
+        if len(ops) >= 1:
+            ops[0].Set(self._Gf.Vec3d(p[0], p[1], p[2]), t)
+        if len(ops) >= 2:
+            ops[1].Set(self._Gf.Quatf(float(q[0]), float(q[1]), float(q[2]), float(q[3])), t)
+        if frame is not None:
             self._mark_frame(int(frame))
         return True
 
