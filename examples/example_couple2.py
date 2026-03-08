@@ -121,7 +121,7 @@ def build_elbow_model(sim: MuscleSim):
         target_ke=5.0,
         target_kd=5.0,
     )
-    builder.add_articulation([joint], key="elbow")
+    builder.add_articulation([joint], label="elbow")
 
     model = builder.finalize()
     state = model.state()
