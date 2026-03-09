@@ -175,7 +175,7 @@ class UsdIO:
 
     def read(self) -> "UsdIO":
         if self._has_read:
-            return
+            return self
         if self._meshes is not None:
             return self
         from pxr import Gf, Usd, UsdGeom

@@ -40,6 +40,9 @@ class SimConfig:
     color_bones: bool = False  # 是否按 muscle_id 给骨骼着色
     color_muscles: str = "tendonmask"  # 肌肉着色模式: None, "muscle_id", "tendonmask"
     HAS_compressstiffness = False  # 如需关闭压缩带，设为False
+    # USD loading support: optional prim path for muscle TetMesh and bone Mesh prims
+    muscle_prim_path: str = None
+    bone_prim_paths: dict = None  # {muscle_id_name: usd_prim_path}, e.g. {"L_humerus": "/Human/.../mesh_0"}
 
 # enum of constraint types, referecne from pbd_types.h
 DISTANCE      =  -264586729
@@ -93,12 +96,18 @@ def load_config(path: Path) -> SimConfig:
     for fld in fields(SimConfig):
         name = fld.name
         if name in data:
-            if name == "geo_path" or name == "bone_geo_path":
+            if name in ("geo_path", "bone_geo_path"):
                 kwargs[name] = Path(data[name])
             else:
                 kwargs[name] = data[name]
 
-    return SimConfig(**kwargs)
+    cfg = SimConfig(**kwargs)
+    # Support extra USD fields from JSON (not in dataclass fields list)
+    if "muscle_prim_path" in data:
+        cfg.muscle_prim_path = data["muscle_prim_path"]
+    if "bone_prim_paths" in data:
+        cfg.bone_prim_paths = data["bone_prim_paths"]
+    return cfg
 
 def load_mesh_json(path):
     import json
@@ -157,10 +166,132 @@ def load_mesh_one_tet(path: Path=None):
     ], dtype=np.float32)
     return positions, tets, fibers, tendon_mask, None
 
-def load_mesh(path: Path):
+class GeoProxy:
+    """Lightweight proxy mimicking Geo's attribute interface for non-.geo data."""
+    def __init__(self, positions, vert, attrs_dict):
+        self.positions = positions
+        self.vert = vert
+        self.pointattr = {}
+        for name, data in attrs_dict.items():
+            setattr(self, name, data)
+            self.pointattr[name] = data
+
+
+def load_mesh_usd(path, prim_path=None, stage=None):
+    """Load TetMesh muscle from a USD file.
+
+    Args:
+        path: Path to USD file.
+        prim_path: Optional specific TetMesh prim path. If None, uses first found.
+        stage: Optional pre-opened Usd.Stage.
+    """
+    from pxr import Usd, UsdGeom
+
+    if stage is None:
+        stage = Usd.Stage.Open(str(path))
+
+    if prim_path:
+        prim = stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            raise ValueError(f"TetMesh prim not found at {prim_path} in {path}")
+    else:
+        # Find first TetMesh prim
+        prim = None
+        for p in stage.Traverse():
+            if p.IsA(UsdGeom.TetMesh):
+                prim = p
+                break
+        if prim is None:
+            raise ValueError(f"No TetMesh prims found in {path}")
+
+    tm = UsdGeom.TetMesh(prim)
+    positions = np.asarray(tm.GetPointsAttr().Get(), dtype=np.float32)
+    tet_indices_flat = np.asarray(tm.GetTetVertexIndicesAttr().Get(), dtype=np.int32)
+    tets = tet_indices_flat.reshape(-1, 4)
+
+    # Extract per-vertex primvars as custom attributes
+    n_verts = len(positions)
+    attrs = {}
+    gp = UsdGeom.PrimvarsAPI(prim)
+    for pv in gp.GetPrimvars():
+        name = pv.GetName().replace('primvars:', '')
+        if pv.GetInterpolation() != 'vertex':
+            continue
+        val = pv.Get()
+        if val is None:
+            continue
+        arr = np.asarray(val)
+        if arr.ndim >= 1 and arr.shape[0] == n_verts:
+            attrs[name] = arr
+
+    fibers = attrs.pop('materialW', None)
+    if fibers is not None:
+        fibers = np.asarray(fibers, dtype=np.float32).reshape(-1, 3)
+
+    tendon_mask = attrs.pop('tendonmask', None)
+    if tendon_mask is not None:
+        tendon_mask = np.asarray(tendon_mask, dtype=np.float32).ravel()
+
+    geo_proxy = GeoProxy(positions, tets, attrs)
+    return positions, tets, fibers, tendon_mask, geo_proxy
+
+
+def load_bone_from_usd(stage, bone_prim_paths):
+    """Load and concatenate bone Mesh prims from a USD stage.
+
+    Args:
+        stage: Usd.Stage (already opened).
+        bone_prim_paths: dict mapping muscle_id_name -> prim_path.
+            e.g. {"L_humerus": "/Human/Ragdoll/Bones/L_upperarm/mesh_0"}
+    Returns:
+        (bone_pos, bone_indices, bone_muscle_ids)
+    """
+    from pxr import UsdGeom
+
+    all_positions = []
+    all_indices = []
+    muscle_ids_list = []
+    offset = 0
+
+    for bone_name, prim_path in bone_prim_paths.items():
+        prim = stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            print(f"Warning: Bone prim not found: {prim_path}")
+            continue
+
+        mesh = UsdGeom.Mesh(prim)
+        points = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float32)
+        face_vertex_indices = np.asarray(mesh.GetFaceVertexIndicesAttr().Get(), dtype=np.int32)
+
+        all_positions.append(points)
+        all_indices.append(face_vertex_indices + offset)
+        muscle_ids_list.extend([bone_name] * len(points))
+        offset += len(points)
+
+    bone_pos = np.concatenate(all_positions, axis=0) if all_positions else np.zeros((0, 3), dtype=np.float32)
+    bone_indices = np.concatenate(all_indices, axis=0) if all_indices else np.zeros(0, dtype=np.int32)
+
+    bone_muscle_ids = {}
+    for i, mid in enumerate(muscle_ids_list):
+        if mid not in bone_muscle_ids:
+            bone_muscle_ids[mid] = []
+        bone_muscle_ids[mid].append(i)
+    for mid in bone_muscle_ids:
+        bone_muscle_ids[mid] = np.array(bone_muscle_ids[mid], dtype=np.int32)
+
+    return bone_pos, bone_indices, bone_muscle_ids
+
+
+def _is_usd_path(path) -> bool:
+    return str(path).endswith(('.usd', '.usda', '.usdc'))
+
+
+def load_mesh(path: Path, prim_path=None):
     if path is None:
         print("Using built-in one-tet mesh for testing.")
         return load_mesh_one_tet()
+    elif _is_usd_path(path):
+        return load_mesh_usd(path, prim_path=prim_path)
     elif str(path).endswith(".json"):
         return load_mesh_json(str(path))
     elif str(path).endswith(".node"):
@@ -1396,7 +1527,7 @@ class MuscleSim:
         self.constraint_configs = self.cfg.constraints if self.cfg.constraints else []
 
         print("Loading mesh from:", cfg.geo_path)
-        mesh_data = load_mesh(cfg.geo_path)
+        mesh_data = load_mesh(cfg.geo_path, prim_path=getattr(cfg, 'muscle_prim_path', None))
         self.pos0_np, self.tet_np, self.v_fiber_np, self.v_tendonmask_np, self.geo = mesh_data
         self.n_verts = self.pos0_np.shape[0]
         print(f"Loaded mesh: {self.n_verts} vertices, {self.tet_np.shape[0]} tetrahedra.")
@@ -1627,7 +1758,30 @@ class MuscleSim:
 
 
     def load_bone_geo(self, target_path):
-        if not hasattr(self, 'bone_pos_np') and Path(target_path).exists():
+        if hasattr(self, 'bone_pos_np'):
+            # Already loaded (e.g. from USD in __init__)
+            return getattr(self, 'bone_geo', None), self.bone_pos
+
+        # USD bone loading
+        if target_path and _is_usd_path(target_path):
+            bone_prim_paths = getattr(self.cfg, 'bone_prim_paths', None)
+            if not bone_prim_paths:
+                print(f"Warning: bone_prim_paths not set in config for USD bone loading from {target_path}")
+                return None, np.zeros((0, 3), dtype=np.float32)
+            from pxr import Usd
+            stage = Usd.Stage.Open(str(target_path))
+            self.bone_pos, self.bone_indices_np, self.bone_muscle_ids = load_bone_from_usd(stage, bone_prim_paths)
+            self.bone_geo = None
+            self.bone_vertex_colors = None
+            print(f"Bone loaded from USD: {self.bone_pos.shape[0]} vertices")
+            print(f"Bone muscle_id groups: {list(self.bone_muscle_ids.keys())}")
+            if self.bone_pos.shape[0] > 0:
+                self.bone_pos_np = self.bone_pos.copy()
+                self.bone_pos_field = wp.array(self.bone_pos, dtype=wp.vec3)
+            return self.bone_geo, self.bone_pos
+
+        # Original .geo loading
+        if target_path and Path(target_path).exists():
             from VMuscle.geo import Geo
             self.bone_geo = Geo(target_path)
             if len(self.bone_geo.positions) == 0:
@@ -1671,7 +1825,7 @@ class MuscleSim:
                 self.bone_pos_field = wp.array(self.bone_pos, dtype=wp.vec3)
 
         if hasattr(self, 'bone_pos'):
-            return self.bone_geo, self.bone_pos
+            return getattr(self, 'bone_geo', None), self.bone_pos
         else:
             return None, np.zeros((0,3), dtype=np.float32)
 
@@ -1698,7 +1852,9 @@ class MuscleSim:
         stiffness = params.get('stiffness', 1e10)
         dampingratio = params.get('dampingratio', 0.0)
 
-        self.bone_geo, self.bone_pos = self.load_bone_geo(target_path)
+        # Use already-loaded bone data if available, otherwise load from target_path
+        if not hasattr(self, 'bone_pos_np') and target_path:
+            self.load_bone_geo(target_path)
 
         mask = np.asarray(getattr(self.geo, mask_name), dtype=np.float32) if hasattr(self.geo, mask_name) else None
 
@@ -1752,7 +1908,9 @@ class MuscleSim:
         stiffness = params.get('stiffness', 1e10)
         dampingratio = params.get('dampingratio', 0.0)
 
-        self.bone_geo, self.bone_pos = self.load_bone_geo(target_path)
+        # Use already-loaded bone data if available, otherwise load from target_path
+        if not hasattr(self, 'bone_pos_np') and target_path:
+            self.load_bone_geo(target_path)
 
         mask = np.asarray(getattr(self.geo, mask_name), dtype=np.float32) if hasattr(self.geo, mask_name) else None
 

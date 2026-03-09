@@ -4,6 +4,7 @@ This is a non-destructive alternative to `example_couple.py`.
 
 Usage:
     uv run python examples/example_couple2.py --auto
+    uv run python examples/example_couple2.py --auto --usd
     uv run python examples/example_couple2.py --steps 300
 """
 
@@ -19,6 +20,7 @@ import newton
 
 from VMuscle.muscle_warp import MuscleSim, load_config
 from VMuscle.solver_muscle_bone_coupled_warp import SolverMuscleBoneCoupledWarp
+from VMuscle.usd_io import UsdIO
 
 # Elbow joint parameters (Y-up space)
 ELBOW_PIVOT = np.array([0.328996, 1.16379, -0.0530352], dtype=np.float32)
@@ -147,13 +149,44 @@ def _activation_schedule(step: int, total: int) -> float:
     return 0.0
 
 
-def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool):
-    """Headless run loop with optional scheduled activation."""
+def _build_bone_prim_map(usd: UsdIO, sim: MuscleSim) -> dict[str, np.ndarray]:
+    """Map each bone USD prim path to its vertex indices in sim.bone_pos_field.
+
+    UsdIO bone meshes have prim paths like ``/character/bone/L_radius/L_radiusShape``.
+    MuscleSim stores all bone vertices concatenated in ``bone_pos_field`` and groups
+    them via ``bone_muscle_ids`` (e.g. ``{"L_radius": [3,4,5,...]}``).
+    """
+    mapping: dict[str, np.ndarray] = {}
+    for bm in usd.bone_meshes:
+        # Match prim path keyword against bone_muscle_ids group name
+        for group_name, indices in sim.bone_muscle_ids.items():
+            if group_name.lower() in bm.mesh_path.lower():
+                mapping[bm.mesh_path] = np.asarray(indices, dtype=np.int32)
+                break
+    return mapping
+
+
+def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
+             usd: UsdIO | None = None, bone_prim_map: dict | None = None):
+    """Headless run loop with optional scheduled activation and USD export."""
     for step in range(1, n_steps + 1):
         if auto:
             cfg.activation = _activation_schedule(step, n_steps)
 
         solver.step(state, state, dt=dt)
+
+        # Write USD frame
+        if usd is not None:
+            # Muscle deformed vertices
+            usd.set_points(usd.muscle_mesh.mesh_path, solver.core.pos, frame=step)
+            # Bone vertices per group
+            bone_np = solver.core.bone_pos_field.numpy()
+            for prim_path, indices in (bone_prim_map or {}).items():
+                usd.set_points(prim_path, bone_np[indices], frame=step)
+            # Runtime metadata
+            usd.set_runtime("activation", float(cfg.activation), frame=step)
+            joint_q = state.joint_q.numpy()
+            usd.set_runtime("joint_angle", float(joint_q[0]) if len(joint_q) > 0 else 0.0, frame=step)
 
         if step % 25 == 0 or step == 1:
             body_q = state.body_q.numpy()[0]
@@ -183,6 +216,8 @@ def _create_parser() -> argparse.ArgumentParser:
         help="Path to muscle config JSON",
     )
     parser.add_argument("--device", type=str, default="cpu", help="Warp device, e.g. cpu or cuda:0")
+    parser.add_argument("--usd-source", type=str, default="data/muscle/model/bicep.usd",
+                        help="Source USD for layered export")
     return parser
 
 
@@ -197,6 +232,22 @@ def main():
     cfg = load_config(args.config)
     cfg.gui = False
     cfg.render_mode = None
+
+    # Override cfg to load from USD source so MuscleSim and USD export
+    # read the same asset, preventing data inconsistency.
+    usd_source = args.usd_source
+    cfg.geo_path = usd_source
+    cfg.bone_geo_path = usd_source
+    cfg.muscle_prim_path = "/character/muscle/bicep"
+    cfg.bone_prim_paths = {
+        "L_scapula": "/character/bone/L_scapula/L_scapulaShape",
+        "L_radius": "/character/bone/L_radius/L_radiusShape",
+        "L_humerus": "/character/bone/L_humerus/L_humerusShape",
+    }
+    if cfg.constraints:
+        for c in cfg.constraints:
+            if "target_path" in c:
+                c["target_path"] = usd_source
 
     sim = MuscleSim(cfg)
 
@@ -227,7 +278,22 @@ def main():
         int(solver.bone_substeps),
     )
 
-    run_loop(solver, state, cfg, dt=dt, n_steps=int(max(1, args.steps)), auto=bool(args.auto))
+    # USD export
+    usd = UsdIO(usd_source, y_up_to_z_up=False)
+    usd.muscle_mesh = usd.find_mesh("muscle")
+    usd.bone_meshes = usd.find_meshes("bone")
+    usd.start("output/example_couple2.anim.usd", copy_usd=True)
+    usd.set_runtime("fps", 60)
+    bone_prim_map = _build_bone_prim_map(usd, sim)
+    log.info("USD export: %s  bone_groups=%s",
+             usd.output_path, list(bone_prim_map.keys()))
+
+    try:
+        run_loop(solver, state, cfg, dt=dt, n_steps=int(max(1, args.steps)),
+                 auto=bool(args.auto), usd=usd, bone_prim_map=bone_prim_map)
+    finally:
+        usd.close()
+        log.info("USD saved: %s", usd.output_path)
 
 
 if __name__ == "__main__":
