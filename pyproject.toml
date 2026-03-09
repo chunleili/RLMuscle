@@ -9,6 +9,7 @@ description = "A Volumetric Muscle implementation for Reinforcement Learning env
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "mujoco-warp>=3.5.0.2",
     "newton",
     "python-dotenv>=1.2.1",
 ]
@@ -46,7 +47,7 @@ members = [
 
 [tool.uv.sources]
 newton = { workspace = true }
-mujoco-warp = { git = "https://github.com/google-deepmind/mujoco_warp" }
+mujoco-warp = { git = "https://github.com/google-deepmind/mujoco_warp", tag = "v3.5.0.2" }
 
 
 [tool.pytest.ini_options]

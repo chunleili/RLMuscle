@@ -2227,8 +2227,8 @@ wheels = [
 
 [[package]]
 name = "mujoco-warp"
-version = "3.5.0"
-source = { git = "https://github.com/google-deepmind/mujoco_warp#c276cefc14b7378257e50e9c7f6f53064edb5f58" }
+version = "3.5.0.2"
+source = { git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2#1166e75230ec8c1f16f9484ee03ad74098d3201a" }
 dependencies = [
     { name = "absl-py" },
     { name = "etils", extra = ["epath"] },
@@ -2585,12 +2585,12 @@ requires-dist = [
     { name = "mujoco", marker = "python_full_version < '3.14' and extra == 'sim'", specifier = ">=3.5.0" },
     { name = "mujoco", marker = "python_full_version < '3.14' and extra == 'torch-cu12'", specifier = ">=3.5.0" },
     { name = "mujoco", marker = "python_full_version < '3.14' and extra == 'torch-cu13'", specifier = ">=3.5.0" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'dev'", git = "https://github.com/google-deepmind/mujoco_warp" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'examples'", git = "https://github.com/google-deepmind/mujoco_warp" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'notebook'", git = "https://github.com/google-deepmind/mujoco_warp" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'sim'", git = "https://github.com/google-deepmind/mujoco_warp" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'torch-cu12'", git = "https://github.com/google-deepmind/mujoco_warp" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'torch-cu13'", git = "https://github.com/google-deepmind/mujoco_warp" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'dev'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'examples'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'notebook'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'sim'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'torch-cu12'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'torch-cu13'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=3.0.1" },
     { name = "nbsphinx", marker = "extra == 'docs'", specifier = ">=0.9.0" },
     { name = "newton-actuators" },
@@ -4048,6 +4048,7 @@ name = "rlmuscle"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "mujoco-warp" },
     { name = "newton" },
     { name = "python-dotenv" },
 ]
@@ -4074,6 +4075,7 @@ usd = [
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", marker = "extra == 'optional'", specifier = ">=3.10.8" },
+    { name = "mujoco-warp", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
     { name = "newton", editable = "external/newton" },
     { name = "newton", extras = ["examples"], marker = "extra == 'optional'", editable = "external/newton" },
     { name = "pytest", marker = "extra == 'optional'", specifier = ">=9.0" },
@@ -4085,7 +4087,7 @@ provides-extras = ["optional"]
 [package.metadata.requires-dev]
 dev = [
     { name = "mujoco" },
-    { name = "mujoco-warp", git = "https://github.com/google-deepmind/mujoco_warp" },
+    { name = "mujoco-warp", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
     { name = "scipy" },
 ]
 usd = [
