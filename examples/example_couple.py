@@ -28,7 +28,7 @@ import newton
 
 from VMuscle.muscle import MuscleSim, load_config
 from VMuscle.usd_io import UsdIO
-from VMuscle.solver_muscle_bone_coupled import SolverMuscleBoneCoupled
+from VMuscle.solver_muscle_bone_coupled_warp import SolverMuscleBoneCoupled
 
 # Elbow joint parameters (Y-up space)
 ELBOW_PIVOT = np.array([0.328996, 1.16379, -0.0530352], dtype=np.float32)
@@ -95,7 +95,7 @@ def build_elbow_model(usd):
         #     child_xform=wp.transform(p=wp.vec3(ELBOW_PIVOT)),
         #     armature=0.1, friction=0.9,
         # )
-        builder.add_articulation([joint], key="elbow")
+        builder.add_articulation([joint])
         break
 
     model = builder.finalize()

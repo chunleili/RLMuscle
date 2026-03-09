@@ -1,13 +1,13 @@
 """Bidirectional muscle-bone coupling solver.
 
-Couples Newton MuJoCo rigid-body dynamics with Taichi MuscleSim PBD.
+Couples Newton MuJoCo rigid-body dynamics with MuscleSim PBD.
 Spring force model: F = -k_coupling * sum(C*n) / N_substeps.
+All Taichi fields are accessed via numpy bridging.
 """
 
 import logging
 
 import numpy as np
-import taichi as ti
 import warp as wp
 
 import newton
@@ -17,7 +17,6 @@ from .muscle import MuscleSim
 log = logging.getLogger("couple")
 
 
-@ti.data_oriented
 class SolverMuscleBoneCoupled:
     """Couples Newton rigid-body bone dynamics with Taichi MuscleSim PBD.
 
@@ -68,14 +67,11 @@ class SolverMuscleBoneCoupled:
         """
         self._bone_body_id = bone_body_id
 
-        # Taichi fields for bone sync kernel
+        # Numpy arrays for bone sync
         n_bone = len(bone_vertex_indices)
-        self._bone_rest_verts_field = ti.Vector.field(3, dtype=ti.f32, shape=n_bone)
-        self._bone_rest_verts_field.from_numpy(bone_rest_verts.astype(np.float32))
-        self._bone_idx_field = ti.field(dtype=ti.i32, shape=n_bone)
-        self._bone_idx_field.from_numpy(bone_vertex_indices.astype(np.int32))
+        self._bone_rest_verts = bone_rest_verts.astype(np.float32)  # (N, 3)
+        self._bone_idx = bone_vertex_indices.astype(np.int32)       # (N,)
         self._n_bone_verts = n_bone
-        self._bone_xform = ti.field(dtype=ti.f32, shape=7)  # px,py,pz, qx,qy,qz,qw
 
         # Joint DOF info
         qd_starts = self.model.joint_qd_start.numpy()
@@ -98,11 +94,7 @@ class SolverMuscleBoneCoupled:
                 attach_cidx.append(int(c['cidx']))
 
         self._n_attach = len(attach_cidx)
-        self._attach_cidx = ti.field(dtype=ti.i32, shape=max(self._n_attach, 1))
-        if self._n_attach > 0:
-            self._attach_cidx.from_numpy(np.array(attach_cidx, dtype=np.int32))
-
-        self._torque_accum = ti.Vector.field(3, dtype=ti.f32, shape=())
+        self._attach_cidx = np.array(attach_cidx, dtype=np.int32) if attach_cidx else np.empty(0, dtype=np.int32)
         self._coupling_configured = True
         log.info(f"Coupling: {self._n_attach} constraints, "
                  f"DOF={self._joint_dof_index}, n_dofs={self._joint_n_dofs}, "
@@ -111,58 +103,40 @@ class SolverMuscleBoneCoupled:
     # -- Bone sync ----------------------------------------------------------
 
     def _sync_bone_positions(self, state):
-        """Read body_q from Newton, write transformed verts to bone_pos_field."""
+        """Read body_q from Newton, transform rest verts, write to bone_pos_field via numpy."""
         body_q = state.body_q.numpy()
-        self._bone_xform.from_numpy(body_q[self._bone_body_id].astype(np.float32))
-        self._sync_bone_kernel()
+        xf = body_q[self._bone_body_id].astype(np.float32)
+        pos = xf[:3]                       # translation
+        q_xyz, qw = xf[3:6], xf[6]        # quaternion (x,y,z,w)
 
-    @ti.kernel
-    def _sync_bone_kernel(self):
-        px, py, pz = self._bone_xform[0], self._bone_xform[1], self._bone_xform[2]
-        qx, qy, qz, qw = (self._bone_xform[3], self._bone_xform[4],
-                           self._bone_xform[5], self._bone_xform[6])
-        for i in range(self._n_bone_verts):
-            v = self._bone_rest_verts_field[i]
-            # Quaternion rotation: v' = v + 2w(q x v) + 2(q x (q x v))
-            tx = 2.0 * (qy * v[2] - qz * v[1])
-            ty = 2.0 * (qz * v[0] - qx * v[2])
-            tz = 2.0 * (qx * v[1] - qy * v[0])
-            rx = v[0] + qw * tx + (qy * tz - qz * ty) + px
-            ry = v[1] + qw * ty + (qz * tx - qx * tz) + py
-            rz = v[2] + qw * tz + (qx * ty - qy * tx) + pz
-            self.core.bone_pos_field[self._bone_idx_field[i]] = ti.Vector([rx, ry, rz])
+        # Vectorised quaternion rotation: v' = v + 2w(q x v) + 2(q x (q x v))
+        v = self._bone_rest_verts           # (N, 3)
+        t = 2.0 * np.cross(q_xyz, v)       # (N, 3)
+        rotated = v + qw * t + np.cross(q_xyz, t) + pos  # (N, 3)
+
+        # Write back to taichi bone_pos_field through numpy
+        bone_np = self.core.bone_pos_field.to_numpy()
+        bone_np[self._bone_idx] = rotated
+        self.core.bone_pos_field.from_numpy(bone_np)
 
     # -- Torque extraction --------------------------------------------------
 
-    @ti.kernel
-    def _compute_torque_kernel(
-        self, k: ti.f32, inv_N: ti.f32,
-        pivot_x: ti.f32, pivot_y: ti.f32, pivot_z: ti.f32,
-    ):
-        """Sum torque = sum( (target - pivot) x (-k * C_n / N) ) over attach constraints."""
-        self._torque_accum[None] = ti.Vector([0.0, 0.0, 0.0])
-        pivot = ti.Vector([pivot_x, pivot_y, pivot_z])
-        ti.loop_config(serialize=True)
-        for i in range(self._n_attach):
-            cidx = self._attach_cidx[i]
-            target = ti.Vector([
-                self.core.cons[cidx].restvector[0],
-                self.core.cons[cidx].restvector[1],
-                self.core.cons[cidx].restvector[2],
-            ])
-            force = -k * self.core.reaction_accum[cidx] * inv_N
-            self._torque_accum[None] += (target - pivot).cross(force)
-
     def _compute_muscle_torque(self, inv_N) -> np.ndarray:
-        """Extract 3D joint torque from bilateral attach constraint reactions."""
+        """Extract 3D joint torque from bilateral attach constraint reactions via numpy."""
         if self._n_attach == 0:
             return np.zeros(3, dtype=np.float32)
 
-        self._compute_torque_kernel(
-            self.k_coupling, inv_N,
-            self._joint_pivot[0], self._joint_pivot[1], self._joint_pivot[2],
-        )
-        torque = self._torque_accum[None].to_numpy().copy()
+        # Read taichi fields through numpy
+        restvec_np = self.core.cons.restvector.to_numpy()   # (n_cons, 4)
+        reaction_np = self.core.reaction_accum.to_numpy()   # (n_cons, 3)
+
+        cidxs = self._attach_cidx
+        targets = restvec_np[cidxs, :3]                     # (n_attach, 3)
+        reactions = reaction_np[cidxs]                       # (n_attach, 3)
+
+        forces = -self.k_coupling * reactions * inv_N        # (n_attach, 3)
+        arms = targets - self._joint_pivot                   # (n_attach, 3)
+        torque = np.cross(arms, forces).sum(axis=0).astype(np.float32)
 
         mag = float(np.linalg.norm(torque))
         if mag > self.max_torque:

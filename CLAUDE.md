@@ -13,3 +13,4 @@
 - 在worktree工作应在项目目录外部创建../<PRJ_NAME>-<WORKTREE_NAME>，并建立分支<WORKTREE_NAME>，在该分支上进行开发，完成后合并到dev分支。
 - 需要可视化的测试应把截图/图片放到output/下对比。
 - Taichi is deprecated. 
+- If there is taichi LLVM error, try first use `taichi cache clean`. Also, you should try to call warp init first then import taichi.
