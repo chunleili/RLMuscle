@@ -1,6 +1,9 @@
-"""Shared mesh I/O utilities for RLMuscle.
+"""Mesh I/O for RLMuscle — .usd and .geo formats only.
 
-Provides USD and .geo mesh loading, plus surface extraction helpers.
+Provides:
+- load_mesh(path)       — muscle TetMesh (positions, tets, fibers, tendon_mask, geo)
+- load_bone_mesh(path)  — bone surface mesh (geo, positions, indices, muscle_ids)
+- build_surface_tris()  — extract boundary triangles from tetrahedra
 """
 
 from pathlib import Path
@@ -22,10 +25,6 @@ def build_surface_tris(tets: np.ndarray, positions: np.ndarray = None) -> np.nda
     If *positions* is given, orient each triangle so its outward normal points
     away from the tet interior (needed for correct backface culling).
     """
-    # Tet-face indexing: each tuple gives the 3 vertices of one face,
-    # and the 4th vertex (opposite) is the remaining index.
-    # Winding is set so that the outward normal (right-hand rule) points
-    # away from the opposite vertex.
     tet_faces = (
         (1, 2, 3, 0),
         (0, 3, 2, 1),
@@ -45,7 +44,6 @@ def build_surface_tris(tets: np.ndarray, positions: np.ndarray = None) -> np.nda
         if len(entries) == 1:
             tri, opp = entries[0]
             if positions is not None:
-                # Ensure outward winding: normal should point away from opposite vertex
                 p0, p1, p2 = positions[tri[0]], positions[tri[1]], positions[tri[2]]
                 n = np.cross(p1 - p0, p2 - p0)
                 d = positions[opp] - p0
@@ -56,7 +54,15 @@ def build_surface_tris(tets: np.ndarray, positions: np.ndarray = None) -> np.nda
 
 
 # ---------------------------------------------------------------------------
-# USD mesh loading
+# Internal: format detection
+# ---------------------------------------------------------------------------
+
+def _is_usd(path) -> bool:
+    return str(path).lower().endswith((".usd", ".usdc", ".usda"))
+
+
+# ---------------------------------------------------------------------------
+# Internal: USD helpers
 # ---------------------------------------------------------------------------
 
 def _read_primvar(pv_api, name, dtype=np.float32):
@@ -67,17 +73,10 @@ def _read_primvar(pv_api, name, dtype=np.float32):
     return None
 
 
-def load_mesh_usd(path: Path, y_up_to_z_up: bool = False):
-    """Load muscle TetMesh from a USD file.
+def _load_mesh_usd(path: Path, y_up_to_z_up: bool = False):
+    """Load muscle TetMesh from USD.
 
-    Returns (positions, tets, fibers, tendon_mask, geo_like) matching the
-    same 5-tuple interface as load_mesh_geo().
-
-    When *y_up_to_z_up* is True, positions and fiber directions are rotated to Z-up automatically.
-
-    The *geo_like* object is a SimpleNamespace carrying every vertex-interpolated
-    primvar as an attribute (e.g. ``geo_like.muscletobonemask``), so existing
-    constraint code that does ``getattr(self.geo, mask_name)`` keeps working.
+    Returns (positions, tets, fibers, tendon_mask, geo_namespace).
     """
     from pxr import Usd, UsdGeom
 
@@ -85,9 +84,6 @@ def load_mesh_usd(path: Path, y_up_to_z_up: bool = False):
     if stage is None:
         raise FileNotFoundError(f"Cannot open USD: {path}")
 
-    apply_rotation = y_up_to_z_up
-
-    # Find the first TetMesh prim
     tet_prim = None
     for prim in stage.Traverse():
         if prim.IsA(UsdGeom.TetMesh):
@@ -101,12 +97,10 @@ def load_mesh_usd(path: Path, y_up_to_z_up: bool = False):
     tets = np.asarray(tm.GetTetVertexIndicesAttr().Get(), dtype=np.int32).reshape(-1, 4)
 
     pv_api = UsdGeom.PrimvarsAPI(tet_prim)
-
     fibers = _read_primvar(pv_api, "materialW", np.float32)
     tendon_mask = _read_primvar(pv_api, "tendonmask", np.float32)
 
-    # Apply Y-up -> Z-up conversion if needed
-    if apply_rotation:
+    if y_up_to_z_up:
         positions = (positions @ _Y_TO_Z.T).astype(np.float32)
         if fibers is not None and fibers.ndim == 2 and fibers.shape[1] == 3:
             fibers = (fibers @ _Y_TO_Z.T).astype(np.float32)
@@ -125,10 +119,7 @@ def load_mesh_usd(path: Path, y_up_to_z_up: bool = False):
         if val is None:
             continue
         arr = np.asarray(val)
-        if arr.ndim == 1:
-            setattr(geo, name, arr.tolist())
-            geo.pointattr[name] = arr.tolist()
-        elif arr.ndim == 2:
+        if arr.ndim in (1, 2):
             setattr(geo, name, arr.tolist())
             geo.pointattr[name] = arr.tolist()
 
@@ -136,12 +127,24 @@ def load_mesh_usd(path: Path, y_up_to_z_up: bool = False):
     return positions, tets, fibers, tendon_mask, geo
 
 
-def load_bone_usd_data(usd_path: Path, bone_root: str = "/character/bone"):
-    """Load bone mesh data from USD (multiple Mesh prims under *bone_root*).
+def _load_mesh_geo(path: Path):
+    """Load muscle TetMesh from .geo file.
 
-    Returns (positions, face_indices_flat, muscle_id_per_vertex) where
-    all bone meshes are concatenated into single arrays.
-    muscle_id_per_vertex is a list of strings, one per vertex.
+    Returns (positions, tets, fibers, tendon_mask, geo_object).
+    """
+    from VMuscle.geo import Geo
+    geo = Geo(str(path))
+    positions = np.asarray(geo.positions, dtype=np.float32)
+    tets = np.asarray(geo.vert, dtype=np.int32)
+    fibers = np.asarray(geo.materialW, dtype=np.float32) if hasattr(geo, "materialW") else None
+    tendon_mask = np.asarray(geo.tendonmask, dtype=np.float32) if hasattr(geo, "tendonmask") else None
+    return positions, tets, fibers, tendon_mask, geo
+
+
+def _load_bone_usd(usd_path: Path, bone_root: str = "/character/bone"):
+    """Load bone mesh from USD (multiple Mesh prims under *bone_root*).
+
+    Returns (None, positions, indices, muscle_ids).
     """
     from pxr import Usd, UsdGeom
 
@@ -151,11 +154,9 @@ def load_bone_usd_data(usd_path: Path, bone_root: str = "/character/bone"):
 
     root = stage.GetPrimAtPath(bone_root)
     if not root or not root.IsValid():
-        return np.zeros((0, 3), np.float32), np.zeros(0, np.int32), []
+        return None, np.zeros((0, 3), np.float32), np.zeros(0, np.int32), {}
 
-    all_pos = []
-    all_idx = []
-    all_mid = []  # per-vertex muscle_id string
+    all_pos, all_idx, all_mid = [], [], []
     offset = 0
 
     for prim in Usd.PrimRange(root):
@@ -168,7 +169,6 @@ def load_bone_usd_data(usd_path: Path, bone_root: str = "/character/bone"):
         pts = np.asarray(pts_raw, dtype=np.float32)
         idx = np.asarray(m.GetFaceVertexIndicesAttr().Get(), dtype=np.int32)
 
-        # Determine bone name from parent Xform prim (e.g. /character/bone/L_radius)
         parent = prim.GetParent()
         bone_name = str(parent.GetName()) if parent and parent.IsValid() else str(prim.GetName())
 
@@ -178,38 +178,80 @@ def load_bone_usd_data(usd_path: Path, bone_root: str = "/character/bone"):
         offset += len(pts)
 
     if len(all_pos) == 0:
-        return np.zeros((0, 3), np.float32), np.zeros(0, np.int32), []
+        return None, np.zeros((0, 3), np.float32), np.zeros(0, np.int32), {}
 
     positions = np.vstack(all_pos).astype(np.float32)
     indices = np.concatenate(all_idx).astype(np.int32)
-    return positions, indices, all_mid
+    muscle_ids = _build_muscle_id_mapping(all_mid)
+    return None, positions, indices, muscle_ids
 
 
+def _load_bone_geo(target_path: Path):
+    """Load bone mesh from .geo file.
 
-def read_auxiliary_meshes(ground_path="data/muscle/model/ground.obj", coord_path="data/muscle/model/coord.obj"):
+    Returns (bone_geo, positions, indices, muscle_ids).
     """
-    读取辅助网格，包括地面和坐标系。
+    from VMuscle.geo import Geo
+    bone_geo = Geo(str(target_path))
+    if len(bone_geo.positions) == 0:
+        print(f"Warning: No vertices found in {target_path}")
+        return bone_geo, np.zeros((0, 3), dtype=np.float32), np.zeros(0, dtype=np.int32), {}
 
-    Examples::
+    bone_pos = np.asarray(bone_geo.positions, dtype=np.float32)
+    if hasattr(bone_geo, 'indices'):
+        bone_indices = np.asarray(bone_geo.indices, dtype=np.int32)
+    elif hasattr(bone_geo, 'vert'):
+        bone_indices = np.array(bone_geo.vert, dtype=np.int32).flatten()
+    else:
+        bone_indices = np.zeros(0, dtype=np.int32)
 
-        # (before the render loop)
-        ground, coord, ground_indices, coord_indices = read_auxiliary_meshes()
-        # ...
-        # (in the render loop)
-        scene.mesh(ground, indices=ground_indices, color=(0.5,0.5,0.5))
-        scene.mesh(coord, indices=coord_indices, color=(0.5, 0, 0))
+    muscle_ids = {}
+    if hasattr(bone_geo, 'pointattr') and 'muscle_id' in bone_geo.pointattr:
+        muscle_ids = _build_muscle_id_mapping(bone_geo.pointattr['muscle_id'])
+
+    return bone_geo, bone_pos, bone_indices, muscle_ids
+
+
+def _build_muscle_id_mapping(muscle_ids_list):
+    """Build dict mapping muscle_id -> vertex index array from per-vertex id list."""
+    mapping = {}
+    for v_idx, mid in enumerate(muscle_ids_list):
+        if mid not in mapping:
+            mapping[mid] = []
+        mapping[mid].append(v_idx)
+    for mid in mapping:
+        mapping[mid] = np.array(mapping[mid], dtype=np.int32)
+    print(f"Bone muscle_id groups: {list(mapping.keys())}")
+    return mapping
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def load_mesh(path: Path):
+    """Load muscle TetMesh from .usd or .geo file.
+
+    Returns (positions, tets, fibers, tendon_mask, geo).
     """
-    def read_mesh(mesh_path, scale=[1.0, 1.0, 1.0], shift=[0, 0, 0]):
-        import trimesh
-        print("Using trimesh read ", mesh_path)
-        mesh = trimesh.load(mesh_path)
-        mesh.vertices *= scale
-        mesh.vertices += shift
-        return mesh.vertices, mesh.faces
-
-    ground, ground_indices = read_mesh(ground_path)
-    coord, coord_indices = read_mesh(coord_path)
-
-    return ground, coord, ground_indices, coord_indices
+    if path is None:
+        raise ValueError("No mesh path provided.")
+    if _is_usd(path):
+        return _load_mesh_usd(path, y_up_to_z_up=False)
+    else:
+        return _load_mesh_geo(path)
 
 
+def load_bone_mesh(path: Path):
+    """Load bone surface mesh from .usd or .geo file.
+
+    Returns (bone_geo, bone_pos, bone_indices, bone_muscle_ids) where:
+    - bone_geo: Geo object or None (USD)
+    - bone_pos: np.ndarray shape (N, 3)
+    - bone_indices: np.ndarray flat int32
+    - bone_muscle_ids: dict mapping muscle_id -> vertex index array
+    """
+    if _is_usd(path):
+        return _load_bone_usd(path)
+    else:
+        return _load_bone_geo(path)
