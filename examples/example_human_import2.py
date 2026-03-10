@@ -10,8 +10,6 @@
 #
 ###########################################################################
 
-import logging
-from pathlib import Path
 import numpy as np
 import warp as wp
 
@@ -231,12 +229,12 @@ class Example():
 
 
 def main():
-    from VMuscle.parse_json_args import parse_json_args
+    from VMuscle.config import load_conifg
     parser = newton.examples.create_parser()
     parser.set_defaults(viewer="null")
     parser.set_defaults(num_frames="100")
     viewer, args = newton.examples.init(parser)
-    args = parse_json_args(args, "data/Human/human_import2.json")
+    args = load_conifg(args, "data/Human/human_import2.json")
     example = Example(viewer, args)
     try:
         example.run(args)

@@ -14,7 +14,8 @@ import warp as wp
 
 wp.init()
 
-from VMuscle.muscle_warp import MuscleSim, SimConfig, load_config, fill_float_kernel
+from VMuscle.config import  load_config
+from VMuscle.muscle_warp import MuscleSim, fill_float_kernel
 
 ACTIVATION = 0.3
 N_STEPS = 50

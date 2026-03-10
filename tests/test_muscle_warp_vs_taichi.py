@@ -28,13 +28,12 @@ import warp as wp
 wp.init()
 wp.set_device("cpu")
 
-from VMuscle.muscle import MuscleSim as TaichiSim, load_config as taichi_load_config
-from VMuscle.muscle_warp import (
-    MuscleSim as WarpSim,
-    SimConfig as WarpSimConfig,
-    load_config as warp_load_config,
-    fill_float_kernel,
-)
+from VMuscle.config import SimConfig,   load_config
+from VMuscle.muscle import MuscleSim as TaichiSim
+from VMuscle.muscle_warp import MuscleSim as WarpSim, fill_float_kernel
+
+taichi_load_config = load_config
+warp_load_config = load_config
 
 
 def activation_schedule(step: int, total: int) -> float:
@@ -67,7 +66,7 @@ def run_comparison(n_steps=300, report_every=10, use_jacobi=True):
     taichi_sim = TaichiSim(cfg_taichi)
     taichi_sim.use_jacobi = use_jacobi
 
-    warp_cfg = WarpSimConfig(
+    warp_cfg = SimConfig(
         geo_path=cfg_taichi.geo_path,
         bone_geo_path=cfg_taichi.bone_geo_path,
         dt=cfg_taichi.dt,

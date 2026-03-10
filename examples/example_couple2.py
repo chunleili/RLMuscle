@@ -18,7 +18,8 @@ import warp as wp
 
 import newton
 
-from VMuscle.muscle_warp import MuscleSim, load_config
+from VMuscle.config import load_config
+from VMuscle.muscle_warp import MuscleSim
 from VMuscle.solver_muscle_bone_coupled_warp import SolverMuscleBoneCoupledWarp
 from VMuscle.usd_io import UsdIO
 

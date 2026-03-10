@@ -22,11 +22,11 @@ import time
 
 sys.path.insert(0, "src")
 
-import numpy as np
 import warp as wp
 
 from VMuscle.log import setup_logging
-from VMuscle.muscle_warp import MuscleSim, SimConfig, load_config, fill_float_kernel, WarpRenderer
+from VMuscle.config import  load_config
+from VMuscle.muscle_warp import MuscleSim, fill_float_kernel
 
 log = logging.getLogger(__name__)
 
