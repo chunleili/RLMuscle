@@ -2,7 +2,7 @@
 
 Couples Newton MuJoCo rigid-body dynamics with MuscleSim PBD.
 Spring force model: F = -k_coupling * sum(C*n) / N_substeps.
-All Taichi fields are accessed via numpy bridging.
+All Warp arrays are accessed via numpy bridging.
 """
 
 import logging
@@ -12,13 +12,13 @@ import warp as wp
 
 import newton
 from newton.solvers import SolverMuJoCo
-from .muscle import MuscleSim
+from .muscle_warp import MuscleSim
 
 log = logging.getLogger("couple")
 
 
 class SolverMuscleBoneCoupled:
-    """Couples Newton rigid-body bone dynamics with Taichi MuscleSim PBD.
+    """Couples Newton rigid-body bone dynamics with Warp MuscleSim PBD.
 
     Both systems operate in Y-up coordinate space — no conversion needed.
 
@@ -114,10 +114,10 @@ class SolverMuscleBoneCoupled:
         t = 2.0 * np.cross(q_xyz, v)       # (N, 3)
         rotated = v + qw * t + np.cross(q_xyz, t) + pos  # (N, 3)
 
-        # Write back to taichi bone_pos_field through numpy
-        bone_np = self.core.bone_pos_field.to_numpy()
+        # Write back to warp bone_pos_field through numpy
+        bone_np = self.core.bone_pos_field.numpy()
         bone_np[self._bone_idx] = rotated
-        self.core.bone_pos_field.from_numpy(bone_np)
+        self.core.bone_pos_field = wp.from_numpy(bone_np, dtype=wp.vec3)
 
     # -- Torque extraction --------------------------------------------------
 
@@ -126,9 +126,10 @@ class SolverMuscleBoneCoupled:
         if self._n_attach == 0:
             return np.zeros(3, dtype=np.float32)
 
-        # Read taichi fields through numpy
-        restvec_np = self.core.cons.restvector.to_numpy()   # (n_cons, 4)
-        reaction_np = self.core.reaction_accum.to_numpy()   # (n_cons, 3)
+        # Read warp arrays through numpy
+        cons_np = self.core.cons.numpy()
+        restvec_np = cons_np['restvector']                   # (n_cons, 4)
+        reaction_np = self.core.reaction_accum.numpy()       # (n_cons, 3)
 
         cidxs = self._attach_cidx
         targets = restvec_np[cidxs, :3]                     # (n_attach, 3)
@@ -162,7 +163,7 @@ class SolverMuscleBoneCoupled:
         N = self.core.cfg.num_substeps
         dt_sub = dt / N
         self.core.dt = dt_sub
-        self.core.activation.fill(self.core.cfg.activation)
+        self.core.activation.fill_(self.core.cfg.activation)
 
         # Sync initial bone position to muscle before first substep
         if self._coupling_configured:

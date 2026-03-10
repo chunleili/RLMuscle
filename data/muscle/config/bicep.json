@@ -1,7 +1,7 @@
 {
   "name": "bicep",
-  "geo_path": "data/muscle/model/bicep.geo",
-  "bone_geo_path": "data/muscle/model/bicep_bone.geo",
+  "geo_path": "data/muscle/model/bicep.usd",
+  "bone_geo_path": "data/muscle/model/bicep.usd",
   "ground_mesh_path": "data/muscle/model/ground.obj",
   "coord_mesh_path": "data/muscle/model/coord.obj",
   "contraction_ratio": 0.4,
@@ -11,7 +11,7 @@
   "gui": true,
   "render_mode": "human",
   "dt": 0.041666666666666667,
-  "nsteps": 1000,
+  "nsteps": 300,
   "gravity": 0.0,
   "density": 1000.0,
   "veldamping": 0.02,
