@@ -199,10 +199,24 @@ class MuscleSim(MuscleSimBase):
 
         all_constraints, _dt_collect = self._collect_raw_constraints()
 
+        # Sort by type for per-type kernel dispatch
+        all_constraints.sort(key=lambda c: c['type'])
+
         n_cons = len(all_constraints)
+        self.cons_ranges = {}
         if n_cons > 0:
+            prev_type = None
+            start_idx = 0
             for i, c in enumerate(all_constraints):
                 c['cidx'] = i
+                ctype = c['type']
+                if ctype != prev_type:
+                    if prev_type is not None:
+                        self.cons_ranges[prev_type] = (start_idx, i - start_idx)
+                    start_idx = i
+                    prev_type = ctype
+            if prev_type is not None:
+                self.cons_ranges[prev_type] = (start_idx, n_cons - start_idx)
 
             type_arr = np.array([c['type'] for c in all_constraints], dtype=np.int32)
             cidx_arr = np.arange(n_cons, dtype=np.int32)
@@ -318,101 +332,148 @@ class MuscleSim(MuscleSimBase):
         fiberscale = minfiberscale + (1.0 - tendonmask) * muscletension * (maxfiberscale - minfiberscale)
         return fiberscale
 
+    # -- per-type constraint solver kernels -----------------------------------
+
     @ti.kernel
-    def solve_constraints(self):
-        for c in range(self.cons.shape[0]):
+    def solve_tetvolume(self, offset: int, count: int):
+        for idx in range(count):
+            c = offset + idx
             kstiffcompress = self.get_compression_stiffness(c)
             if self.cons[c].stiffness <= 0.0:
                 continue
+            pts = self.cons[c].pts
+            tetid = self.cons[c].tetid
+            self.tet_volume_update_xpbd(
+                self.use_jacobi, c, self.cons, self.pos, self.pprev,
+                self.cons[c].restlength, self.dP, self.dPw,
+                tetid, pts, self.dt, self.cons[c].stiffness,
+                kstiffcompress, self.cons[c].dampingratio,
+                self.mass, self.stopped, 0
+            )
 
-            if self.cons[c].type == TETVOLUME:
-                pts = self.cons[c].pts
-                tetid = self.cons[c].tetid
-                self.tet_volume_update_xpbd(
-                    self.use_jacobi, c, self.cons, self.pos, self.pprev,
-                    self.cons[c].restlength, self.dP, self.dPw,
-                    tetid, pts, self.dt, self.cons[c].stiffness,
-                    kstiffcompress, self.cons[c].dampingratio,
-                    self.mass, self.stopped, 0
-                )
-            elif self.cons[c].type == TETFIBERNORM:
-                pts = self.cons[c].pts
-                fiber_dir = (self.v_fiber_dir[pts[0]] + self.v_fiber_dir[pts[1]] + self.v_fiber_dir[pts[2]] + self.v_fiber_dir[pts[3]]) / 4.0
-                tetid = self.cons[c].tetid
-                Dminv = self.rest_matrix[tetid]
-                acti = self.activation[tetid]
-                _tendonmask = self.tendonmask[tetid]
-                belly_factor = 1.0 - _tendonmask
+    @ti.kernel
+    def solve_tetfibernorm(self, offset: int, count: int):
+        for idx in range(count):
+            c = offset + idx
+            if self.cons[c].stiffness <= 0.0:
+                continue
+            pts = self.cons[c].pts
+            fiber_dir = (self.v_fiber_dir[pts[0]] + self.v_fiber_dir[pts[1]] + self.v_fiber_dir[pts[2]] + self.v_fiber_dir[pts[3]]) / 4.0
+            tetid = self.cons[c].tetid
+            Dminv = self.rest_matrix[tetid]
+            acti = self.activation[tetid]
+            _tendonmask = self.tendonmask[tetid]
+            belly_factor = 1.0 - _tendonmask
 
-                fiberscale = self.transfer_tension(acti, _tendonmask)
-                stiffness = self.cons[c].stiffness * fiberscale * self.fiber_stiffness_scale
-                if stiffness <= 0.0:
-                    continue
+            fiberscale = self.transfer_tension(acti, _tendonmask)
+            stiffness = self.cons[c].stiffness * fiberscale * self.fiber_stiffness_scale
+            if stiffness <= 0.0:
+                continue
 
-                target_stretch = 1.0 - belly_factor * acti * self.contraction_ratio
+            target_stretch = 1.0 - belly_factor * acti * self.contraction_ratio
 
-                self.tet_fiber_update_xpbd(
-                    self.use_jacobi, self.pos, self.pprev,
-                    self.dP, self.dPw, c, self.cons, pts,
-                    self.dt, fiber_dir, stiffness, Dminv,
-                    self.cons[c].dampingratio, self.cons[c].restlength,
-                    self.cons[c].restvector, acti, self.mass,
-                    self.stopped, target_stretch,
-                )
-            elif self.cons[c].type == ATTACH:
-                pts = self.cons[c].pts
-                pt_src = pts[0]
-                self.attach_bilateral_update(
-                    self.use_jacobi, c, self.cons, pt_src,
-                    self.cons[c].restvector.xyz, self.pos[pt_src],
-                    self.pos, self.pprev, self.dP, self.dPw,
-                    self.mass, self.stopped, self.cons[c].restlength,
-                    self.cons[c].stiffness, self.cons[c].dampingratio,
-                    kstiffcompress,
-                )
-            elif self.cons[c].type == PIN:
-                if self.cons[c].stiffness <= 0.0:
-                    continue
-                pts = self.cons[c].pts
-                pt_src = pts[0]
-                self.distance_pos_update_xpbd(
-                    self.use_jacobi, c, self.cons, -1, pt_src,
-                    self.cons[c].restvector.xyz, self.pos[pt_src],
-                    self.pos, self.pprev, self.dP, self.dPw,
-                    self.mass, self.stopped, self.cons[c].restlength,
-                    self.cons[c].stiffness, self.cons[c].dampingratio,
-                    kstiffcompress,
-                )
-            elif self.cons[c].type == DISTANCELINE:
-                pts = self.cons[c].pts
-                pt_src = pts[0]
-                p_src = self.pos[pt_src]
-                line_origin = self.cons[c].restvector.xyz
-                line_dir = self.cons[c].restdir
+            self.tet_fiber_update_xpbd(
+                self.use_jacobi, self.pos, self.pprev,
+                self.dP, self.dPw, c, self.cons, pts,
+                self.dt, fiber_dir, stiffness, Dminv,
+                self.cons[c].dampingratio, self.cons[c].restlength,
+                self.cons[c].restvector, acti, self.mass,
+                self.stopped, target_stretch,
+            )
 
-                p_projected = project_to_line(p_src, line_origin, line_dir)
+    @ti.kernel
+    def solve_attach(self, offset: int, count: int):
+        for idx in range(count):
+            c = offset + idx
+            kstiffcompress = self.get_compression_stiffness(c)
+            if self.cons[c].stiffness <= 0.0:
+                continue
+            pts = self.cons[c].pts
+            pt_src = pts[0]
+            self.attach_bilateral_update(
+                self.use_jacobi, c, self.cons, pt_src,
+                self.cons[c].restvector.xyz, self.pos[pt_src],
+                self.pos, self.pprev, self.dP, self.dPw,
+                self.mass, self.stopped, self.cons[c].restlength,
+                self.cons[c].stiffness, self.cons[c].dampingratio,
+                kstiffcompress,
+            )
 
-                self.distance_pos_update_xpbd(
-                    self.use_jacobi, c, self.cons,
-                    -1, pt_src,
-                    p_projected, p_src,
-                    self.pos, self.pprev,
-                    self.dP, self.dPw,
-                    self.mass, self.stopped,
-                    self.cons[c].restlength, self.cons[c].stiffness,
-                    self.cons[c].dampingratio, kstiffcompress,
-                )
-            elif self.cons[c].type == TETARAP:
-                pts = self.cons[c].pts
-                tetid = self.cons[c].tetid
-                self.tet_arap_update_xpbd(
-                    self.use_jacobi, c, self.cons, pts,
-                    self.dt, self.pos, self.pprev,
-                    self.dP, self.dPw, self.mass, self.stopped,
-                    self.cons[c].restlength, self.cons[c].restvector,
-                    self.rest_matrix[tetid], self.cons[c].stiffness,
-                    self.cons[c].dampingratio, fem_flags(self.cons[c].type),
-                )
+    @ti.kernel
+    def solve_pin(self, offset: int, count: int):
+        for idx in range(count):
+            c = offset + idx
+            if self.cons[c].stiffness <= 0.0:
+                continue
+            kstiffcompress = self.get_compression_stiffness(c)
+            pts = self.cons[c].pts
+            pt_src = pts[0]
+            self.distance_pos_update_xpbd(
+                self.use_jacobi, c, self.cons, -1, pt_src,
+                self.cons[c].restvector.xyz, self.pos[pt_src],
+                self.pos, self.pprev, self.dP, self.dPw,
+                self.mass, self.stopped, self.cons[c].restlength,
+                self.cons[c].stiffness, self.cons[c].dampingratio,
+                kstiffcompress,
+            )
+
+    @ti.kernel
+    def solve_distanceline(self, offset: int, count: int):
+        for idx in range(count):
+            c = offset + idx
+            kstiffcompress = self.get_compression_stiffness(c)
+            if self.cons[c].stiffness <= 0.0:
+                continue
+            pts = self.cons[c].pts
+            pt_src = pts[0]
+            p_src = self.pos[pt_src]
+            line_origin = self.cons[c].restvector.xyz
+            line_dir = self.cons[c].restdir
+
+            p_projected = project_to_line(p_src, line_origin, line_dir)
+
+            self.distance_pos_update_xpbd(
+                self.use_jacobi, c, self.cons,
+                -1, pt_src,
+                p_projected, p_src,
+                self.pos, self.pprev,
+                self.dP, self.dPw,
+                self.mass, self.stopped,
+                self.cons[c].restlength, self.cons[c].stiffness,
+                self.cons[c].dampingratio, kstiffcompress,
+            )
+
+    @ti.kernel
+    def solve_tetarap(self, offset: int, count: int):
+        for idx in range(count):
+            c = offset + idx
+            if self.cons[c].stiffness <= 0.0:
+                continue
+            pts = self.cons[c].pts
+            tetid = self.cons[c].tetid
+            self.tet_arap_update_xpbd(
+                self.use_jacobi, c, self.cons, pts,
+                self.dt, self.pos, self.pprev,
+                self.dP, self.dPw, self.mass, self.stopped,
+                self.cons[c].restlength, self.cons[c].restvector,
+                self.rest_matrix[tetid], self.cons[c].stiffness,
+                self.cons[c].dampingratio, fem_flags(self.cons[c].type),
+            )
+
+    def solve_constraints(self):
+        for ctype, (offset, count) in self.cons_ranges.items():
+            if ctype == TETVOLUME:
+                self.solve_tetvolume(offset, count)
+            elif ctype == TETFIBERNORM:
+                self.solve_tetfibernorm(offset, count)
+            elif ctype == ATTACH:
+                self.solve_attach(offset, count)
+            elif ctype == PIN:
+                self.solve_pin(offset, count)
+            elif ctype == DISTANCELINE:
+                self.solve_distanceline(offset, count)
+            elif ctype == TETARAP:
+                self.solve_tetarap(offset, count)
 
     @ti.kernel
     def integrate(self):

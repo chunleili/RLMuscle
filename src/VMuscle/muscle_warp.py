@@ -812,8 +812,41 @@ def update_attach_targets_kernel(
             cons[c].restvector = wp.vec4f(target_pos[0], target_pos[1], target_pos[2], rv[3])
 
 
+# ---------------------------------------------------------------------------
+# Per-type constraint solver @wp.kernel
+# ---------------------------------------------------------------------------
+
 @wp.kernel
-def solve_constraints_kernel(
+def solve_tetvolume_kernel(
+    cons: wp.array(dtype=Constraint),
+    pos: wp.array(dtype=wp.vec3),
+    pprev: wp.array(dtype=wp.vec3),
+    dP: wp.array(dtype=wp.vec3),
+    dPw: wp.array(dtype=wp.float32),
+    mass: wp.array(dtype=wp.float32),
+    stopped: wp.array(dtype=wp.int32),
+    dt: float,
+    use_jacobi: int,
+    has_compress_stiffness: int,
+    offset: int,
+):
+    c = offset + wp.tid()
+    cstiffness = cons[c].stiffness
+    if cstiffness <= 0.0:
+        return
+    kstiffcompress = cons[c].compressionstiffness
+    kstiffcompress = wp.where(kstiffcompress >= 0.0, kstiffcompress, cstiffness)
+    pts = cons[c].pts
+    tetid = cons[c].tetid
+    tet_volume_update_xpbd_fn(
+        use_jacobi, c, cons, pos, pprev,
+        cons[c].restlength, dP, dPw, tetid, pts,
+        dt, cstiffness, kstiffcompress, cons[c].dampingratio,
+        mass, stopped, has_compress_stiffness)
+
+
+@wp.kernel
+def solve_tetfibernorm_kernel(
     cons: wp.array(dtype=Constraint),
     pos: wp.array(dtype=wp.vec3),
     pprev: wp.array(dtype=wp.vec3),
@@ -825,101 +858,165 @@ def solve_constraints_kernel(
     v_fiber_dir: wp.array(dtype=wp.vec3),
     activation: wp.array(dtype=wp.float32),
     tendonmask: wp.array(dtype=wp.float32),
-    reaction_accum: wp.array(dtype=wp.vec3),
     dt: float,
     use_jacobi: int,
     contraction_ratio: float,
     fiber_stiffness_scale: float,
-    has_compress_stiffness: int,
-    n_cons: int,
+    offset: int,
 ):
-    c = wp.tid()
-    if c >= n_cons:
-        return
-
+    c = offset + wp.tid()
     cstiffness = cons[c].stiffness
     if cstiffness <= 0.0:
         return
+    pts = cons[c].pts
+    tetid = cons[c].tetid
+    fiber_dir = (v_fiber_dir[pts[0]] + v_fiber_dir[pts[1]] +
+                 v_fiber_dir[pts[2]] + v_fiber_dir[pts[3]]) / 4.0
+    Dminv = rest_matrix[tetid]
+    acti = activation[tetid]
+    _tendonmask = tendonmask[tetid]
+    belly_factor = 1.0 - _tendonmask
 
+    fiberscale = transfer_tension_fn(acti, _tendonmask, 0.0, 10.0)
+    stiffness_val = cstiffness * fiberscale * fiber_stiffness_scale
+    if stiffness_val > 0.0:
+        target_stretch = 1.0 - belly_factor * acti * contraction_ratio
+
+        tet_fiber_update_xpbd_fn(
+            use_jacobi, pos, pprev, dP, dPw,
+            c, cons, pts, dt, fiber_dir, stiffness_val, Dminv,
+            cons[c].dampingratio, cons[c].restlength, cons[c].restvector,
+            acti, mass, stopped, target_stretch)
+
+
+@wp.kernel
+def solve_attach_kernel(
+    cons: wp.array(dtype=Constraint),
+    pos: wp.array(dtype=wp.vec3),
+    pprev: wp.array(dtype=wp.vec3),
+    dP: wp.array(dtype=wp.vec3),
+    dPw: wp.array(dtype=wp.float32),
+    mass: wp.array(dtype=wp.float32),
+    stopped: wp.array(dtype=wp.int32),
+    reaction_accum: wp.array(dtype=wp.vec3),
+    dt: float,
+    use_jacobi: int,
+    has_compress_stiffness: int,
+    offset: int,
+):
+    c = offset + wp.tid()
+    cstiffness = cons[c].stiffness
+    if cstiffness <= 0.0:
+        return
     kstiffcompress = cons[c].compressionstiffness
     kstiffcompress = wp.where(kstiffcompress >= 0.0, kstiffcompress, cstiffness)
-
-    ctype = cons[c].type
     pts = cons[c].pts
+    pt_src = pts[0]
+    rv = cons[c].restvector
+    p0_target = wp.vec3(rv[0], rv[1], rv[2])
+    attach_bilateral_update_fn(
+        use_jacobi, c, cons, pt_src, p0_target,
+        pos, pprev, dP, dPw, mass, stopped,
+        cons[c].restlength, cstiffness, cons[c].dampingratio,
+        kstiffcompress, dt, has_compress_stiffness, reaction_accum)
 
-    if ctype == TETVOLUME:
-        tetid = cons[c].tetid
-        tet_volume_update_xpbd_fn(
-            use_jacobi, c, cons, pos, pprev,
-            cons[c].restlength, dP, dPw, tetid, pts,
-            dt, cstiffness, kstiffcompress, cons[c].dampingratio,
-            mass, stopped, has_compress_stiffness)
 
-    elif ctype == TETFIBERNORM:
-        tetid = cons[c].tetid
-        fiber_dir = (v_fiber_dir[pts[0]] + v_fiber_dir[pts[1]] +
-                     v_fiber_dir[pts[2]] + v_fiber_dir[pts[3]]) / 4.0
-        Dminv = rest_matrix[tetid]
-        acti = activation[tetid]
-        _tendonmask = tendonmask[tetid]
-        belly_factor = 1.0 - _tendonmask
+@wp.kernel
+def solve_pin_kernel(
+    cons: wp.array(dtype=Constraint),
+    pos: wp.array(dtype=wp.vec3),
+    pprev: wp.array(dtype=wp.vec3),
+    dP: wp.array(dtype=wp.vec3),
+    dPw: wp.array(dtype=wp.float32),
+    mass: wp.array(dtype=wp.float32),
+    stopped: wp.array(dtype=wp.int32),
+    dt: float,
+    use_jacobi: int,
+    has_compress_stiffness: int,
+    offset: int,
+):
+    c = offset + wp.tid()
+    cstiffness = cons[c].stiffness
+    if cstiffness <= 0.0:
+        return
+    kstiffcompress = cons[c].compressionstiffness
+    kstiffcompress = wp.where(kstiffcompress >= 0.0, kstiffcompress, cstiffness)
+    pts = cons[c].pts
+    pt_src = pts[0]
+    rv = cons[c].restvector
+    p0_target = wp.vec3(rv[0], rv[1], rv[2])
+    p1_src = pos[pt_src]
+    distance_pos_update_xpbd_fn(
+        use_jacobi, c, cons, -1, pt_src,
+        p0_target, p1_src,
+        pos, pprev, dP, dPw, mass, stopped,
+        cons[c].restlength, cstiffness, cons[c].dampingratio,
+        kstiffcompress, dt, has_compress_stiffness)
 
-        fiberscale = transfer_tension_fn(acti, _tendonmask, 0.0, 10.0)
-        stiffness_val = cstiffness * fiberscale * fiber_stiffness_scale
-        if stiffness_val > 0.0:
-            target_stretch = 1.0 - belly_factor * acti * contraction_ratio
 
-            tet_fiber_update_xpbd_fn(
-                use_jacobi, pos, pprev, dP, dPw,
-                c, cons, pts, dt, fiber_dir, stiffness_val, Dminv,
-                cons[c].dampingratio, cons[c].restlength, cons[c].restvector,
-                acti, mass, stopped, target_stretch)
+@wp.kernel
+def solve_distanceline_kernel(
+    cons: wp.array(dtype=Constraint),
+    pos: wp.array(dtype=wp.vec3),
+    pprev: wp.array(dtype=wp.vec3),
+    dP: wp.array(dtype=wp.vec3),
+    dPw: wp.array(dtype=wp.float32),
+    mass: wp.array(dtype=wp.float32),
+    stopped: wp.array(dtype=wp.int32),
+    dt: float,
+    use_jacobi: int,
+    has_compress_stiffness: int,
+    offset: int,
+):
+    c = offset + wp.tid()
+    cstiffness = cons[c].stiffness
+    if cstiffness <= 0.0:
+        return
+    kstiffcompress = cons[c].compressionstiffness
+    kstiffcompress = wp.where(kstiffcompress >= 0.0, kstiffcompress, cstiffness)
+    pts = cons[c].pts
+    pt_src = pts[0]
+    p_src = pos[pt_src]
+    rv = cons[c].restvector
+    line_origin = wp.vec3(rv[0], rv[1], rv[2])
+    line_dir = cons[c].restdir
 
-    elif ctype == ATTACH:
-        pt_src = pts[0]
-        rv = cons[c].restvector
-        p0_target = wp.vec3(rv[0], rv[1], rv[2])
-        attach_bilateral_update_fn(
-            use_jacobi, c, cons, pt_src, p0_target,
-            pos, pprev, dP, dPw, mass, stopped,
-            cons[c].restlength, cstiffness, cons[c].dampingratio,
-            kstiffcompress, dt, has_compress_stiffness, reaction_accum)
+    p_projected = project_to_line_fn(p_src, line_origin, line_dir)
 
-    elif ctype == PIN:
-        pt_src = pts[0]
-        rv = cons[c].restvector
-        p0_target = wp.vec3(rv[0], rv[1], rv[2])
-        p1_src = pos[pt_src]
-        distance_pos_update_xpbd_fn(
-            use_jacobi, c, cons, -1, pt_src,
-            p0_target, p1_src,
-            pos, pprev, dP, dPw, mass, stopped,
-            cons[c].restlength, cstiffness, cons[c].dampingratio,
-            kstiffcompress, dt, has_compress_stiffness)
+    distance_pos_update_xpbd_fn(
+        use_jacobi, c, cons, -1, pt_src,
+        p_projected, p_src,
+        pos, pprev, dP, dPw, mass, stopped,
+        cons[c].restlength, cstiffness, cons[c].dampingratio,
+        kstiffcompress, dt, has_compress_stiffness)
 
-    elif ctype == DISTANCELINE:
-        pt_src = pts[0]
-        p_src = pos[pt_src]
-        rv = cons[c].restvector
-        line_origin = wp.vec3(rv[0], rv[1], rv[2])
-        line_dir = cons[c].restdir
 
-        p_projected = project_to_line_fn(p_src, line_origin, line_dir)
-
-        distance_pos_update_xpbd_fn(
-            use_jacobi, c, cons, -1, pt_src,
-            p_projected, p_src,
-            pos, pprev, dP, dPw, mass, stopped,
-            cons[c].restlength, cstiffness, cons[c].dampingratio,
-            kstiffcompress, dt, has_compress_stiffness)
-
-    elif ctype == TETARAP:
-        tetid = cons[c].tetid
-        flags = fem_flags_fn(ctype)
-        tet_arap_update_xpbd_fn(
-            use_jacobi, c, cons, pts, dt, pos, pprev, dP, dPw,
-            mass, stopped, cons[c].restlength, rest_matrix[tetid],
-            cstiffness, cons[c].dampingratio, flags)
+@wp.kernel
+def solve_tetarap_kernel(
+    cons: wp.array(dtype=Constraint),
+    pos: wp.array(dtype=wp.vec3),
+    pprev: wp.array(dtype=wp.vec3),
+    dP: wp.array(dtype=wp.vec3),
+    dPw: wp.array(dtype=wp.float32),
+    mass: wp.array(dtype=wp.float32),
+    stopped: wp.array(dtype=wp.int32),
+    rest_matrix: wp.array(dtype=wp.mat33),
+    dt: float,
+    use_jacobi: int,
+    offset: int,
+):
+    c = offset + wp.tid()
+    cstiffness = cons[c].stiffness
+    if cstiffness <= 0.0:
+        return
+    pts = cons[c].pts
+    tetid = cons[c].tetid
+    ctype = cons[c].type
+    flags = fem_flags_fn(ctype)
+    tet_arap_update_xpbd_fn(
+        use_jacobi, c, cons, pts, dt, pos, pprev, dP, dPw,
+        mass, stopped, cons[c].restlength, rest_matrix[tetid],
+        cstiffness, cons[c].dampingratio, flags)
 
 
 # ---------------------------------------------------------------------------
@@ -971,11 +1068,25 @@ class MuscleSim(MuscleSimBase):
         print("Building constraints...")
         all_constraints, _dt_collect = self._collect_raw_constraints()
 
+        # Sort by type for per-type kernel dispatch
+        all_constraints.sort(key=lambda c: c['type'])
+
         n_cons = len(all_constraints)
         self.n_cons = n_cons
+        self.cons_ranges = {}
         if n_cons > 0:
+            prev_type = None
+            start_idx = 0
             for i, c in enumerate(all_constraints):
                 c['cidx'] = i
+                ctype = c['type']
+                if ctype != prev_type:
+                    if prev_type is not None:
+                        self.cons_ranges[prev_type] = (start_idx, i - start_idx)
+                    start_idx = i
+                    prev_type = ctype
+            if prev_type is not None:
+                self.cons_ranges[prev_type] = (start_idx, n_cons - start_idx)
 
             type_arr = np.array([c['type'] for c in all_constraints], dtype=np.int32)
             cidx_arr = np.arange(n_cons, dtype=np.int32)
@@ -1113,17 +1224,43 @@ class MuscleSim(MuscleSimBase):
             return
         has_compress = 1 if self.has_compressstiffness else 0
         use_jacobi_int = 1 if self.use_jacobi else 0
-        wp.launch(solve_constraints_kernel, dim=self.n_cons,
-                  inputs=[
-                      self.cons, self.pos, self.pprev,
-                      self.dP, self.dPw, self.mass, self.stopped,
-                      self.rest_matrix, self.v_fiber_dir,
-                      self.activation, self.tendonmask,
-                      self.reaction_accum,
-                      self.dt, use_jacobi_int,
-                      self.contraction_ratio, self.fiber_stiffness_scale,
-                      has_compress, self.n_cons,
-                  ])
+        for ctype, (offset, count) in self.cons_ranges.items():
+            if ctype == TETVOLUME:
+                wp.launch(solve_tetvolume_kernel, dim=count, inputs=[
+                    self.cons, self.pos, self.pprev,
+                    self.dP, self.dPw, self.mass, self.stopped,
+                    self.dt, use_jacobi_int, has_compress, offset])
+            elif ctype == TETFIBERNORM:
+                wp.launch(solve_tetfibernorm_kernel, dim=count, inputs=[
+                    self.cons, self.pos, self.pprev,
+                    self.dP, self.dPw, self.mass, self.stopped,
+                    self.rest_matrix, self.v_fiber_dir,
+                    self.activation, self.tendonmask,
+                    self.dt, use_jacobi_int,
+                    self.contraction_ratio, self.fiber_stiffness_scale,
+                    offset])
+            elif ctype == ATTACH:
+                wp.launch(solve_attach_kernel, dim=count, inputs=[
+                    self.cons, self.pos, self.pprev,
+                    self.dP, self.dPw, self.mass, self.stopped,
+                    self.reaction_accum,
+                    self.dt, use_jacobi_int, has_compress, offset])
+            elif ctype == PIN:
+                wp.launch(solve_pin_kernel, dim=count, inputs=[
+                    self.cons, self.pos, self.pprev,
+                    self.dP, self.dPw, self.mass, self.stopped,
+                    self.dt, use_jacobi_int, has_compress, offset])
+            elif ctype == DISTANCELINE:
+                wp.launch(solve_distanceline_kernel, dim=count, inputs=[
+                    self.cons, self.pos, self.pprev,
+                    self.dP, self.dPw, self.mass, self.stopped,
+                    self.dt, use_jacobi_int, has_compress, offset])
+            elif ctype == TETARAP:
+                wp.launch(solve_tetarap_kernel, dim=count, inputs=[
+                    self.cons, self.pos, self.pprev,
+                    self.dP, self.dPw, self.mass, self.stopped,
+                    self.rest_matrix,
+                    self.dt, use_jacobi_int, offset])
 
     def render(self):
         if self.renderer is None:
