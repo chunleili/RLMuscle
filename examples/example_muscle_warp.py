@@ -18,7 +18,6 @@ Usage (USD output):
 import argparse
 import logging
 import sys
-import time
 
 sys.path.insert(0, "src")
 
@@ -26,6 +25,7 @@ import warp as wp
 
 from VMuscle.log import setup_logging
 from VMuscle.config import  load_config
+from VMuscle.muscle_common import activation_ramp
 from VMuscle.muscle_warp import MuscleSim, fill_float_kernel
 
 log = logging.getLogger(__name__)
@@ -68,30 +68,14 @@ def main():
     if args.auto or render_mode == "usd":
         _run_auto_test(sim, cfg)
     else:
-        _run_interactive(sim, cfg)
-
-
-def _activation_ramp(t: float) -> float:
-    """Ramp activation over normalized time [0,1]: 0 -> 0.5 -> 1.0 -> 0.7 -> 0.3 -> 0."""
-    if t <= 0.2:
-        return 0.0
-    elif t <= 0.3:
-        return 0.5
-    elif t <= 0.5:
-        return 1.0
-    elif t <= 0.7:
-        return 0.7
-    elif t <= 0.8:
-        return 0.3
-    else:
-        return 0.0
+        sim.run()
 
 
 def _run_auto_test(sim, cfg):
     """Headless test: ramp activation over nsteps, render each frame, print diagnostics."""
     log.info(f"Running {cfg.nsteps} steps (auto, render={cfg.render_mode})...")
     for step in range(1, cfg.nsteps + 1):
-        act = _activation_ramp(step / cfg.nsteps)
+        act = activation_ramp(step / cfg.nsteps)
         wp.launch(fill_float_kernel, dim=sim.activation.shape[0],
                   inputs=[sim.activation, act])
         sim.step()
@@ -109,33 +93,6 @@ def _run_auto_test(sim, cfg):
     if sim.renderer is not None:
         sim.renderer.save()
     log.info("Auto test done.")
-
-
-def _run_interactive(sim, cfg):
-    """Interactive loop with WarpRenderer."""
-    step_cnt = 0
-
-    while sim.renderer is None or sim.renderer.is_running():
-        if step_cnt >= cfg.nsteps:
-            break
-
-        if not cfg.pause:
-            wp.launch(fill_float_kernel, dim=sim.activation.shape[0],
-                      inputs=[sim.activation, cfg.activation])
-
-            sim.step_start_time = time.perf_counter()
-            sim.step()
-            sim.step_end_time = time.perf_counter()
-            step_cnt += 1
-            sim.step_cnt = step_cnt
-
-        sim.render()
-
-    # Save USD if applicable
-    if sim.renderer is not None:
-        sim.renderer.save()
-
-    log.info(f"Done. {step_cnt} steps completed.")
 
 
 if __name__ == "__main__":

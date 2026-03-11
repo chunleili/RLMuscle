@@ -1159,6 +1159,8 @@ class MuscleSim(MuscleSimBase):
                 self.step_cnt = 1
                 self.cfg.reset = False
             if not self.cfg.pause:
+                wp.launch(fill_float_kernel, dim=self.activation.shape[0],
+                          inputs=[self.activation, self.cfg.activation])
                 self.step_start_time = time.perf_counter()
                 self.step()
                 self.step_cnt += 1

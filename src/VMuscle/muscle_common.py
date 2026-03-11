@@ -21,6 +21,22 @@ def get_bbox(pos):
     return np.array([pos.min(axis=0), pos.max(axis=0)])
 
 
+def activation_ramp(t: float) -> float:
+    """Piecewise activation over normalized time [0,1]: 0→0.5→1.0→0.7→0.3→0."""
+    if t <= 0.2:
+        return 0.0
+    elif t <= 0.3:
+        return 0.5
+    elif t <= 0.5:
+        return 1.0
+    elif t <= 0.7:
+        return 0.7
+    elif t <= 0.8:
+        return 0.3
+    else:
+        return 0.0
+
+
 # ---------------------------------------------------------------------------
 # MuscleSimBase — shared simulation logic (pure Python)
 # ---------------------------------------------------------------------------

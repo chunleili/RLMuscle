@@ -23,6 +23,8 @@ import time
 import numpy as np
 import warp as wp
 
+from VMuscle.muscle_common import activation_ramp
+
 # Suppress noisy loggers during benchmark
 logging.getLogger("couple").setLevel(logging.WARNING)
 logging.getLogger("taichi").setLevel(logging.WARNING)
@@ -157,23 +159,6 @@ def _reset_state(model):
     return state
 
 
-def _activation_at(step: int, n_steps: int) -> float:
-    """Same activation ramp as example_couple._run_auto_test."""
-    t = step / n_steps
-    if t <= 0.2:
-        return 0.0
-    elif t <= 0.3:
-        return 0.5
-    elif t <= 0.5:
-        return 1.0
-    elif t <= 0.7:
-        return 0.7
-    elif t <= 0.8:
-        return 0.3
-    else:
-        return 0.0
-
-
 # ---------------------------------------------------------------------------
 # Benchmark runner
 # ---------------------------------------------------------------------------
@@ -210,7 +195,7 @@ def bench_solver(coupled, model, cfg, dt,
     state = _reset_state(model)
     coupled._step_count = 0
     for step in range(1, warmup + 1):
-        cfg.activation = _activation_at(step, warmup)
+        cfg.activation = activation_ramp(step / warmup)
         coupled.step(state, state, dt=dt)
     print(" done")
 
@@ -222,7 +207,7 @@ def bench_solver(coupled, model, cfg, dt,
 
         t_start = time.perf_counter()
         for step in range(1, n_steps + 1):
-            cfg.activation = _activation_at(step, n_steps)
+            cfg.activation = activation_ramp(step / n_steps)
             coupled.step(state, state, dt=dt)
         t_end = time.perf_counter()
 
