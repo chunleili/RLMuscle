@@ -29,7 +29,7 @@ wp.init()
 wp.set_device("cpu")
 
 from VMuscle.config import SimConfig,   load_config
-from VMuscle.muscle import MuscleSim as TaichiSim
+from VMuscle.muscle_taichi import MuscleSim as TaichiSim
 from VMuscle.muscle_warp import MuscleSim as WarpSim, fill_float_kernel
 
 taichi_load_config = load_config

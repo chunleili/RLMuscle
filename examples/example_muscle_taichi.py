@@ -1,7 +1,7 @@
 def main() -> None:
-    from VMuscle import muscle
+    from VMuscle import muscle_taichi
 
-    muscle.main()
+    muscle_taichi.main()
 
 
 if __name__ == "__main__":

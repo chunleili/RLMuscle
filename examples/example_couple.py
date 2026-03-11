@@ -26,7 +26,7 @@ wp.set_device("cpu")
 import taichi as ti
 import newton
 
-from VMuscle.muscle import MuscleSim, load_config
+from VMuscle.muscle_taichi import MuscleSim, load_config
 from VMuscle.usd_io import UsdIO
 from VMuscle.solver_muscle_bone_coupled_warp import SolverMuscleBoneCoupled
 

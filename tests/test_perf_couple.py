@@ -72,7 +72,7 @@ def _build_scene_once():
     import newton
     from newton.solvers import SolverMuJoCo
 
-    from VMuscle.muscle import MuscleSim, load_config
+    from VMuscle.muscle_taichi import MuscleSim, load_config
     from VMuscle.solver_muscle_bone_coupled import SolverMuscleBoneCoupled
     from VMuscle.usd_io import UsdIO
 

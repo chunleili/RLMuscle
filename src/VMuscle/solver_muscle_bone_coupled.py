@@ -12,7 +12,7 @@ import warp as wp
 
 import newton
 from newton.solvers import SolverMuJoCo
-from .muscle import MuscleSim
+from .muscle_taichi import MuscleSim
 
 log = logging.getLogger("couple")
 

@@ -25,7 +25,7 @@ import warp as wp
 wp.init()
 wp.set_device("cpu")  # match Agent 1: both on CPU to avoid GPU race conditions
 
-from VMuscle.muscle import MuscleSim as TaichiSim, SimConfig as TaichiCfg, load_config
+from VMuscle.muscle_taichi import MuscleSim as TaichiSim, SimConfig as TaichiCfg, load_config
 from VMuscle.mesh_io import build_surface_tris
 from VMuscle.muscle_warp import MuscleSim as WarpSim, SimConfig as WarpCfg, fill_float_kernel
 
