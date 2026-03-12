@@ -192,7 +192,7 @@ class ConstraintBuilderMixin:
             restlength = float(dists[j])
             c = dict(
                 type=ATTACH,
-                pts=[int(src_idx), -1, int(tgt_idx), 0],
+                pts=[int(src_idx), -1, int(tgt_idx), -1],
                 stiffness=stiffness,
                 dampingratio=dampingratio,
                 tetid=tetid,
@@ -247,7 +247,7 @@ class ConstraintBuilderMixin:
             tetid = self.pt2tet.get(src_idx, [-1])[0]
             c = dict(
                 type=DISTANCELINE,
-                pts=[int(src_idx), int(tgt_idx), 0, 0],
+                pts=[int(src_idx), -1, int(tgt_idx), -1],
                 stiffness=stiffness,
                 dampingratio=dampingratio,
                 tetid=tetid,
