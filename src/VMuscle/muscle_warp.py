@@ -1122,6 +1122,66 @@ class MuscleSim(MuscleSimBase):
 
         self.reaction_accum = wp.zeros(max(n_cons, 1), dtype=wp.vec3)
 
+        # Build colored constraint groups for parallel Gauss-Seidel
+        if self.use_colored_gs and n_cons > 0:
+            self._build_colored_gs(all_constraints)
+
+    def _build_colored_gs(self, all_constraints):
+        """Reorder constraints by (color, type) and build per-color dispatch ranges."""
+        from .constraints import build_constraint_color_groups
+        import time
+
+        t0 = time.perf_counter()
+        color_groups = build_constraint_color_groups(all_constraints)
+        n_colors = len(color_groups)
+        print(f"  Graph coloring: {n_colors} colors, "
+              f"sizes: {[len(g) for g in color_groups]} "
+              f"[{(time.perf_counter()-t0)*1000:.0f}ms]")
+
+        # Reorder constraints: (color, type) sorted
+        reordered = []
+        self.color_type_ranges = []
+        global_offset = 0
+        for color_idx, group in enumerate(color_groups):
+            color_cons = [all_constraints[i] for i in group]
+            color_cons.sort(key=lambda c: c['type'])
+
+            type_ranges = {}
+            prev_type = None
+            start = 0
+            for i, c in enumerate(color_cons):
+                ctype = c['type']
+                if ctype != prev_type:
+                    if prev_type is not None:
+                        type_ranges[prev_type] = (global_offset + start, i - start)
+                    start = i
+                    prev_type = ctype
+            if prev_type is not None:
+                type_ranges[prev_type] = (global_offset + start, len(color_cons) - start)
+
+            self.color_type_ranges.append(type_ranges)
+            reordered.extend(color_cons)
+            global_offset += len(color_cons)
+
+        # Rebuild constraint array with new order
+        n_cons = len(reordered)
+        for i, c in enumerate(reordered):
+            c['cidx'] = i
+
+        cons_np = np.zeros(n_cons, dtype=Constraint.numpy_dtype())
+        cons_np['type'] = np.array([c['type'] for c in reordered], dtype=np.int32)
+        cons_np['cidx'] = np.arange(n_cons, dtype=np.int32)
+        cons_np['pts'] = np.array([c['pts'] for c in reordered], dtype=np.int32)
+        cons_np['stiffness'] = np.array([c['stiffness'] for c in reordered], dtype=np.float32)
+        cons_np['dampingratio'] = np.array([c['dampingratio'] for c in reordered], dtype=np.float32)
+        cons_np['tetid'] = np.array([c['tetid'] for c in reordered], dtype=np.int32)
+        cons_np['L'] = np.array([c['L'] for c in reordered], dtype=np.float32)
+        cons_np['restlength'] = np.array([c['restlength'] for c in reordered], dtype=np.float32)
+        cons_np['restvector'] = np.array([c['restvector'] for c in reordered], dtype=np.float32)
+        cons_np['restdir'] = np.array([c['restdir'] for c in reordered], dtype=np.float32)
+        cons_np['compressionstiffness'] = np.array([c['compressionstiffness'] for c in reordered], dtype=np.float32)
+        self.cons = wp.array(cons_np, dtype=Constraint)
+
     def _init_fields(self):
         self.pos0 = wp.from_numpy(self.pos0_np.astype(np.float32), dtype=wp.vec3)
         self.pos = wp.from_numpy(self.pos0_np.astype(np.float32), dtype=wp.vec3)
@@ -1219,12 +1279,11 @@ class MuscleSim(MuscleSimBase):
         wp.launch(apply_dP_kernel, dim=self.n_verts,
                   inputs=[self.pos, self.dP, self.dPw])
 
-    def solve_constraints(self):
-        if self.n_cons == 0:
-            return
+    def _dispatch_constraints(self, type_ranges):
+        """Dispatch constraint solver kernels for a given {type: (offset, count)} mapping."""
         has_compress = 1 if self.has_compressstiffness else 0
         use_jacobi_int = 1 if self.use_jacobi else 0
-        for ctype, (offset, count) in self.cons_ranges.items():
+        for ctype, (offset, count) in type_ranges.items():
             if ctype == TETVOLUME:
                 wp.launch(solve_tetvolume_kernel, dim=count, inputs=[
                     self.cons, self.pos, self.pprev,
@@ -1261,6 +1320,15 @@ class MuscleSim(MuscleSimBase):
                     self.dP, self.dPw, self.mass, self.stopped,
                     self.rest_matrix,
                     self.dt, use_jacobi_int, offset])
+
+    def solve_constraints(self):
+        if self.n_cons == 0:
+            return
+        if self.use_colored_gs and hasattr(self, 'color_type_ranges'):
+            for type_ranges in self.color_type_ranges:
+                self._dispatch_constraints(type_ranges)
+        else:
+            self._dispatch_constraints(self.cons_ranges)
 
     def render(self):
         if self.renderer is None:

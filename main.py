@@ -3,7 +3,8 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-
+import warp
+warp.init()# You have to init warp before taichi, this is a BUG of LLVM. It is OK on Windows but fail on macOS.
 
 def _print_available_runs(example_stems: list[str]) -> None:
     print("Available RUN values:")

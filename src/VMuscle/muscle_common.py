@@ -71,9 +71,11 @@ class MuscleSimBase(ConstraintBuilderMixin):
         self._init_fields()
         self._precompute_rest()
         self._build_surface_tris()
-        self.build_constraints()
-
         self.use_jacobi = False
+        # Auto-enable colored GS on GPU (prevents write conflicts in parallel GS)
+        arch = getattr(self.cfg, 'arch', 'cpu').lower()
+        self.use_colored_gs = arch != 'cpu'
+        self.build_constraints()
         self.contraction_ratio = getattr(self.cfg, 'contraction_ratio', 0.4)
         self.fiber_stiffness_scale = getattr(self.cfg, 'fiber_stiffness_scale', 200.0)
         self.has_compressstiffness = getattr(self.cfg, 'HAS_compressstiffness', False)

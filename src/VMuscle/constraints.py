@@ -314,3 +314,47 @@ class ConstraintBuilderMixin:
         self.raw_constraints = all_constraints.copy()
         _dt_total = time.perf_counter() - _t_total
         return all_constraints, _dt_total
+
+
+def build_constraint_color_groups(all_constraints):
+    """Build graph-colored constraint groups for parallel Gauss-Seidel.
+
+    Two constraints that share any vertex (pts[i] >= 0) are adjacent in the
+    dual graph and cannot be in the same color group. Returns a list of
+    np.ndarray, each containing constraint indices of one color.
+    """
+    import warp as wp
+    from collections import defaultdict
+    from newton._src.sim.graph_coloring import ColoringAlgorithm, color_graph
+
+    n_cons = len(all_constraints)
+    if n_cons == 0:
+        return []
+
+    # vertex -> constraint id inverted index
+    vertex_to_cons = defaultdict(list)
+    for cid, c in enumerate(all_constraints):
+        for v in c['pts']:
+            if v >= 0:
+                vertex_to_cons[v].append(cid)
+
+    # build dual graph edges
+    edge_set = set()
+    for cids in vertex_to_cons.values():
+        for i in range(len(cids)):
+            for j in range(i + 1, len(cids)):
+                a, b = cids[i], cids[j]
+                edge_set.add((min(a, b), max(a, b)))
+
+    if not edge_set:
+        return [np.arange(n_cons, dtype=np.int32)]
+
+    edges = np.array(sorted(edge_set), dtype=np.int32)
+    edge_wp = wp.array(edges, dtype=int, device="cpu")
+    color_groups = color_graph(
+        n_cons, edge_wp,
+        balance_colors=True,
+        target_max_min_color_ratio=1.1,
+        algorithm=ColoringAlgorithm.MCS,
+    )
+    return color_groups

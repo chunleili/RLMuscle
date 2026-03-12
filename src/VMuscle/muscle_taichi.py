@@ -251,6 +251,78 @@ class MuscleSim(MuscleSimBase):
         # Reaction accumulator for bilateral attach coupling
         self.reaction_accum = ti.Vector.field(3, dtype=ti.f32, shape=max(n_cons, 1))
 
+        # Build colored constraint groups for parallel Gauss-Seidel
+        if self.use_colored_gs and n_cons > 0:
+            self._build_colored_gs(all_constraints, constraint_struct)
+
+    def _build_colored_gs(self, all_constraints, constraint_struct):
+        """Reorder constraints by (color, type) and build per-color dispatch ranges."""
+        from .constraints import build_constraint_color_groups
+        import time
+
+        t0 = time.perf_counter()
+        color_groups = build_constraint_color_groups(all_constraints)
+        n_colors = len(color_groups)
+        print(f"  Graph coloring: {n_colors} colors, "
+              f"sizes: {[len(g) for g in color_groups]} "
+              f"[{(time.perf_counter()-t0)*1000:.0f}ms]")
+
+        # Reorder constraints: (color, type) sorted, build new array
+        reordered = []
+        # color_type_ranges[color_idx] = {type: (offset, count)}
+        self.color_type_ranges = []
+        global_offset = 0
+        for color_idx, group in enumerate(color_groups):
+            # get constraints in this color, sort by type
+            color_cons = [all_constraints[i] for i in group]
+            color_cons.sort(key=lambda c: c['type'])
+
+            type_ranges = {}
+            prev_type = None
+            start = 0
+            for i, c in enumerate(color_cons):
+                ctype = c['type']
+                if ctype != prev_type:
+                    if prev_type is not None:
+                        type_ranges[prev_type] = (global_offset + start, i - start)
+                    start = i
+                    prev_type = ctype
+            if prev_type is not None:
+                type_ranges[prev_type] = (global_offset + start, len(color_cons) - start)
+
+            self.color_type_ranges.append(type_ranges)
+            reordered.extend(color_cons)
+            global_offset += len(color_cons)
+
+        # Rebuild constraint arrays with new order
+        n_cons = len(reordered)
+        for i, c in enumerate(reordered):
+            c['cidx'] = i
+
+        type_arr = np.array([c['type'] for c in reordered], dtype=np.int32)
+        pts_arr = np.array([c['pts'] for c in reordered], dtype=np.int32)
+        stiffness_arr = np.array([c['stiffness'] for c in reordered], dtype=np.float32)
+        dampingratio_arr = np.array([c['dampingratio'] for c in reordered], dtype=np.float32)
+        tetid_arr = np.array([c['tetid'] for c in reordered], dtype=np.int32)
+        L_arr = np.array([c['L'] for c in reordered], dtype=np.float32)
+        restlength_arr = np.array([c['restlength'] for c in reordered], dtype=np.float32)
+        restvector_arr = np.array([c['restvector'] for c in reordered], dtype=np.float32)
+        restdir_arr = np.array([[c['restdir'][j] for j in range(3)] for c in reordered], dtype=np.float32)
+        compressionstiffness_arr = np.array([c['compressionstiffness'] for c in reordered], dtype=np.float32)
+
+        self.cons = constraint_struct.field(shape=n_cons)
+        self.cons.type.from_numpy(type_arr)
+        self.cons.cidx.from_numpy(np.arange(n_cons, dtype=np.int32))
+        self.cons.pts.from_numpy(pts_arr)
+        self.cons.stiffness.from_numpy(stiffness_arr)
+        self.cons.dampingratio.from_numpy(dampingratio_arr)
+        self.cons.tetid.from_numpy(tetid_arr)
+        self.cons.L.from_numpy(L_arr)
+        self.cons.restlength.from_numpy(restlength_arr)
+        self.cons.restvector.from_numpy(restvector_arr)
+        self.cons.restdir.from_numpy(restdir_arr)
+        self.cons.compressionstiffness.from_numpy(compressionstiffness_arr)
+
     def _init_renderer(self):
         print("Initializing visualization...")
         print("Renderer mode:", self.cfg.render_mode)
@@ -460,8 +532,9 @@ class MuscleSim(MuscleSimBase):
                 self.cons[c].dampingratio, fem_flags(self.cons[c].type),
             )
 
-    def solve_constraints(self):
-        for ctype, (offset, count) in self.cons_ranges.items():
+    def _dispatch_constraints(self, type_ranges):
+        """Dispatch constraint solver kernels for a given {type: (offset, count)} mapping."""
+        for ctype, (offset, count) in type_ranges.items():
             if ctype == TETVOLUME:
                 self.solve_tetvolume(offset, count)
             elif ctype == TETFIBERNORM:
@@ -474,6 +547,13 @@ class MuscleSim(MuscleSimBase):
                 self.solve_distanceline(offset, count)
             elif ctype == TETARAP:
                 self.solve_tetarap(offset, count)
+
+    def solve_constraints(self):
+        if self.use_colored_gs and hasattr(self, 'color_type_ranges'):
+            for type_ranges in self.color_type_ranges:
+                self._dispatch_constraints(type_ranges)
+        else:
+            self._dispatch_constraints(self.cons_ranges)
 
     @ti.kernel
     def integrate(self):
