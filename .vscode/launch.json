@@ -19,6 +19,15 @@
             "program": "${file}",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+        },
+        {
+            "name": "run module",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "examples.${fileBasenameNoExtension}",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
         }
     ]
 }

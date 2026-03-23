@@ -27,3 +27,4 @@ backup
 newton_sim_out.usd
 
 core
+*.log
