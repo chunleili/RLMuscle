@@ -35,58 +35,21 @@ def run_opensim(config_path):
 
     with open(config_path) as f:
         raw = json.load(f)
-    geo = raw["geometry"]
-    phys = raw["physics"]
-    mus = raw["muscle"]
-    sol = raw["solver"]
-
-    length = geo["muscle_length"]
-    radius = geo["muscle_radius"]
-    sigma0 = mus["sigma0"]
-    ball_mass = phys["ball_mass"]
+    geo, phys, mus, sol = raw["geometry"], raw["physics"], raw["muscle"], raw["solver"]
     t_end = sol["n_steps"] * sol["dt"]
 
     try:
-        import importlib.util
-        # Find osim_sliding_ball.py in OpenSimExample
-        osim_paths = [
-            os.path.join(os.path.dirname(__file__), "..", "..",
-                         "OpenSimExample", "OpenSimExample",
-                         "vbd_muscle", "osim_sliding_ball.py"),
-            "D:/Dev/OpenSimExample/OpenSimExample/vbd_muscle/osim_sliding_ball.py",
-        ]
-        osim_path = None
-        for p in osim_paths:
-            p = os.path.normpath(p)
-            if os.path.exists(p):
-                osim_path = p
-                break
-
-        if osim_path is None:
-            print("OpenSim script not found, skipping.")
-            return None
-
-        spec = importlib.util.spec_from_file_location("osim_sliding_ball", osim_path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-
+        from scripts.osim_sliding_ball import osim_sliding_ball
         os.makedirs("output", exist_ok=True)
-        result = mod.osim_sliding_ball(
-            muscle_length=length,
-            ball_mass=ball_mass,
-            sigma0=sigma0,
-            muscle_radius=radius,
+        return osim_sliding_ball(
+            muscle_length=geo["muscle_length"],
+            ball_mass=phys["ball_mass"],
+            sigma0=mus["sigma0"],
+            muscle_radius=geo["muscle_radius"],
             excitation_func=lambda t: min(t / 0.05, 1.0),
             t_end=t_end,
             dt=0.001,
         )
-
-        # Copy .sto to local output
-        sto_src = "output/opensim_sliding_ball.sto"
-        if os.path.exists(sto_src):
-            return sto_src
-        return None
-
     except Exception as e:
         print(f"OpenSim failed: {e}")
         import traceback
@@ -94,8 +57,15 @@ def run_opensim(config_path):
         return None
 
 
-def plot_comparison(vbd_npz, sto_path, label):
-    """Generate comparison plot."""
+def plot_comparison(vbd_npz, osim_result, label):
+    """Generate comparison plot.
+
+    Args:
+        vbd_npz: Path to VBD .npz file.
+        osim_result: dict from osim_sliding_ball() with keys times, positions,
+                     forces, norm_fiber_lengths, etc. Or None.
+        label: Label for output filename.
+    """
     print("\n" + "=" * 60)
     print("Step 3: Plotting")
     print("=" * 60)
@@ -105,25 +75,8 @@ def plot_comparison(vbd_npz, sto_path, label):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    # --- DGF curves (matching kernel / OpenSim) ---
-    b11, b21, b31, b41 = 0.815, 1.055, 0.162, 0.063
-    b12, b22, b32, b42 = 0.433, 0.717, -0.030, 0.200
-    b13, b23, b33, b43 = 0.1, 1.0, 0.354, 0.0
-    KPE = 4.0
-
-    def _gauss(x, b1, b2, b3, b4):
-        s = b3 + b4 * x
-        return b1 * np.exp(-0.5 * (x - b2) ** 2 / np.maximum(s, 1e-6) ** 2)
-
-    def afl(x):
-        x = np.asarray(x, dtype=float)
-        return _gauss(x, b11, b21, b31, b41) + _gauss(x, b12, b22, b32, b42) + _gauss(x, b13, b23, b33, b43)
-
-    def pfl(x):
-        x = np.asarray(x, dtype=float)
-        offset = np.exp(KPE * (0.2 - 1.0) / 0.6)
-        denom = np.exp(KPE) - offset
-        return (np.exp(np.clip(KPE * (x - 1.0) / 0.6, -50, 50)) - offset) / denom
+    # --- DGF curves (from shared module) ---
+    from src.VMuscle.dgf_curves import active_force_length as afl, passive_force_length as pfl
 
     # --- Load data ---
     d = np.load(vbd_npz)
@@ -135,16 +88,7 @@ def plot_comparison(vbd_npz, sto_path, label):
     ball_mass = float(d['ball_mass'])
     fmax = sigma0 * np.pi * radius ** 2
 
-    osim = None
-    if sto_path and os.path.exists(sto_path):
-        with open(sto_path) as f:
-            for line in f:
-                if line.strip() == "endheader":
-                    break
-            cols = f.readline().strip().split('\t')
-            rows = [[float(v) for v in l.strip().split('\t')] for l in f]
-        data = np.array(rows)
-        osim = {n: data[:, i] for i, n in enumerate(cols)}
+    has_osim = osim_result is not None
 
     # --- Plot ---
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -152,16 +96,16 @@ def plot_comparison(vbd_npz, sto_path, label):
     # (0,0) Ball trajectory
     ax = axes[0, 0]
     ax.plot(vbd_t, vbd_y, "b-", lw=1.5, label="VBD")
-    if osim:
-        ax.plot(osim['time'], osim['position'], "r--", lw=1.5, label="OpenSim")
+    if has_osim:
+        ax.plot(osim_result['times'], osim_result['positions'], "r--", lw=1.5, label="OpenSim")
     ax.set_xlabel("Time (s)"); ax.set_ylabel("Ball position (m)")
     ax.set_title("Ball Trajectory"); ax.legend(); ax.grid(True, alpha=0.3)
 
     # (0,1) Fiber length
     ax = axes[0, 1]
     ax.plot(vbd_t, vbd_nfl, "b-", lw=1.5, label="VBD (mean)")
-    if osim:
-        ax.plot(osim['time'], osim['norm_fiber_length'], "r--", lw=1.5, label="OpenSim")
+    if has_osim:
+        ax.plot(osim_result['times'], osim_result['norm_fiber_lengths'], "r--", lw=1.5, label="OpenSim")
     ax.set_xlabel("Time (s)"); ax.set_ylabel("Normalized fiber length")
     ax.set_title("Fiber Length Over Time"); ax.legend(); ax.grid(True, alpha=0.3)
 
@@ -179,8 +123,8 @@ def plot_comparison(vbd_npz, sto_path, label):
     ax.axvline(x=vbd_l_eq, color='b', ls=':', alpha=0.4)
     ax.plot(vbd_l_eq, eq_force, 'bo', ms=8, zorder=6,
             label=f"VBD eq. $\\tilde{{l}}$={vbd_l_eq:.2f}")
-    if osim:
-        osim_l_eq = float(osim['norm_fiber_length'][-1])
+    if has_osim:
+        osim_l_eq = float(osim_result['norm_fiber_lengths'][-1])
         ax.axvline(x=osim_l_eq, color='r', ls=':', alpha=0.4)
         ax.plot(osim_l_eq, eq_force, 'rs', ms=8, zorder=6,
                 label=f"OpenSim eq. $\\tilde{{l}}$={osim_l_eq:.2f}")
@@ -199,8 +143,8 @@ def plot_comparison(vbd_npz, sto_path, label):
         ax.plot(vbd_t[:-1], vbd_force / fmax, "b-", lw=1.5, label="VBD")
     ax.axhline(y=eq_force, color='gray', ls=':', alpha=0.5,
                label=f"Weight/F_max={eq_force:.3f}")
-    if osim:
-        ax.plot(osim['time'], osim['force'] / fmax, "r--", lw=1.5, label="OpenSim")
+    if has_osim:
+        ax.plot(osim_result['times'], osim_result['forces'] / fmax, "r--", lw=1.5, label="OpenSim")
     ax.set_xlabel("Time (s)"); ax.set_ylabel("Force / F_max")
     ax.set_title("Force on Ball"); ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
 
@@ -225,12 +169,12 @@ def main():
     vbd_npz = run_vbd(args.config, args.label)
 
     # Step 2: OpenSim
-    sto_path = None
+    osim_result = None
     if not args.skip_opensim:
-        sto_path = run_opensim(args.config)
+        osim_result = run_opensim(args.config)
 
     # Step 3: Plot
-    plot_comparison(vbd_npz, sto_path, args.label)
+    plot_comparison(vbd_npz, osim_result, args.label)
 
     print("\n" + "=" * 60)
     print("Done!")

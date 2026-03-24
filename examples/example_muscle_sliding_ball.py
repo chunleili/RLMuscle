@@ -220,22 +220,24 @@ def run_sim(cfg, label="default"):
              ball_mass=ball_mass, dt=dt)
     print(f"NPZ saved to {out}")
 
-    # save .sto for direct comparison with OpenSim (optional)
-    sto_path = "output/opensim_sliding_ball.sto"
-    columns = ["position", "force", "norm_fiber_length",
-               "active_force", "passive_force"]
+    # Save .sto with OpenSim state-path column names so the file can be
+    # loaded as a motion in OpenSim GUI alongside vbd_muscle_comparison.osim.
+    sto_path = f"output/vbd_sliding_ball_{label}.sto"
+    columns = ["/jointset/slider/height/value",
+               "/jointset/slider/height/speed",
+               "/forceset/muscle/activation"]
+    n_rows = len(rec_t)
     with open(sto_path, "w") as f:
-        f.write("opensim_sliding_ball\n")
-        f.write("version=1\n")
-        f.write(f"nRows={len(rec_t)}\n")
+        f.write("vbd_states\n")
+        f.write(f"nRows={n_rows}\n")
         f.write(f"nColumns={len(columns) + 1}\n")
         f.write("inDegrees=no\n")
+        f.write("DataType=double\n")
+        f.write("version=3\n")
         f.write("endheader\n")
         f.write("time\t" + "\t".join(columns) + "\n")
-        for i in range(len(rec_t)):
-            f.write(f"{rec_t[i]}\t{rec_z[i]}\t{rec_fiber[i]['f_total']}\t"
-                    f"{rec_fiber[i]['l_mean']}\t{rec_fiber[i]['f_active']}\t"
-                    f"{rec_fiber[i]['f_passive']}\n")
+        for i in range(n_rows):
+            f.write(f"{rec_t[i]}\t{rec_z[i]}\t{rec_vz[i]}\t{rec_a[i]}\n")
     print(f"Wrote {sto_path}")
     return out
 
