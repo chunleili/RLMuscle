@@ -1,0 +1,44 @@
+{
+  "name": "slidingBall",
+  "description": "1-DOF sliding ball with DGF Hill-type muscle, for VBD vs OpenSim comparison",
+
+  "geometry": {
+    "muscle_length": 0.10,
+    "muscle_radius": 0.02,
+    "n_circumferential": 8,
+    "n_axial": 6,
+    "up_axis": "Z"
+  },
+
+  "physics": {
+    "density": 1060.0,
+    "gravity": 9.81,
+    "ball_mass": 10.0
+  },
+
+  "muscle": {
+    "sigma0": 3.0e5,
+    "max_contraction_velocity": 1.0e6,
+    "fiber_damping": 0.05
+  },
+
+  "material": {
+    "k_mu": 1.0,
+    "k_lambda": 1000.0,
+    "k_damp": 0.5
+  },
+
+  "activation": {
+    "type": "dynamics",
+    "tau_act": 0.015,
+    "tau_deact": 0.060,
+    "excitation": 1.0,
+    "substep_dt": 0.001
+  },
+
+  "solver": {
+    "dt": 0.016666666666666666,
+    "n_steps": 300,
+    "iterations": 50
+  }
+}
