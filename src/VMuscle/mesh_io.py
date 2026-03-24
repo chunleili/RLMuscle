@@ -4,6 +4,8 @@ Provides:
 - load_mesh(path)       — muscle TetMesh (positions, tets, fibers, tendon_mask, geo)
 - load_bone_mesh(path)  — bone surface mesh (geo, positions, indices, muscle_ids)
 - build_surface_tris()  — extract boundary triangles from tetrahedra
+- save_ply()            — export surface mesh to PLY
+- UsdTetExporter        — export tet mesh animation to USD
 """
 
 from pathlib import Path
@@ -255,3 +257,80 @@ def load_bone_mesh(path: Path):
         return _load_bone_usd(path)
     else:
         return _load_bone_geo(path)
+
+
+# ---------------------------------------------------------------------------
+# Export: PLY
+# ---------------------------------------------------------------------------
+
+def save_ply(filename: str, positions: np.ndarray, surface_faces):
+    """Save mesh surface to PLY file.
+
+    Args:
+        filename: output .ply path
+        positions: Nx3 vertex positions
+        surface_faces: list/array of (i, j, k) triangle indices
+    """
+    try:
+        import meshio
+        meshio.Mesh(points=positions, cells=[("triangle", surface_faces)]).write(filename)
+        return
+    except ImportError:
+        pass
+    with open(filename, "w") as fp:
+        fp.write("ply\n")
+        fp.write("format ascii 1.0\n")
+        fp.write(f"element vertex {len(positions)}\n")
+        fp.write("property float x\n")
+        fp.write("property float y\n")
+        fp.write("property float z\n")
+        fp.write(f"element face {len(surface_faces)}\n")
+        fp.write("property list uchar int vertex_indices\n")
+        fp.write("end_header\n")
+        for p in positions:
+            fp.write(f"{p[0]:.6f} {p[1]:.6f} {p[2]:.6f}\n")
+        for f in surface_faces:
+            fp.write(f"3 {f[0]} {f[1]} {f[2]}\n")
+
+
+# ---------------------------------------------------------------------------
+# Export: USD TetMesh animation
+# ---------------------------------------------------------------------------
+
+class UsdTetExporter:
+    """Export tet mesh animation to a USD file with per-frame vertex positions."""
+
+    def __init__(self, tet_indices, usd_path="output/anim.usda", prim_path="tet", fps=24, start_frame=0):
+        from pxr import Usd, UsdGeom, Gf, Vt
+
+        self.usd_path = usd_path
+        self.prim_path = prim_path
+        self.fps = fps
+
+        self.stage = Usd.Stage.CreateNew(usd_path)
+        self.stage.SetStartTimeCode(start_frame)
+        self.stage.SetEndTimeCode(start_frame)
+        self.stage.SetTimeCodesPerSecond(fps)
+
+        self.tet = UsdGeom.TetMesh.Define(self.stage, prim_path)
+        self.tet.CreateOrientationAttr().Set(UsdGeom.Tokens.rightHanded)
+
+        tet_vec4 = Vt.Vec4iArray([Gf.Vec4i(int(t[0]), int(t[1]), int(t[2]), int(t[3])) for t in tet_indices])
+        self.tet.GetTetVertexIndicesAttr().Set(tet_vec4)
+
+        surface_faces = UsdGeom.TetMesh.ComputeSurfaceFaces(self.tet)
+        self.tet.CreateSurfaceFaceVertexIndicesAttr().Set(surface_faces)
+        self.points_attr = self.tet.GetPointsAttr()
+
+    def save_frame(self, positions, frame):
+        """Save vertex positions for a given frame."""
+        from pxr import Usd, Vt
+
+        assert positions.shape[1] == 3, "Positions must be Nx3 array"
+        pts = Vt.Vec3fArray.FromNumpy(positions)
+        self.points_attr.Set(pts, Usd.TimeCode(frame))
+        self.stage.SetEndTimeCode(frame)
+
+    def finalize(self):
+        """Write USD file to disk."""
+        self.stage.GetRootLayer().Save()

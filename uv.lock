@@ -981,10 +981,10 @@ wheels = [
 
 [package.optional-dependencies]
 epath = [
-    { name = "fsspec" },
-    { name = "importlib-resources" },
-    { name = "typing-extensions" },
-    { name = "zipp" },
+    { name = "fsspec", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "importlib-resources", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "zipp", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
 ]
 
 [[package]]
@@ -1160,6 +1160,14 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/3f/efeb7c6801c46e11bd666a5180f0d615f74f72264212f74f39586c6fda9d/glfw-2.10.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38.py39.py310.py311.py312.py313.py314-none-manylinux_2_28_x86_64.whl", hash = "sha256:ce6724bb7cb3d0543dcba17206dce909f94176e68220b8eafee72e9f92bcf542", size = 243522, upload-time = "2026-01-28T05:58:03.517Z" },
     { url = "https://files.pythonhosted.org/packages/cf/b9/b04c3aa0aad2870cfe799f32f8b59789c98e1816bbce9e83f4823c5b840b/glfw-2.10.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38.py39.py310.py311.py312.py313.py314-none-win32.whl", hash = "sha256:fca724a21a372731edb290841edd28a9fb1ee490f833392752844ac807c0086a", size = 552682, upload-time = "2026-01-28T05:58:05.649Z" },
     { url = "https://files.pythonhosted.org/packages/bd/e1/6d6816b296a529ac9b897ad228b1e084eb1f92319e96371880eebdc874a6/glfw-2.10.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38.py39.py310.py311.py312.py313.py314-none-win_amd64.whl", hash = "sha256:823c0bd7770977d4b10e0ed0aef2f3682276b7c88b8b65cfc540afce5951392f", size = 559464, upload-time = "2026-01-28T05:58:07.261Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/a8/d4dab8a58fc2e6981fc7a58c4e56ba9d777fb24931cec6a22152edbb3540/glfw-2.10.0-py2.py3-none-macosx_10_6_intel.whl", hash = "sha256:a0d1f29f206219cc291edfb6cace663a86da2470632551c998e3db82d48ea177", size = 105288, upload-time = "2026-03-10T17:21:19.929Z" },
+    { url = "https://files.pythonhosted.org/packages/14/61/68d35e001872a7705112418da236fa2418d4f2e5419f8b2837f9b81bb3da/glfw-2.10.0-py2.py3-none-macosx_11_0_arm64.whl", hash = "sha256:d28d6f3ef217e64e35dc6fd0a7acb4cec9bfe7cd14dd9b35a7228a87002de154", size = 102139, upload-time = "2026-03-10T17:21:21.645Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/e1/ca5984081aaae07c9d371cb11dc4e4ff603510678ed9b73e58b6c351fe63/glfw-2.10.0-py2.py3-none-manylinux2014_aarch64.whl", hash = "sha256:f968b522bb6a0e04aaf4dcac30a476d7229308bb2bac406a60587debb5a61e29", size = 229998, upload-time = "2026-03-10T17:21:23.549Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/c4/82ac75fdcfba2896da7a573c0fc7f8ceb8f77ead6866d500d06c32f1c464/glfw-2.10.0-py2.py3-none-manylinux2014_x86_64.whl", hash = "sha256:68cf3752bdadb6f4bc0a876247c28c88c7251ac39f8af076ed938fdfd71e72dd", size = 241944, upload-time = "2026-03-10T17:21:26.102Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/96/9f691823cca5eb6a08f346bd0ff03b78032db9370b509a1e9c8976fb20a5/glfw-2.10.0-py2.py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:44d98de5dbf8f727e0cb29f9b29d29528ea7570f2e6f42f8430a69df05f12b48", size = 231009, upload-time = "2026-03-10T17:21:28.481Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/93/977b9e679e356871d428ae7a1139ec767dd5177bed58a6344b4d2199e00f/glfw-2.10.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:cca5158d62189e08792b1ae54f92307a282921a0e7783315b467e21b0a381c88", size = 243480, upload-time = "2026-03-10T17:21:30.538Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/bd/cea9569c8f2188b0a104472951420434a3e1f5cf26f5836ef9d7227a1a30/glfw-2.10.0-py2.py3-none-win32.whl", hash = "sha256:5e024509989740e8e7b86cc4aab508195495f79879072b0e1f68bd036a2916ad", size = 552641, upload-time = "2026-03-10T17:21:32.653Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/9b/4366ad3e1c0688146c70aa6143584d6a8d88583b9390f106250e25a3d5cd/glfw-2.10.0-py2.py3-none-win_amd64.whl", hash = "sha256:7f787ee8645781f10e8800438ce4357ab38c573ffb191aba380c1e72eba6311c", size = 559423, upload-time = "2026-03-10T17:21:34.766Z" },
 ]
 
 [[package]]
@@ -2201,40 +2209,48 @@ wheels = [
 
 [[package]]
 name = "mujoco"
-version = "3.5.1.dev872866601"
-source = { registry = "https://py.mujoco.org/" }
+version = "3.6.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py" },
-    { name = "etils", extra = ["epath"] },
-    { name = "glfw" },
-    { name = "numpy" },
-    { name = "pyopengl" },
+    { name = "absl-py", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "etils", extra = ["epath"], marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "glfw", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "numpy", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "pyopengl", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/42/82/f8f08dfe9123df4351b560f894f0e7166c1a45a0dd2f04145ed00b8f849b/mujoco-3.6.0.tar.gz", hash = "sha256:15c89f423e33bce0860ad7061763b72323426d6348d7b2e46ebdcc37b11e0905", size = 915041, upload-time = "2026-03-11T01:45:42.807Z" }
 wheels = [
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp311-cp311-macosx_11_0_universal2.whl" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp311-cp311-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp311-cp311-win_amd64.whl" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp312-cp312-macosx_11_0_universal2.whl" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp312-cp312-win_amd64.whl" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp313-cp313-macosx_11_0_universal2.whl" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.5.1.dev872866601-cp313-cp313-win_amd64.whl" },
+    { url = "https://files.pythonhosted.org/packages/e0/75/d8afb4e98b58a119be3cba8da88b75cf53ff16f83baa9a14d37aa15a426e/mujoco-3.6.0-cp311-cp311-macosx_10_16_x86_64.whl", hash = "sha256:5ae08e9249dc04b9da2bb22fe1657277996ad96632f3835cdf3ad60e47beda68", size = 7158583, upload-time = "2026-03-11T01:45:03.155Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/fb/5335c0ba2e88f4b8f8300c15966823dbb96ecc906a61c86bcf9cdac77311/mujoco-3.6.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:5f1a57423e49e6a35ba9cc8335fe023973c11fc29569fee60e14725b384d557d", size = 7155716, upload-time = "2026-03-11T01:45:06.113Z" },
+    { url = "https://files.pythonhosted.org/packages/00/15/e3f01cee200438baab9db1de79bfd67e3a3f2ab1b02c48268e094815339f/mujoco-3.6.0-cp311-cp311-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:af6d762148b33fc96bf21125d0198048f5d6f2c911da75e0c164a9e7188f8e38", size = 6954046, upload-time = "2026-03-11T01:45:09.133Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/a2/93ce08c5fcbe04dd997fe207bdc008e856b664ecf69db6442035aacf7fba/mujoco-3.6.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6708a62f4c85bef51c47d0835d29e116da96b4f6a4cf5beef3467dca8af8c407", size = 7398612, upload-time = "2026-03-11T01:45:11.716Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/a5/a84a9edc6234a2ee29a6b008d432e1c3855795f10a51786ee2260128ed12/mujoco-3.6.0-cp311-cp311-win_amd64.whl", hash = "sha256:99c4b2ec48e988d7ab2dce38e65f237c326954c06323cdd405718034da0b2077", size = 5689948, upload-time = "2026-03-11T01:45:14.304Z" },
+    { url = "https://files.pythonhosted.org/packages/38/c4/f8959e3d5d98b282e081ce08d07cd71ae949cc0ad9f2c39c0a69fcb88c8c/mujoco-3.6.0-cp312-cp312-macosx_10_16_x86_64.whl", hash = "sha256:e7e60ee4c07f6fecd63c23e6f47b8d7cdacad75d311739d50d50b5107a630af2", size = 7159624, upload-time = "2026-03-11T01:45:16.893Z" },
+    { url = "https://files.pythonhosted.org/packages/26/55/7407eced2c44fbea233302d2c11e778852ea0f2eb0e14610f13a7e0d6ac7/mujoco-3.6.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:ea71750f8cbe24b02a091093592f08fb71c95692b43c25e87dabe496ace0bb55", size = 7093719, upload-time = "2026-03-11T01:45:19.191Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/cc/2aae89c3a83fed29ccb9057c05fb4a218b2a42c6dea136d9a78fea6b39f8/mujoco-3.6.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:094de585a2084508f1cfd76170b0dfe1d9c122b3bd4677e96ef2383100c9032f", size = 6982824, upload-time = "2026-03-11T01:45:22.078Z" },
+    { url = "https://files.pythonhosted.org/packages/52/6c/5ec4e93676a65064a6591176772e00cfa02716156a1d0a7d646a8203348f/mujoco-3.6.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8714fab312c7ee58f45bda7ef8762da2184e3a6a1d780a5093e93a160d66bd3d", size = 7473873, upload-time = "2026-03-11T01:45:24.671Z" },
+    { url = "https://files.pythonhosted.org/packages/92/22/38d82f0c34213af53afbbb248b3442943ef48ffbac1e4c909b321e02ac56/mujoco-3.6.0-cp312-cp312-win_amd64.whl", hash = "sha256:3d4ec53e4e20fcc85843d607fa1648e0b12d2d2de81ee6f85926e95a7e84e8d8", size = 5764289, upload-time = "2026-03-11T01:45:27.014Z" },
+    { url = "https://files.pythonhosted.org/packages/29/0e/f3ea1fc9d1a25f19b173b13c23797805480cdb0a1026d43cf6b37dc2de6e/mujoco-3.6.0-cp313-cp313-macosx_10_16_x86_64.whl", hash = "sha256:29c8c05061798fc3b80269ab3661fa915b890e9623bda4bc6bc9e237db81e885", size = 7159784, upload-time = "2026-03-11T01:45:30.037Z" },
+    { url = "https://files.pythonhosted.org/packages/25/f2/2cbeabc6b69110e743100f550ec00ae8c60352b6975cf95470add299ed7a/mujoco-3.6.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:d593e9373a61db82a506485f7f34533fb6d7e2bff7602f2310aa03e3a93b292f", size = 7093841, upload-time = "2026-03-11T01:45:33.204Z" },
+    { url = "https://files.pythonhosted.org/packages/44/80/d7173c73ebfee73a9a3748851c1b5a5e2b5f70b13f4e7fc56dd9d54343d7/mujoco-3.6.0-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:0a1a1638dabd66f18d0c04c7fd9383439b0b47e9f91e07939b41e1e628de6357", size = 6983327, upload-time = "2026-03-11T01:45:35.658Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/48/c8cd52847d8a973fc606910a5467b8b7b68fa763afbe91f41d87123f957c/mujoco-3.6.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5dc7adceab3a7dbf8b4d52176d4aa629aca5f83dfce5ae06abc1a8c93980d67b", size = 7474334, upload-time = "2026-03-11T01:45:38.237Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/f4/17e3962681c141182616db9ec556ad902311ec154fffda7e9b35ed9677c2/mujoco-3.6.0-cp313-cp313-win_amd64.whl", hash = "sha256:8068182e134ad8a7786a8d24e3198f485e2c531be1149d7793cfda1cc7fb7122", size = 5764100, upload-time = "2026-03-11T01:45:40.548Z" },
 ]
 
 [[package]]
 name = "mujoco-warp"
 version = "3.5.0.2"
-source = { git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2#1166e75230ec8c1f16f9484ee03ad74098d3201a" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py" },
-    { name = "etils", extra = ["epath"] },
-    { name = "mujoco" },
-    { name = "numpy" },
-    { name = "warp-lang" },
+    { name = "absl-py", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "etils", extra = ["epath"], marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "mujoco", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "numpy", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "warp-lang", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/11/98/a00f3f1e9690682149f96539680057ad089bf143334b31096c7e181417ba/mujoco_warp-3.5.0.2.tar.gz", hash = "sha256:c0ca9d9f39495714f24d20da3a22d0c04032c48e9b79d2f852aa63128a38c26a", size = 1881649, upload-time = "2026-02-26T13:31:41.342Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4b/2e/90f05ad3818fd4b826f712c9f89a3df3aa3ef204efeaa71f8ddc2ca5fd3b/mujoco_warp-3.5.0.2-py3-none-any.whl", hash = "sha256:877ed9d20d26b24e87233d4e09a34d8999a1414f8477d9a31590374c82c2176a", size = 1960077, upload-time = "2026-02-26T13:31:39.788Z" },
 ]
 
 [[package]]
@@ -2585,12 +2601,12 @@ requires-dist = [
     { name = "mujoco", marker = "python_full_version < '3.14' and extra == 'sim'", specifier = ">=3.5.0" },
     { name = "mujoco", marker = "python_full_version < '3.14' and extra == 'torch-cu12'", specifier = ">=3.5.0" },
     { name = "mujoco", marker = "python_full_version < '3.14' and extra == 'torch-cu13'", specifier = ">=3.5.0" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'dev'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'examples'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'notebook'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'sim'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'torch-cu12'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
-    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'torch-cu13'", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'dev'", specifier = ">=3.5.0.2" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'examples'", specifier = ">=3.5.0.2" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'notebook'", specifier = ">=3.5.0.2" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'sim'", specifier = ">=3.5.0.2" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'torch-cu12'", specifier = ">=3.5.0.2" },
+    { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'torch-cu13'", specifier = ">=3.5.0.2" },
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=3.0.1" },
     { name = "nbsphinx", marker = "extra == 'docs'", specifier = ">=0.9.0" },
     { name = "newton-actuators" },
@@ -3664,6 +3680,23 @@ wheels = [
 ]
 
 [[package]]
+name = "pyopensim"
+version = "4.5.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/00/e0/47a8b07d78a320c149eb25b8b2c81dfe7a4ae603a8678d6711d669bf90d3/pyopensim-4.5.2.0.tar.gz", hash = "sha256:3cbfb9b6a101834d62a7636c9d4883664480577f4c07035c485a3dc0f7d43cd1", size = 54326571, upload-time = "2025-10-23T14:31:34.408Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/78/4fff63717ec9b192038f32fc9d7564d5cd329c20ebd7cc47d054e25152f1/pyopensim-4.5.2.0-cp311-cp311-macosx_11_0_universal2.whl", hash = "sha256:8a61f2331cea5cab06ab0f8274bbd43d19fdfc4e1735cfc132b65fa243a43f42", size = 45878559, upload-time = "2025-10-23T14:31:14.724Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/43/77dbadfab331c0f2d50a8a2ea42c64e8ed8a83805066e7706fd85751de8e/pyopensim-4.5.2.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:02fff95197971c7c4e36b7c0e7d4adf82f08cfc098012295a1770ab2f94134b2", size = 29000407, upload-time = "2025-10-23T14:31:17.816Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/47/2c7f8e5833864f9a9934fbd3c94e30c8d76d2c696eb2730c475b6a4ca720/pyopensim-4.5.2.0-cp311-cp311-win_amd64.whl", hash = "sha256:c036e3798690b35968ecfa89e992059adec29ad44c50452cc8b1d7bd9e91435a", size = 28182453, upload-time = "2025-10-23T14:31:20.526Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/cd/ee9500869e2cc285af7096fa6cf2b7d506d9a41e2dad0e0aba81988b61ae/pyopensim-4.5.2.0-cp312-cp312-macosx_11_0_universal2.whl", hash = "sha256:6b92415d4d93a89a76db732798f6e7d960c8ecc6791f37581ad003441252fafe", size = 45902182, upload-time = "2025-10-23T14:31:25.054Z" },
+    { url = "https://files.pythonhosted.org/packages/34/c7/33e78da6f4aa733a236214a58c11ab8ae960debb371acbfb0e864c2fc086/pyopensim-4.5.2.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7efdce3c1313c0d18392772cedde208fe966df1ff56e932328b7759bd03141d0", size = 29007487, upload-time = "2025-10-23T14:31:28.064Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/a0/b3ce9d425db75cfc0b9ce3879ff7294e7650b4ec710419c54decd1ad842b/pyopensim-4.5.2.0-cp312-cp312-win_amd64.whl", hash = "sha256:5566653672a75214e0973ba367ada5f4200f769c8d60d1aeb3f77cade1cbfb46", size = 28191407, upload-time = "2025-10-23T14:31:31.075Z" },
+]
+
+[[package]]
 name = "pypandoc"
 version = "1.16.2"
 source = { registry = "https://pypi.org/simple" }
@@ -4048,8 +4081,8 @@ name = "rlmuscle"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "mujoco-warp" },
-    { name = "newton" },
+    { name = "newton", extra = ["sim"] },
+    { name = "numpy" },
     { name = "python-dotenv" },
 ]
 
@@ -4057,14 +4090,13 @@ dependencies = [
 optional = [
     { name = "matplotlib" },
     { name = "newton", extra = ["examples"] },
+    { name = "pyopensim" },
     { name = "pytest" },
     { name = "taichi" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "mujoco" },
-    { name = "mujoco-warp" },
     { name = "scipy" },
 ]
 usd = [
@@ -4075,9 +4107,10 @@ usd = [
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", marker = "extra == 'optional'", specifier = ">=3.10.8" },
-    { name = "mujoco-warp", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
-    { name = "newton", editable = "external/newton" },
     { name = "newton", extras = ["examples"], marker = "extra == 'optional'", editable = "external/newton" },
+    { name = "newton", extras = ["sim"], editable = "external/newton" },
+    { name = "numpy" },
+    { name = "pyopensim", marker = "extra == 'optional'", specifier = ">=4.5" },
     { name = "pytest", marker = "extra == 'optional'", specifier = ">=9.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "taichi", marker = "extra == 'optional'" },
@@ -4085,11 +4118,7 @@ requires-dist = [
 provides-extras = ["optional"]
 
 [package.metadata.requires-dev]
-dev = [
-    { name = "mujoco" },
-    { name = "mujoco-warp", git = "https://github.com/google-deepmind/mujoco_warp?tag=v3.5.0.2" },
-    { name = "scipy" },
-]
+dev = [{ name = "scipy" }]
 usd = [
     { name = "usd-core", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=25.5" },
     { name = "usd-core-arm64", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=26.3" },

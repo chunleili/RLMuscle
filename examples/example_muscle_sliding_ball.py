@@ -24,6 +24,7 @@ from newton.solvers import SolverVBD
 
 from VMuscle.activation import activation_dynamics_step_np
 from VMuscle.dgf_curves import compute_fiber_forces
+from VMuscle.mesh_io import UsdTetExporter
 from VMuscle.mesh_utils import (
     assign_fiber_directions,
     create_cylinder_tet_mesh,
@@ -154,6 +155,13 @@ def run_sim(cfg, label="default"):
     s0, s1, ctrl = model.state(), model.state(), model.control()
     solver = SolverVBD(model, iterations=iterations)
 
+    # USD animation exporter
+    anim_dir = "output/anim"
+    os.makedirs(anim_dir, exist_ok=True)
+    usd_path = os.path.join(anim_dir, f"sliding_ball_{label}.usda")
+    fps = int(1.0 / dt) if dt > 0 else 60
+    exporter = UsdTetExporter(tets, usd_path=usd_path, prim_path="/muscle", fps=fps)
+
     # Simulate
     v_max = cfg["v_max"]
     t_end = n_steps * dt
@@ -184,6 +192,7 @@ def run_sim(cfg, label="default"):
 
         pos = s0.particle_q.numpy()
         vel = s0.particle_qd.numpy()
+        exporter.save_frame(pos.astype(np.float32), step)
         bottom_z = float(np.mean([pos[bid][axis] for bid in bottom_ids]))
         bottom_vz = float(np.mean([vel[bid][axis] for bid in bottom_ids]))
 
@@ -201,6 +210,8 @@ def run_sim(cfg, label="default"):
             print(f"  step={step:4d}  t={t:.3f}s  a={a:.2f}  "
                   f"bottom_z={bottom_z:.6f}  l~={fd['l_mean']:.4f}")
 
+    exporter.finalize()
+    print(f"USD animation saved to {usd_path}")
     print("Done.")
 
     # Save NPZ

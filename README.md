@@ -57,6 +57,7 @@ git lfs pull
     - [x] Implement a minimal joint demo using newton
     - [x] USD IO
     - [x] Add muscle coupling solver
+    - [x] Register the constitutive model to Hill-type muscle model (DeGrooteFregly2016)
     - [ ] Full body USD simulation
 - reinforcement learning
     - [ ] Implement a simple RL task
@@ -66,6 +67,20 @@ git lfs pull
 ![import_human](docs/imgs/import_human.png)
 
 `uv run -m examples.example_human_import` 
+
+## Sliding Ball Comparison
+Run the sliding ball muscle experiment and generate force/displacement comparison curves:
+```
+uv run python scripts/run_sliding_ball_comparison.py
+```
+Results (plots and data) are saved to `output/`. If `pyopensim` is installed (`uv sync --extra optional`), the script also runs an OpenSim reference simulation for comparison. Sample output plots are shown below:
+![sliding_ball_comparison](docs/imgs/sliding_ball_comparison_default.png)
+
+This example coresponds to a sliding ball lift above by a single muscle.
+<p float="left">
+  <img src="./docs/imgs/sliding_ball_osim.gif" width="40%" />
+  <img src="./docs/imgs/sliding_ball_vbd.gif" width="49%" />
+</p>
 
 ## Test
 You can run all the tests with:
