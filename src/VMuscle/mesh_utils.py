@@ -7,18 +7,25 @@ ModelBuilder with vmuscle fiber properties.
 import numpy as np
 
 
-def set_vmuscle_properties(builder, tet_offset, fiber_dirs, sigma0):
+def set_vmuscle_properties(builder, tet_offset, fiber_dirs, sigma0,
+                           max_contraction_velocity=None, fiber_damping=None):
     """Batch-set vmuscle properties for a range of tets already in the builder.
 
-    Call this after ``builder.add_soft_mesh()`` to tag the newly added tets
-    with fiber directions and peak isometric stress.
+    Automatically registers vmuscle custom attributes (idempotent) via
+    ``SolverVBD.register_custom_attributes``, so the caller does not need
+    to do it manually.
 
     Args:
         builder: Newton ModelBuilder that already contains the tets.
         tet_offset: Index of the first tet in the batch (from before add_soft_mesh).
         fiber_dirs: Per-tet fiber directions, shape (n_tets, 3).
         sigma0: Scalar or per-tet array of peak isometric stress [Pa].
+        max_contraction_velocity: V_max [l_opt/s]. If None, keeps default (10.0).
+        fiber_damping: Fiber viscous damping coefficient. If None, keeps default (0.0).
     """
+    from newton.solvers import SolverVBD
+    SolverVBD.register_custom_attributes(builder)
+
     fiber_dirs = np.asarray(fiber_dirs, dtype=np.float32)
     n_tets = len(fiber_dirs)
     if np.ndim(sigma0) == 0:
@@ -26,10 +33,17 @@ def set_vmuscle_properties(builder, tet_offset, fiber_dirs, sigma0):
     else:
         sigma0 = np.asarray(sigma0, dtype=np.float32)
 
+    fd_attr = builder.custom_attributes["vmuscle:fiber_dirs"]
+    s0_attr = builder.custom_attributes["vmuscle:sigma0"]
     for t in range(n_tets):
-        builder.vmuscle_tet_ids.append(tet_offset + t)
-        builder.vmuscle_tet_fiber_dirs.append(tuple(fiber_dirs[t]))
-        builder.vmuscle_tet_sigma0.append(float(sigma0[t]))
+        tet_id = tet_offset + t
+        fd_attr.values[tet_id] = tuple(fiber_dirs[t])
+        s0_attr.values[tet_id] = float(sigma0[t])
+
+    if max_contraction_velocity is not None:
+        builder.custom_attributes["vmuscle:max_contraction_velocity"].values[0] = float(max_contraction_velocity)
+    if fiber_damping is not None:
+        builder.custom_attributes["vmuscle:fiber_damping"].values[0] = float(fiber_damping)
 
 
 
@@ -45,8 +59,8 @@ def add_soft_vmuscle_mesh(
     """Import a TetMesh with volumetric muscle properties into ModelBuilder.
 
     Reads 'materialW', 'muscle_id', 'tendonmask' from mesh.custom_attributes.
-    Converts per-vertex attributes to per-tet and populates builder.vmuscle_*
-    arrays.
+    Converts per-vertex attributes to per-tet and populates vmuscle custom
+    attributes via the Newton custom attribute system.
 
     Args:
         builder: Newton ModelBuilder instance.
@@ -58,6 +72,9 @@ def add_soft_vmuscle_mesh(
         scale: Uniform scale factor.
         vel: Initial velocity.
     """
+    from newton.solvers import SolverVBD
+    SolverVBD.register_custom_attributes(builder)
+
     # Record offsets before adding mesh
     tet_offset = len(builder.tet_indices)
     particle_offset = builder.particle_count
@@ -73,13 +90,11 @@ def add_soft_vmuscle_mesh(
     muscle_id_data = attrs.get("muscle_id")
     tendonmask_data = attrs.get("tendonmask")
 
+    fd_attr = builder.custom_attributes["vmuscle:fiber_dirs"]
+    s0_attr = builder.custom_attributes["vmuscle:sigma0"]
+
     if fiber_dir_data is None:
-        # No muscle data — fill with zeros
-        for _ in range(n_new_tets):
-            builder.vmuscle_tet_ids.append(tet_offset + _)
-            builder.vmuscle_tet_fiber_dirs.append((0.0, 0.0, 0.0))
-            builder.vmuscle_tet_sigma0.append(0.0)
-    
+        # No muscle data — defaults (0-vec, 0.0) are already set by custom attribute
         return
 
     # Unpack arrays (drop frequency info)
@@ -134,9 +149,8 @@ def add_soft_vmuscle_mesh(
         if tm >= tendon_threshold:
             sigma0 = 0.0
 
-        builder.vmuscle_tet_ids.append(tet_id_global)
-        builder.vmuscle_tet_fiber_dirs.append(tuple(fd))
-        builder.vmuscle_tet_sigma0.append(float(sigma0))
+        fd_attr.values[tet_id_global] = tuple(fd)
+        s0_attr.values[tet_id_global] = float(sigma0)
 
 
 

@@ -120,9 +120,9 @@ def run_sim(cfg, label="default"):
                           k_damp=cfg["k_damp"], density=density)
     builder.add_soft_mesh(mesh=mesh, pos=(0, 0, 0), rot=wp.quat_identity(),
                           scale=1.0, vel=(0, 0, 0))
-    set_vmuscle_properties(builder, tet_offset, fiber_dirs, sigma0)
-    builder.vmuscle_max_contraction_velocity = cfg["v_max"]
-    builder.vmuscle_fiber_damping = cfg["fiber_damping"]
+    set_vmuscle_properties(builder, tet_offset, fiber_dirs, sigma0,
+                           max_contraction_velocity=cfg["v_max"],
+                           fiber_damping=cfg["fiber_damping"])
 
     # Fix TOP (z ≈ length) — hanging configuration matching OpenSim ceiling.
     bottom_ids = []
@@ -142,14 +142,14 @@ def run_sim(cfg, label="default"):
     builder.color()
     model = builder.finalize(device=device)
     F_max = sigma0 * np.pi * radius ** 2
-    print(f"vmuscle: {model.vmuscle_count}, tets: {model.tet_count}")
+    print(f"tets: {model.tet_count}")
     print(f"F_max={F_max:.1f}N, weight={ball_mass*9.81:.1f}N, "
           f"ratio={F_max/(ball_mass*9.81):.2f}")
 
     # CPU-side tet data for fiber extraction
     tet_idx = np.array(builder.tet_indices, dtype=int)
     tet_poses = np.array(builder.tet_poses)
-    fib_np = np.array(builder.vmuscle_tet_fiber_dirs, dtype=np.float32)
+    fib_np = model.vmuscle.fiber_dirs.numpy()
 
     # Solver
     s0, s1, ctrl = model.state(), model.state(), model.control()
