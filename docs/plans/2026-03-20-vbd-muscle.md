@@ -278,9 +278,9 @@ git checkout -b feat/vbd-muscle
 self.vmuscle_tet_ids = []             # indices into tet arrays for vmuscle tets
 self.vmuscle_tet_fiber_dirs = []      # vec3, rest config unit fiber direction
 self.vmuscle_tet_sigma0 = []          # float, peak isometric stress [Pa]
-self.vmuscle_tet_activations = []     # float, activation level [0,1]
 self.vmuscle_max_contraction_velocity = 10.0  # V_max [l_opt/s], DGF default
 ```
+> 直接采用newton中自带的tet_activation而不是自定义vmuscle_tet_activations
 
 > **不新增 `add_vmuscle_tetrahedron()` 方法**。实际工作流始终是先调用 `add_soft_mesh()`
 > 添加完整网格（粒子、质量、四面体、表面三角形），然后通过外部 helper 函数

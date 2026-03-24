@@ -30,7 +30,7 @@ def set_vmuscle_properties(builder, tet_offset, fiber_dirs, sigma0):
         builder.vmuscle_tet_ids.append(tet_offset + t)
         builder.vmuscle_tet_fiber_dirs.append(tuple(fiber_dirs[t]))
         builder.vmuscle_tet_sigma0.append(float(sigma0[t]))
-        builder.vmuscle_tet_activations.append(0.0)
+
 
 
 def add_soft_vmuscle_mesh(
@@ -79,7 +79,7 @@ def add_soft_vmuscle_mesh(
             builder.vmuscle_tet_ids.append(tet_offset + _)
             builder.vmuscle_tet_fiber_dirs.append((0.0, 0.0, 0.0))
             builder.vmuscle_tet_sigma0.append(0.0)
-            builder.vmuscle_tet_activations.append(0.0)
+    
         return
 
     # Unpack arrays (drop frequency info)
@@ -137,7 +137,7 @@ def add_soft_vmuscle_mesh(
         builder.vmuscle_tet_ids.append(tet_id_global)
         builder.vmuscle_tet_fiber_dirs.append(tuple(fd))
         builder.vmuscle_tet_sigma0.append(float(sigma0))
-        builder.vmuscle_tet_activations.append(0.0)
+
 
 
 def create_cylinder_tet_mesh(length=0.1, radius=0.02, n_length=8, n_radial=6):

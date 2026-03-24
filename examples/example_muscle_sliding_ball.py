@@ -170,7 +170,7 @@ def run_sim(cfg, label="default"):
     rec_t, rec_z, rec_vz, rec_a = [], [], [], []
     rec_fiber = []
     l_prev_mean = None
-    n_tets = model.vmuscle_tet_activations.shape[0]
+    n_tets = model.tet_count
     act_arr = np.full(n_tets, 0.01, dtype=np.float32)
     act_sub_dt = cfg["act_substep_dt"]
     excitation_val = cfg["excitation"]
@@ -183,7 +183,7 @@ def run_sim(cfg, label="default"):
         sub_dt = dt / n_sub
         for _ in range(n_sub):
             act_arr = activation_dynamics_step_np(exc, act_arr, sub_dt)
-        model.vmuscle_tet_activations.assign(
+        ctrl.tet_activations.assign(
             wp.array(act_arr, dtype=wp.float32, device=device))
         a = float(act_arr.mean())
 
