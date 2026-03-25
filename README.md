@@ -74,7 +74,7 @@ Run the sliding ball muscle experiment and generate force/displacement compariso
 uv run python scripts/run_sliding_ball_comparison.py
 ```
 Results (plots and data) are saved to `output/`. If `pyopensim` is installed (`uv sync --extra optional`), the script also runs an OpenSim reference simulation for comparison. Sample output plots are shown below:
-![sliding_ball_comparison](docs/imgs/sliding_ball_comparison_default.png)
+![sliding_ball_comparison](docs/imgs/sliding_ball_curve.png)
 
 This example coresponds to a sliding ball lift above by a single muscle.
 <p float="left">
