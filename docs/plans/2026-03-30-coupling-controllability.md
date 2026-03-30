@@ -41,7 +41,16 @@
 - Warp 版本默认方案确定为 `smooth_nonlinear`。
 - Taichi 版本共用相同基础设施与默认 preset，但仍保留 `0.7` 附近符号翻转残余问题，后续若继续优化应优先针对该点排查。
 
+### Stage 5: 端点约束收敛
+
+- 状态：已完成
+- 端点约束默认统一为 `attach` only，不再把 `attachnormal` 作为默认方案。
+- 为了支持 proximal / distal 分开配置，在 `src/VMuscle/constraints.py` 中加入 `source_nearest_group` 与 `target_group` 过滤。
+- `attachnormal` 仅作为兼容旧配置的 deprecated 入口保留。
+
 ## 当前结论
 
 - `example_couple2`：`smooth_nonlinear` 已满足“更大 activation 对应更大稳态扭矩，release 后快速归零”的目标。
 - `example_couple`：整体较 legacy 明显改善，但所有新方案在 `0.7` 附近仍有非单调现象；默认仍保留 `smooth_nonlinear`，因为它与 Warp 侧一致，且高 activation 输出更强。
+- 端点 mesh 扭曲的核心修法是移除默认 `attachnormal/distanceline`，统一改为 `attach` only。
+- 当前默认配置下，proximal / distal 两端的局部刚体拟合残差都维持在约 `0.002` 量级，且 `example_couple2` 的 controllability 评估仍保持 steady torque / angle 单调。

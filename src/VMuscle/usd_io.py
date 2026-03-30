@@ -501,11 +501,34 @@ class UsdIO:
 
     def _copy_source(self):
         import shutil
-        dst = os.path.join(os.path.dirname(self._output_path), os.path.basename(self.source_usd_path))
-        dst = os.path.abspath(dst)
-        if os.path.normcase(dst) != os.path.normcase(self.source_usd_path):
-            shutil.copy2(self.source_usd_path, dst)
-        self.source_usd_path = dst
+        import tempfile
+        from pathlib import Path
+
+        src = Path(self.source_usd_path).resolve()
+        out_path = Path(self._output_path).resolve()
+        dst = out_path.parent / f"{out_path.stem}.source{src.suffix}"
+
+        if dst == src:
+            self.source_usd_path = str(dst)
+            return
+
+        # Copy through a temporary file first so Windows never sees a partial overwrite.
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            dir=str(dst.parent),
+            prefix=f"{dst.stem}.",
+            suffix=dst.suffix,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+
+        try:
+            shutil.copy2(src, tmp_path)
+            os.replace(tmp_path, dst)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
+
+        self.source_usd_path = str(dst)
 
     def _touch_time(self, frame: int):
         if self._time_start is None or frame < self._time_start:

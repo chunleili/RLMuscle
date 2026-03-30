@@ -78,6 +78,39 @@
 - `example_couple2` 已获得明显更好的 controllability。
 - `example_couple` 已从“强饱和/弱可控”改善到“中低激活可分辨、release 可回落”，但 Taichi 后端仍有中高激活方向不稳定的残留问题。
 
+## Follow-up: 端点约束简化
+
+### 目标
+
+- 用户指出最下端网格存在明显局部扭曲，希望保留 controllability 的同时收敛端点约束。
+
+### 最终方案
+
+- 默认端点约束统一改为 `attach` only，包括 proximal 与 distal。
+- `attachnormal` 仅保留兼容旧配置的 deprecated 通道，不再进入任何默认工作流。
+- 在 `src/VMuscle/constraints.py` 中保留 `source_nearest_group` / `target_group`，用于在需要时继续把端点分到不同骨组。
+
+### 最终结果
+
+输出：`output/attach_only_default_scan.json`
+
+| 区域 | `max_rigid_rms` | `max_pair_error` | `max_seed_disp_std` |
+| --- | ---: | ---: | ---: |
+| proximal | 0.00221 | 0.00762 | 0.01164 |
+| distal | 0.00200 | 0.00669 | 0.00276 |
+
+补充：
+
+- `max_joint_abs = 3.06601`
+- `example_couple2_eval_smooth_nonlinear.json` 仍保持：
+  - `monotonic_steady_torque = true`
+  - `monotonic_steady_angle = true`
+
+### 结论
+
+- 当前最核心、最稳定的修改就是默认移除 `attachnormal`，统一使用 `attach`。
+- 这既降低了 proximal / distal 两端的局部扭曲，也保留了当前 Warp 侧的 controllability 表现。
+
 ## 输出文件
 
 - `output/example_couple2_eval_legacy.json`
@@ -87,3 +120,4 @@
 - `output/example_couple_eval_smooth_nonlinear.json`
 - `output/example_couple_eval_linear_tuned.json`
 - `output/example_couple_eval_rate_limited.json`
+- `output/attach_only_default_scan.json`

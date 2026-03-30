@@ -54,19 +54,23 @@
       "target_path": "data/muscle/model/bicep_bone.geo"
     },
     {
-      "type": "attachnormal",
-      "name": "muscleEndAttachNormal",
+      "type": "attach",
+      "name": "muscleEndAttachProximal",
       "mask_name": "muscleendmask",
       "mask_threshold": 0.75,
+      "source_nearest_group": ["L_scapula", "L_humerus"],
+      "target_group": "L_humerus",
       "stiffness": 1e37,
       "dampingratio": 0.1,
       "target_path": "data/muscle/model/bicep_bone.geo"
     },
     {
       "type": "attach",
-      "name": "muscleEndAttach",
+      "name": "muscleEndAttachDistal",
       "mask_name": "muscleendmask",
       "mask_threshold": 0.75,
+      "source_nearest_group": "L_radius",
+      "target_group": "L_radius",
       "stiffness": 1e37,
       "dampingratio": 0.1,
       "target_path": "data/muscle/model/bicep_bone.geo"

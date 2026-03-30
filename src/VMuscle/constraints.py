@@ -26,11 +26,25 @@ LINEARENERGY = 1 << 0
 NORMSTIFFNESS = 1 << 1
 
 
+_DEPRECATED_CONSTRAINT_TYPE_WARNINGS = set()
+
+
 def constraint_alias(name: str) -> str:
     name = name.lower()
     if name == "attachnormal":
         return "distanceline"
     return name
+
+
+def warn_deprecated_constraint_type(name: str):
+    name = name.lower()
+    if name != "attachnormal" or name in _DEPRECATED_CONSTRAINT_TYPE_WARNINGS:
+        return
+    print(
+        "Warning: constraint type 'attachnormal' is deprecated. "
+        "Use 'attach' by default, or 'distanceline' only if you explicitly need the legacy line-projection behavior."
+    )
+    _DEPRECATED_CONSTRAINT_TYPE_WARNINGS.add(name)
 
 
 class ConstraintBuilderMixin:
@@ -88,6 +102,84 @@ class ConstraintBuilderMixin:
                     pt2tet[v] = []
                 pt2tet[v].append(i)
         return pt2tet
+
+    def _normalize_group_names(self, value):
+        if value is None:
+            return None
+        if isinstance(value, (str, bytes)):
+            names = [str(value)]
+        else:
+            names = [str(item) for item in value]
+        names = [name for name in names if name]
+        return tuple(dict.fromkeys(names)) if names else None
+
+    def _get_bone_vertex_groups(self):
+        if hasattr(self, "_cached_bone_vertex_groups"):
+            return self._cached_bone_vertex_groups
+
+        group_names = np.full(self.bone_pos.shape[0], "", dtype=object)
+        for group_name, indices in getattr(self, "bone_muscle_ids", {}).items():
+            group_names[np.asarray(indices, dtype=np.int32)] = str(group_name)
+
+        self._cached_bone_vertex_groups = group_names
+        return group_names
+
+    def _resolve_target_indices(self, target_groups):
+        if target_groups is None:
+            return np.arange(self.bone_pos.shape[0], dtype=np.int32)
+
+        resolved = []
+        missing = []
+        for group_name in target_groups:
+            group_indices = getattr(self, "bone_muscle_ids", {}).get(group_name)
+            if group_indices is None:
+                missing.append(group_name)
+                continue
+            resolved.append(np.asarray(group_indices, dtype=np.int32))
+
+        if missing:
+            print(f"Warning: bone target groups not found: {missing}")
+        if not resolved:
+            return np.zeros(0, dtype=np.int32)
+
+        return np.unique(np.concatenate(resolved).astype(np.int32))
+
+    def _filter_sources_by_nearest_group(self, src_indices, src_positions, source_groups):
+        if source_groups is None or len(src_indices) == 0:
+            return src_indices, src_positions
+
+        bone_tree = cKDTree(self.bone_pos)
+        _, nearest_indices = bone_tree.query(src_positions, k=1)
+        group_lookup = self._get_bone_vertex_groups()
+        keep_mask = np.array(
+            [group_lookup[int(idx)] in source_groups for idx in nearest_indices],
+            dtype=bool,
+        )
+
+        return src_indices[keep_mask], src_positions[keep_mask]
+
+    def _query_bone_targets(self, src_indices, src_positions, params):
+        target_groups = self._normalize_group_names(params.get("target_group"))
+        source_groups = self._normalize_group_names(params.get("source_nearest_group"))
+        if params.get("source_filter_by_nearest_target_group", False) and source_groups is None:
+            source_groups = target_groups
+
+        src_indices, src_positions = self._filter_sources_by_nearest_group(
+            src_indices,
+            src_positions,
+            source_groups,
+        )
+        if len(src_indices) == 0:
+            return src_indices, src_positions, np.zeros(0, dtype=np.float32), np.zeros(0, dtype=np.int32)
+
+        target_indices = self._resolve_target_indices(target_groups)
+        if len(target_indices) == 0:
+            return np.zeros(0, dtype=np.int32), np.zeros((0, 3), dtype=np.float32), np.zeros(0, dtype=np.float32), np.zeros(0, dtype=np.int32)
+
+        target_tree = cKDTree(self.bone_pos[target_indices])
+        dists, local_target_indices = target_tree.query(src_positions, k=1)
+        tgt_indices = target_indices[np.asarray(local_target_indices, dtype=np.int32)]
+        return src_indices, src_positions, np.asarray(dists, dtype=np.float32), np.asarray(tgt_indices, dtype=np.int32)
 
     # -- constraint creators (return list[dict] with plain lists, no ti/wp) --
 
@@ -178,9 +270,15 @@ class ConstraintBuilderMixin:
             Warning(f"Warning: No vertices with mask > {mask_threshold}")
             return []
 
-        bone_tree = cKDTree(self.bone_pos)
         src_positions = self.pos0_np[valid_src_indices]
-        dists, tgt_indices = bone_tree.query(src_positions, k=1)
+        valid_src_indices, _, dists, tgt_indices = self._query_bone_targets(
+            valid_src_indices,
+            src_positions,
+            params,
+        )
+        if len(valid_src_indices) == 0:
+            print(f"Warning: No valid attach sources remain for mask '{mask_name}' after group filtering.")
+            return []
 
         if not hasattr(self, 'pt2tet'):
             self.pt2tet = self.map_pts2tets(self.tet_np)
@@ -225,9 +323,15 @@ class ConstraintBuilderMixin:
             Warning(f"Warning: No vertices with mask > {mask_threshold}")
             return []
 
-        bone_tree = cKDTree(self.bone_pos)
         src_positions = self.pos0_np[valid_src_indices]
-        dists, tgt_indices = bone_tree.query(src_positions, k=1)
+        valid_src_indices, src_positions, dists, tgt_indices = self._query_bone_targets(
+            valid_src_indices,
+            src_positions,
+            params,
+        )
+        if len(valid_src_indices) == 0:
+            print(f"Warning: No valid distanceline sources remain for mask '{mask_name}' after group filtering.")
+            return []
 
         target_positions = self.bone_pos[tgt_indices]
         directions = target_positions - src_positions
@@ -292,6 +396,7 @@ class ConstraintBuilderMixin:
         all_constraints = []
         _t_total = time.perf_counter()
         for params in self.constraint_configs:
+            warn_deprecated_constraint_type(params['type'])
             ctype = constraint_alias(params['type'])
             new_constraints = []
             if ctype == 'volume':
