@@ -348,7 +348,7 @@ def tet_fiber_update_xpbd_fn(
         c0[2], c1[2], c2[2])
 
     wTDminvT = wp.vec3(restvector[0], restvector[1], restvector[2])
-    FwT = wp.transpose(_Ds) * wTDminvT
+    FwT = _Ds * wTDminvT
     psi = 0.5 * wp.length_sq(FwT)
 
     if psi > 1e-9:
