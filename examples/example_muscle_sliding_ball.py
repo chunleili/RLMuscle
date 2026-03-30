@@ -120,9 +120,10 @@ def run_sim(cfg, label="default"):
                           k_damp=cfg["k_damp"], density=density)
     builder.add_soft_mesh(mesh=mesh, pos=(0, 0, 0), rot=wp.quat_identity(),
                           scale=1.0, vel=(0, 0, 0))
-    set_vmuscle_properties(builder, tet_offset, fiber_dirs, sigma0,
-                           max_contraction_velocity=cfg["v_max"],
-                           fiber_damping=cfg["fiber_damping"])
+    set_vmuscle_properties(
+        builder, tet_offset, fiber_dirs, sigma0,
+        fiber_damping=cfg["fiber_damping"],
+    )
 
     # Fix TOP (z ≈ length) — hanging configuration matching OpenSim ceiling.
     bottom_ids = []
@@ -153,7 +154,7 @@ def run_sim(cfg, label="default"):
 
     # Solver
     s0, s1, ctrl = model.state(), model.state(), model.control()
-    solver = SolverVBD(model, iterations=iterations)
+    solver = SolverVBD(model, iterations=iterations, vmuscle_quasi_static=True)
 
     # USD animation exporter
     anim_dir = "output/anim"

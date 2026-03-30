@@ -8,7 +8,7 @@ import numpy as np
 
 
 def set_vmuscle_properties(builder, tet_offset, fiber_dirs, sigma0,
-                           max_contraction_velocity=None, fiber_damping=None):
+                           fiber_damping=None):
     """Batch-set vmuscle properties for a range of tets already in the builder.
 
     Automatically registers vmuscle custom attributes (idempotent) via
@@ -20,7 +20,6 @@ def set_vmuscle_properties(builder, tet_offset, fiber_dirs, sigma0,
         tet_offset: Index of the first tet in the batch (from before add_soft_mesh).
         fiber_dirs: Per-tet fiber directions, shape (n_tets, 3).
         sigma0: Scalar or per-tet array of peak isometric stress [Pa].
-        max_contraction_velocity: V_max [l_opt/s]. If None, keeps default (10.0).
         fiber_damping: Fiber viscous damping coefficient. If None, keeps default (0.0).
     """
     from newton.solvers import SolverVBD
@@ -40,8 +39,6 @@ def set_vmuscle_properties(builder, tet_offset, fiber_dirs, sigma0,
         fd_attr.values[tet_id] = tuple(fiber_dirs[t])
         s0_attr.values[tet_id] = float(sigma0[t])
 
-    if max_contraction_velocity is not None:
-        builder.custom_attributes["vmuscle:max_contraction_velocity"].values[0] = float(max_contraction_velocity)
     if fiber_damping is not None:
         builder.custom_attributes["vmuscle:fiber_damping"].values[0] = float(fiber_damping)
 

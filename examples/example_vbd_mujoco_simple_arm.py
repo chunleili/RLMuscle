@@ -5,10 +5,10 @@ represents the bicep muscle volume with active contraction (sigma0 > 0).
 MuJoCo handles rigid-body dynamics.
 
 Coupling strategy (reference: sliding ball + SolverMuscleBoneCoupled):
-  - VBD vmuscle with sigma0 > 0: the DGF Hill-type curves (force-length,
-    force-velocity, passive force) are evaluated INSIDE the VBD kernel
-    (accumulate_fiber_force_and_hessian). VBD solves the coupled 3D
-    elastic + muscle equilibrium.
+  - VBD vmuscle with sigma0 > 0: the DGF Hill-type force-length and passive
+    force curves are evaluated inside the VBD kernel
+    (accumulate_fiber_force_and_hessian). VBD solves the coupled 3D elastic
+    + muscle equilibrium.
   - Origin (top) and insertion (bottom) vertices are kinematic, positioned
     from MuJoCo tendon geometry each step.
   - After VBD solve, per-tet fiber stretches are extracted from the 3D
@@ -51,13 +51,26 @@ def load_config(path="data/simpleArm/config.json"):
         return json.load(f)
 
 
+def _get_vbd_options(cfg):
+    """Extract VBD-specific options aligned with SolverVBD defaults."""
+    coupling = cfg.get("coupling", {})
+    quasi_static = bool(coupling.get("vbd_quasi_static", True))
+    return {
+        "quasi_static": quasi_static,
+        "iterations": int(coupling.get("vbd_iterations", 20)),
+        "substeps": int(coupling.get("vbd_substeps", 20)),
+        "scale_guard_min": float(coupling.get("vbd_scale_guard_min", 0.35 if quasi_static else 0.5)),
+        "scale_guard_max": float(coupling.get("vbd_scale_guard_max", 1.6 if quasi_static else 1.2)),
+    }
+
+
 def build_vbd_muscle(cfg, mesh_length, device="cpu"):
     """Create VBD muscle with active contraction (sigma0 > 0).
 
-    sigma0 > 0 enables the vmuscle kernel inside VBD: the DGF force-length,
-    force-velocity, and passive force curves are evaluated per-tet during
-    the VBD solve. The kernel accumulates fiber force and Hessian alongside
-    Neo-Hookean elasticity, solving the coupled 3D equilibrium.
+    sigma0 > 0 enables the vmuscle kernel inside VBD: the DGF force-length
+    and passive force curves are evaluated per-tet during the VBD solve.
+    The kernel accumulates fiber force and Hessian alongside Neo-Hookean
+    elasticity, solving the coupled 3D equilibrium.
 
     Both ends are kinematic (displacement-controlled from MuJoCo). VBD
     solves for the internal vertex equilibrium under combined elastic +
@@ -65,6 +78,7 @@ def build_vbd_muscle(cfg, mesh_length, device="cpu"):
     """
     geo = cfg["geometry"]
     mus = cfg["muscle"]
+    vbd_opts = _get_vbd_options(cfg)
 
     r = geo["muscle_radius"]
     n_circ = geo["n_circumferential"]
@@ -88,10 +102,9 @@ def build_vbd_muscle(cfg, mesh_length, device="cpu"):
     builder.add_soft_mesh(
         mesh=mesh, pos=(0, 0, 0), rot=wp.quat_identity(), scale=1.0, vel=(0, 0, 0)
     )
-    # sigma0 > 0: VBD vmuscle kernel computes DGF forces internally
+    # sigma0 > 0: VBD vmuscle kernel computes quasi-static DGF forces internally
     set_vmuscle_properties(
         builder, tet_offset, fiber_dirs, sigma0=sigma0,
-        max_contraction_velocity=mus["max_contraction_velocity"],
         fiber_damping=mus["fiber_damping"],
     )
 
@@ -112,7 +125,11 @@ def build_vbd_muscle(cfg, mesh_length, device="cpu"):
     s0 = model.state()
     s1 = model.state()
     ctrl = model.control()
-    solver = SolverVBD(model, iterations=20)
+    solver = SolverVBD(
+        model,
+        iterations=vbd_opts["iterations"],
+        vmuscle_quasi_static=vbd_opts["quasi_static"],
+    )
 
     tet_idx = np.array(builder.tet_indices, dtype=int).reshape(-1, 4)
     tet_poses = np.array(builder.tet_poses).reshape(-1, 3, 3)
@@ -128,6 +145,7 @@ def build_vbd_muscle(cfg, mesh_length, device="cpu"):
         "n_tets": model.tet_count,
         "n_particles": model.particle_count,
         "sigma0": sigma0,
+        "vbd_options": vbd_opts,
     }
     return model, s0, s1, ctrl, solver, meta
 
@@ -163,6 +181,7 @@ def vbd_mujoco_simple_arm(cfg, verbose=True):
     act_cfg = cfg["activation"]
     sol = cfg["solver"]
     ic = cfg["initial_conditions"]
+    vbd_opts = _get_vbd_options(cfg)
 
     F_max = mus["max_isometric_force"]
     L_opt = mus["optimal_fiber_length"]
@@ -214,7 +233,6 @@ def vbd_mujoco_simple_arm(cfg, verbose=True):
     fib_np = meta["fiber_dirs_np"]
     n_tets = meta["n_tets"]
     sigma0 = meta["sigma0"]
-
     # Rest vertices for position reset each step
     rest_verts = s0.particle_q.numpy().copy()
 
@@ -225,13 +243,15 @@ def vbd_mujoco_simple_arm(cfg, verbose=True):
         print(
             f"[VBD+MuJoCo] sigma0={sigma0:.0f}Pa, n_tets={n_tets}, "
             f"mesh_L={mesh_L:.4f}m, "
-            f"top={len(top_ids)} bot={len(bottom_ids)} kinematic"
+            f"top={len(top_ids)} bot={len(bottom_ids)} kinematic, "
+            f"mode={'quasi-static' if vbd_opts['quasi_static'] else 'dynamic'} "
+            f"(iters={vbd_opts['iterations']}, substeps={vbd_opts['substeps']})"
         )
 
     # --- USD animation exporter ---
     anim_dir = "output/anim"
     os.makedirs(anim_dir, exist_ok=True)
-    usd_path = os.path.join(anim_dir, "simple_arm_vbd.usda")
+    usd_path = os.path.join(anim_dir, "simple_arm_vbd.usd")
     fps = int(round(1.0 / (substeps * mj_dt)))
     exporter = UsdTetExporter(
         tet_idx, usd_path=usd_path, prim_path="/muscle", fps=fps
@@ -273,11 +293,10 @@ def vbd_mujoco_simple_arm(cfg, verbose=True):
         # Top (z=mesh_L) fixed, bottom (z=0) moves to fiber_length position
         scale = fiber_length / mesh_L
 
-        # VBD with sigma0 > 0 is stable when scale is near 1.0. At large
-        # deformations (scale >> 1 or << 1), the mismatch between vmuscle
-        # target_stretch and kinematic boundary stretch causes radial
-        # instability. Skip VBD outside stable range.
-        run_vbd = 0.5 < scale < 1.2
+        # VBD with sigma0 > 0 is stable only inside a guarded stretch range.
+        # Quasi-static mode widens the usable range by removing inertial
+        # history from the VBD particle solve.
+        run_vbd = vbd_opts["scale_guard_min"] < scale < vbd_opts["scale_guard_max"]
 
         pos_np = rest_verts.copy()
         pos_np[:, 2] = mesh_L + (rest_verts[:, 2] - mesh_L) * scale
@@ -295,7 +314,7 @@ def vbd_mujoco_simple_arm(cfg, verbose=True):
             )
 
             # VBD substeps: smaller dt improves convergence
-            vbd_substeps = 20
+            vbd_substeps = vbd_opts["substeps"]
             vbd_sub_dt = outer_dt / vbd_substeps
             for _ in range(vbd_substeps):
                 vbd_solver.step(s0, s1, ctrl, contacts=None, dt=vbd_sub_dt)
@@ -440,6 +459,7 @@ def vbd_mujoco_simple_arm(cfg, verbose=True):
         "activations": np.array(activations_out),
         "max_iso_force": F_max,
         "muscle_type": "VBD_MuJoCo",
+        "vbd_mode": "quasi-static" if vbd_opts["quasi_static"] else "dynamic",
     }
 
 

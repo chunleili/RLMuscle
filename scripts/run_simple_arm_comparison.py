@@ -2,13 +2,15 @@
 
 Stage 0: DGF vs Millard (OpenSim only)
 Stage 1: MuJoCo DGF vs OpenSim DGF
-Stage 2: VBD+MuJoCo vs OpenSim DGF
+Stage 2: VBD+MuJoCo vs OpenSim DGF (kinematic scaling)
+Stage 3: VBD Coupled vs OpenSim DGF (spring attachment, state continuity)
 
 Usage:
-    uv run python scripts/run_simple_arm_comparison.py                # Stage 0
-    uv run python scripts/run_simple_arm_comparison.py --mode mujoco  # Stage 1
-    uv run python scripts/run_simple_arm_comparison.py --mode vbd     # Stage 2
-    uv run python scripts/run_simple_arm_comparison.py --mode all     # All stages
+    uv run python scripts/run_simple_arm_comparison.py                  # Stage 0
+    uv run python scripts/run_simple_arm_comparison.py --mode mujoco    # Stage 1
+    uv run python scripts/run_simple_arm_comparison.py --mode vbd       # Stage 2
+    uv run python scripts/run_simple_arm_comparison.py --mode coupled   # Stage 3
+    uv run python scripts/run_simple_arm_comparison.py --mode all       # All stages
 """
 
 import argparse
@@ -42,6 +44,11 @@ def run_mujoco(cfg):
 def run_vbd(cfg):
     from examples.example_vbd_mujoco_simple_arm import vbd_mujoco_simple_arm
     return vbd_mujoco_simple_arm(cfg)
+
+
+def run_coupled(cfg):
+    from examples.example_vbd_coupled_simple_arm import vbd_coupled_simple_arm
+    return vbd_coupled_simple_arm(cfg)
 
 
 def plot_comparison(datasets, title, out_path, colors=None):
@@ -109,8 +116,9 @@ def plot_comparison(datasets, title, out_path, colors=None):
 def main():
     parser = argparse.ArgumentParser(description="SimpleArm comparison")
     parser.add_argument("--config", default="data/simpleArm/config.json")
-    parser.add_argument("--mode", choices=["osim", "mujoco", "vbd", "all"], default="vbd",
-                        help="osim=Stage0, mujoco=Stage1, vbd=Stage2, all=all stages")
+    parser.add_argument("--mode", choices=["osim", "mujoco", "vbd", "coupled", "all"],
+                        default="coupled",
+                        help="osim=Stage0, mujoco=Stage1, vbd=Stage2, coupled=Stage3, all=all")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -158,6 +166,21 @@ def main():
         )
         if rmse is not None:
             print(f"\nVBD+MuJoCo vs OpenSim DGF: RMSE={rmse:.2f} deg, Max error={max_err:.2f} deg")
+
+    if args.mode in ("coupled", "all"):
+        print("\n" + "=" * 60)
+        print("Stage 3: VBD Coupled vs OpenSim DGF")
+        print("=" * 60)
+        dgf = run_dgf(cfg) if args.mode == "coupled" else dgf
+        coupled = run_coupled(cfg)
+        rmse, max_err = plot_comparison(
+            [("OpenSim DGF", dgf), ("VBD Coupled", coupled)],
+            "SimpleArm Stage 3: VBD Coupled vs OpenSim (DGF)",
+            "output/simple_arm_coupled_vs_osim.png",
+            {"OpenSim DGF": "b", "VBD Coupled": "m"},
+        )
+        if rmse is not None:
+            print(f"\nVBD Coupled vs OpenSim DGF: RMSE={rmse:.2f} deg, Max error={max_err:.2f} deg")
 
     print("\n" + "=" * 60)
     print("Done!")
