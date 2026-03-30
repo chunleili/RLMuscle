@@ -1330,6 +1330,7 @@ class MuscleSim(MuscleSimBase):
         else:
             self._dispatch_constraints(self.cons_ranges)
 
+
     def render(self):
         if self.renderer is None:
             return

@@ -4,7 +4,7 @@ This is a non-destructive alternative to `example_couple.py`.
 
 Usage:
     uv run python examples/example_couple2.py --auto
-    uv run python examples/example_couple2.py --auto --usd
+    uv run python examples/example_couple2.py --auto --render
     uv run python examples/example_couple2.py --steps 300
 """
 
@@ -20,7 +20,7 @@ import newton
 
 from VMuscle.config import load_config
 from VMuscle.muscle_warp import MuscleSim
-from VMuscle.solver_muscle_bone_coupled_warp import SolverMuscleBoneCoupledWarp
+from VMuscle.solver_muscle_bone_coupled_warp import SolverMuscleBoneCoupled as SolverMuscleBoneCoupledWarp
 from VMuscle.usd_io import UsdIO
 
 # Elbow joint parameters (Y-up space)
@@ -168,13 +168,18 @@ def _build_bone_prim_map(usd: UsdIO, sim: MuscleSim) -> dict[str, np.ndarray]:
 
 
 def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
-             usd: UsdIO | None = None, bone_prim_map: dict | None = None):
-    """Headless run loop with optional scheduled activation and USD export."""
+             usd: UsdIO | None = None, bone_prim_map: dict | None = None,
+             sim: MuscleSim | None = None):
+    """Run loop with optional rendering, scheduled activation and USD export."""
     for step in range(1, n_steps + 1):
+        if sim and sim.renderer and not sim.renderer.is_running():
+            break
         if auto:
             cfg.activation = _activation_schedule(step, n_steps)
 
         solver.step(state, state, dt=dt)
+        if sim:
+            sim.render()
 
         # Write USD frame
         if usd is not None:
@@ -208,7 +213,7 @@ def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
 
 def _create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Warp-only muscle-bone coupling demo")
-    parser.add_argument("--auto", action="store_true", help="Use built-in activation schedule")
+    parser.add_argument("--auto", action="store_true", default=True, help="Use built-in activation schedule")
     parser.add_argument("--steps", type=int, default=300, help="Number of simulation steps")
     parser.add_argument(
         "--config",
@@ -217,6 +222,7 @@ def _create_parser() -> argparse.ArgumentParser:
         help="Path to muscle config JSON",
     )
     parser.add_argument("--device", type=str, default="cpu", help="Warp device, e.g. cpu or cuda:0")
+    parser.add_argument("--render", action="store_true", help="Enable OpenGL interactive rendering")
     parser.add_argument("--usd-source", type=str, default="data/muscle/model/bicep.usd",
                         help="Source USD for layered export")
     return parser
@@ -231,8 +237,8 @@ def main():
     wp.set_device(args.device)
 
     cfg = load_config(args.config)
-    cfg.gui = False
-    cfg.render_mode = None
+    cfg.gui = bool(args.render)
+    cfg.render_mode = "human" if args.render else None
 
     # Override cfg to load from USD source so MuscleSim and USD export
     # read the same asset, preventing data inconsistency.
@@ -258,8 +264,8 @@ def main():
     solver = SolverMuscleBoneCoupledWarp(
         model,
         sim,
-        k_coupling=5000.0,
-        max_torque=50.0,
+        k_coupling=150000.0,
+        max_torque=25.0,
     )
 
     if radius_link is not None and selected_indices.size > 0:
@@ -291,7 +297,8 @@ def main():
 
     try:
         run_loop(solver, state, cfg, dt=dt, n_steps=int(max(1, args.steps)),
-                 auto=bool(args.auto), usd=usd, bone_prim_map=bone_prim_map)
+                 auto=bool(args.auto), usd=usd, bone_prim_map=bone_prim_map,
+                 sim=sim)
     finally:
         usd.close()
         log.info("USD saved: %s", usd.output_path)

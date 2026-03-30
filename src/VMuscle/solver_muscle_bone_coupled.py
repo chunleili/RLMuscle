@@ -158,8 +158,12 @@ class SolverMuscleBoneCoupled:
         if self._n_attach == 0:
             return np.zeros(3, dtype=np.float32)
 
+        # Scale by activation: passive tissue transmits minimal force
+        act = max(float(self.core.cfg.activation), 0.0)
+        scale = self.k_coupling * (0.05 + 0.95 * act)
+
         self._compute_torque_kernel(
-            self.k_coupling, inv_N,
+            scale, inv_N,
             self._joint_pivot[0], self._joint_pivot[1], self._joint_pivot[2],
         )
         torque = self._torque_accum[None].to_numpy().copy()

@@ -77,7 +77,7 @@ class MuscleSimBase(ConstraintBuilderMixin):
         self.use_colored_gs = arch != 'cpu'
         self.build_constraints()
         self.contraction_ratio = getattr(self.cfg, 'contraction_ratio', 0.4)
-        self.fiber_stiffness_scale = getattr(self.cfg, 'fiber_stiffness_scale', 200.0)
+        self.fiber_stiffness_scale = getattr(self.cfg, 'fiber_stiffness_scale', 10000.0)
         self.has_compressstiffness = getattr(self.cfg, 'HAS_compressstiffness', False)
         self.dt = self.cfg.dt / self.cfg.num_substeps
         self.step_cnt = 0

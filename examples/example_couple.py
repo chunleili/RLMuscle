@@ -28,7 +28,7 @@ import newton
 
 from VMuscle.muscle_taichi import MuscleSim, load_config
 from VMuscle.usd_io import UsdIO
-from VMuscle.solver_muscle_bone_coupled_warp import SolverMuscleBoneCoupled
+from VMuscle.solver_muscle_bone_coupled import SolverMuscleBoneCoupled
 
 # Elbow joint parameters (Y-up space)
 ELBOW_PIVOT = np.array([0.328996, 1.16379, -0.0530352], dtype=np.float32)
@@ -193,7 +193,7 @@ def main():
 
     # 4. Coupled solver
     solver = SolverMuscleBoneCoupled(
-        model, sim, k_coupling=5000.0, max_torque=50.0,
+        model, sim, k_coupling=150000.0, max_torque=25.0,
     )
     if radius_link is not None and "L_radius" in sim.bone_muscle_ids:
         indices = sim.bone_muscle_ids["L_radius"]

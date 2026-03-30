@@ -2,7 +2,7 @@
   "name": "human",
   "usd_path": "data/Human/Human.usd",
   "contraction_ratio": 0.4,
-  "fiber_stiffness_scale": 200.0,
+  "fiber_stiffness_scale": 10000.0,
   "arch": "cpu",
   "save_image": false,
   "gui": false,

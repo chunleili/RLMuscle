@@ -126,7 +126,6 @@ class SolverMuscleBoneCoupled:
         if self._n_attach == 0:
             return np.zeros(3, dtype=np.float32)
 
-        # Read warp arrays through numpy
         cons_np = self.core.cons.numpy()
         restvec_np = cons_np['restvector']                   # (n_cons, 4)
         reaction_np = self.core.reaction_accum.numpy()       # (n_cons, 3)
@@ -135,7 +134,11 @@ class SolverMuscleBoneCoupled:
         targets = restvec_np[cidxs, :3]                     # (n_attach, 3)
         reactions = reaction_np[cidxs]                       # (n_attach, 3)
 
-        forces = -self.k_coupling * reactions * inv_N        # (n_attach, 3)
+        # Scale by activation: passive tissue transmits minimal force
+        act = max(float(self.core.cfg.activation), 0.0)
+        scale = self.k_coupling * (0.05 + 0.95 * act)       # 5% passive + 95% active
+
+        forces = -scale * reactions * inv_N                  # (n_attach, 3)
         arms = targets - self._joint_pivot                   # (n_attach, 3)
         torque = np.cross(arms, forces).sum(axis=0).astype(np.float32)
 
@@ -180,14 +183,14 @@ class SolverMuscleBoneCoupled:
             # 2. Update attach targets from current bone position, then solve constraints
             if self._coupling_configured:
                 self.core.update_attach_targets()
-                self.core.clear_reaction()  # per-substep: fresh reaction
+                self.core.clear_reaction()
 
             self.core.solve_constraints()
             if self.core.use_jacobi:
                 self.core.apply_dP()
             self.core.update_velocities()
 
-            # 3. Immediately convert this substep's reaction to torque and apply to bone
+            # 3. Apply torque to bone
             if self._coupling_configured:
                 torque = self._compute_muscle_torque(inv_N=1.0)
                 self._muscle_torque = torque  # expose for external inspection
