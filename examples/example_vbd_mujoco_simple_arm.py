@@ -51,6 +51,12 @@ def load_config(path="data/simpleArm/config.json"):
         return json.load(f)
 
 
+def _get_default_warp_device():
+    """Prefer CUDA for VBD because CPU execution is significantly slower here."""
+    wp.init()
+    return "cuda:0" if wp.is_cuda_available() else "cpu"
+
+
 def _get_vbd_options(cfg):
     """Extract VBD-specific options aligned with SolverVBD defaults."""
     coupling = cfg.get("coupling", {})
@@ -64,7 +70,7 @@ def _get_vbd_options(cfg):
     }
 
 
-def build_vbd_muscle(cfg, mesh_length, device="cpu"):
+def build_vbd_muscle(cfg, mesh_length, device=None):
     """Create VBD muscle with active contraction (sigma0 > 0).
 
     sigma0 > 0 enables the vmuscle kernel inside VBD: the DGF force-length
@@ -76,6 +82,9 @@ def build_vbd_muscle(cfg, mesh_length, device="cpu"):
     solves for the internal vertex equilibrium under combined elastic +
     muscle forces.
     """
+    if device is None:
+        device = _get_default_warp_device()
+
     geo = cfg["geometry"]
     mus = cfg["muscle"]
     vbd_opts = _get_vbd_options(cfg)
@@ -162,7 +171,7 @@ def compute_fiber_stretches(pos, tet_idx, tet_poses, fiber_dirs):
     return stretches
 
 
-def vbd_mujoco_simple_arm(cfg, verbose=True):
+def vbd_mujoco_simple_arm(cfg, verbose=True, device=None):
     """Run VBD + MuJoCo SimpleArm simulation.
 
     Two-rate coupling:
@@ -192,7 +201,10 @@ def vbd_mujoco_simple_arm(cfg, verbose=True):
     outer_dt = sol["dt"]
     n_steps = sol["n_steps"]
     theta0 = np.radians(ic["elbow_angle_deg"])
-    device = "cpu"
+    if device is None:
+        device = _get_default_warp_device()
+    else:
+        wp.init()
 
     # --- Build MuJoCo ---
     _examples_dir = os.path.dirname(os.path.abspath(__file__))
@@ -220,7 +232,6 @@ def vbd_mujoco_simple_arm(cfg, verbose=True):
         )
 
     # --- Build VBD muscle ---
-    wp.init()
     vbd_model, s0, s1, ctrl, vbd_solver, meta = build_vbd_muscle(
         cfg, mesh_length=fiber_length_init, device=device
     )
@@ -244,6 +255,7 @@ def vbd_mujoco_simple_arm(cfg, verbose=True):
             f"[VBD+MuJoCo] sigma0={sigma0:.0f}Pa, n_tets={n_tets}, "
             f"mesh_L={mesh_L:.4f}m, "
             f"top={len(top_ids)} bot={len(bottom_ids)} kinematic, "
+            f"device={device}, "
             f"mode={'quasi-static' if vbd_opts['quasi_static'] else 'dynamic'} "
             f"(iters={vbd_opts['iterations']}, substeps={vbd_opts['substeps']})"
         )
@@ -468,10 +480,15 @@ def main():
         description="VBD volume muscle + MuJoCo skeleton SimpleArm (Stage 2)"
     )
     parser.add_argument("--config", default="data/simpleArm/config.json")
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Warp device override (default: cuda:0 if available, else cpu).",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
-    result = vbd_mujoco_simple_arm(cfg)
+    result = vbd_mujoco_simple_arm(cfg, device=args.device)
     if result:
         print(f"\nFinal elbow angle: {np.degrees(result['elbow_angles'][-1]):.2f}deg")
 
