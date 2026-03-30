@@ -7,7 +7,7 @@ import warp.render
 from VMuscle.config import load_config  # noqa: F401
 from VMuscle.constraints import (
     PIN, ATTACH, TETVOLUME, TETFIBERNORM, DISTANCELINE,
-    TETARAP, TETARAPNORM,
+    TETARAP, TETARAPNORM, TETFIBERDGF,
     LINEARENERGY, NORMSTIFFNESS,
 )
 from VMuscle.mesh_io import build_surface_tris
@@ -91,7 +91,7 @@ def fem_flags_fn(ctype: int) -> int:
     flags = 0
     if ctype == TETARAP or ctype == TETARAPNORM:
         flags = flags | LINEARENERGY
-    if ctype == TETARAPNORM or ctype == TETFIBERNORM:
+    if ctype == TETARAPNORM or ctype == TETFIBERNORM or ctype == TETFIBERDGF:
         flags = flags | NORMSTIFFNESS
     return flags
 
@@ -109,6 +109,55 @@ def get_inv_mass_fn(idx: int, mass: wp.array(dtype=wp.float32),
         m = mass[idx]
         res = wp.where(m > 0.0, 1.0 / m, 0.0)
     return res
+
+
+# ---------------------------------------------------------------------------
+# DGF (DeGroote-Fregly 2016) muscle curve @wp.func
+# Constants mirror dgf_curves.py
+# ---------------------------------------------------------------------------
+
+@wp.func
+def dgf_active_force_length_wp(lm_tilde: float) -> float:
+    """Active force-length curve: 3 Gaussian-like terms."""
+    b11 = 0.815;  b21 = 1.055;  b31 = 0.162;  b41 = 0.063
+    b12 = 0.433;  b22 = 0.717;  b32 = -0.030; b42 = 0.200
+    b13 = 0.1;    b23 = 1.0;    b33 = 0.354
+    EPS = 1.0e-6
+
+    d1 = wp.max(wp.abs(b31 + b41 * lm_tilde), EPS)
+    g1 = b11 * wp.exp(-0.5 * ((lm_tilde - b21) / d1) * ((lm_tilde - b21) / d1))
+
+    d2 = wp.max(wp.abs(b32 + b42 * lm_tilde), EPS)
+    g2 = b12 * wp.exp(-0.5 * ((lm_tilde - b22) / d2) * ((lm_tilde - b22) / d2))
+
+    g3 = b13 * wp.exp(-0.5 * ((lm_tilde - b23) / b33) * ((lm_tilde - b23) / b33))
+    return g1 + g2 + g3
+
+
+@wp.func
+def dgf_passive_force_length_wp(lm_tilde: float) -> float:
+    """Passive force-length curve: exponential."""
+    KPE = 4.0
+    E0 = 0.6
+    LM_MIN = 0.2
+
+    offset = wp.exp(KPE * (LM_MIN - 1.0) / E0)
+    denom = wp.exp(KPE) - offset
+    arg = wp.clamp(KPE * (lm_tilde - 1.0) / E0, -50.0, 50.0)
+    result = (wp.exp(arg) - offset) / denom
+    return wp.max(result, 0.0)
+
+
+@wp.func
+def dgf_force_velocity_wp(v_norm: float) -> float:
+    """Force-velocity curve: hyperbolic (asinh-based)."""
+    D1 = -0.3211346127989808
+    D2 = -8.149
+    D3 = -0.374
+    D4 = 0.8825327733249912
+
+    x = D2 * v_norm + D3
+    return D1 * wp.log(x + wp.sqrt(x * x + 1.0)) + D4
 
 
 @wp.func
@@ -890,6 +939,68 @@ def solve_tetfibernorm_kernel(
 
 
 @wp.kernel
+def solve_tetfiberdgf_kernel(
+    cons: wp.array(dtype=Constraint),
+    pos: wp.array(dtype=wp.vec3),
+    pprev: wp.array(dtype=wp.vec3),
+    dP: wp.array(dtype=wp.vec3),
+    dPw: wp.array(dtype=wp.float32),
+    mass: wp.array(dtype=wp.float32),
+    stopped: wp.array(dtype=wp.int32),
+    rest_matrix: wp.array(dtype=wp.mat33),
+    v_fiber_dir: wp.array(dtype=wp.vec3),
+    activation: wp.array(dtype=wp.float32),
+    tendonmask: wp.array(dtype=wp.float32),
+    dt: float,
+    use_jacobi: int,
+    fiber_stiffness_scale: float,
+    offset: int,
+):
+    """XPBD fiber constraint with DGF force-length and passive curves (quasi-static).
+
+    Fixed target (no f_L feedback), DGF curves modulate stiffness only.
+    target_stretch = 1 - activation * contraction_factor  (same as TETFIBERNORM)
+    stiffness scaled by f_total so force magnitude follows DGF profile.
+    """
+    c = offset + wp.tid()
+    cstiffness = cons[c].stiffness
+    if cstiffness <= 0.0:
+        return
+    pts = cons[c].pts
+    tetid = cons[c].tetid
+    fiber_dir = (v_fiber_dir[pts[0]] + v_fiber_dir[pts[1]] +
+                 v_fiber_dir[pts[2]] + v_fiber_dir[pts[3]]) / 4.0
+    Dminv = rest_matrix[tetid]
+    acti = activation[tetid]
+    contraction_factor = cons[c].restdir[2]
+
+    # Compute current fiber stretch from deformation gradient
+    c0 = pos[pts[0]] - pos[pts[3]]
+    c1 = pos[pts[1]] - pos[pts[3]]
+    c2 = pos[pts[2]] - pos[pts[3]]
+    _Ds = wp.mat33(
+        c0[0], c1[0], c2[0],
+        c0[1], c1[1], c2[1],
+        c0[2], c1[2], c2[2])
+    wTDminvT = wp.vec3(cons[c].restvector[0], cons[c].restvector[1], cons[c].restvector[2])
+    FwT = _Ds * wTDminvT
+    lm_tilde = wp.sqrt(wp.max(wp.length_sq(FwT), 1.0e-12))
+
+    # Constant stiffness matching TETFIBERNORM: fiberscale = 10 * activation
+    fiberscale = 10.0 * acti
+    stiffness_val = cstiffness * fiberscale * fiber_stiffness_scale
+
+    if stiffness_val > 0.0:
+        target_stretch = 1.0 - acti * contraction_factor
+
+        tet_fiber_update_xpbd_fn(
+            use_jacobi, pos, pprev, dP, dPw,
+            c, cons, pts, dt, fiber_dir, stiffness_val, Dminv,
+            cons[c].dampingratio, cons[c].restlength, cons[c].restvector,
+            acti, mass, stopped, target_stretch)
+
+
+@wp.kernel
 def solve_attach_kernel(
     cons: wp.array(dtype=Constraint),
     pos: wp.array(dtype=wp.vec3),
@@ -1320,6 +1431,15 @@ class MuscleSim(MuscleSimBase):
                     self.dP, self.dPw, self.mass, self.stopped,
                     self.rest_matrix,
                     self.dt, use_jacobi_int, offset])
+            elif ctype == TETFIBERDGF:
+                wp.launch(solve_tetfiberdgf_kernel, dim=count, inputs=[
+                    self.cons, self.pos, self.pprev,
+                    self.dP, self.dPw, self.mass, self.stopped,
+                    self.rest_matrix, self.v_fiber_dir,
+                    self.activation, self.tendonmask,
+                    self.dt, use_jacobi_int,
+                    self.fiber_stiffness_scale,
+                    offset])
 
     def solve_constraints(self):
         if self.n_cons == 0:

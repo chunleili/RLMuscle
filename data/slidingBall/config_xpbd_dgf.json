@@ -1,0 +1,41 @@
+{
+  "name": "slidingBall_xpbd_dgf",
+  "description": "1-DOF sliding ball with XPBD-DGF constitutive model",
+  "geometry": {
+    "muscle_length": 0.1,
+    "muscle_radius": 0.02,
+    "n_circumferential": 8,
+    "n_axial": 6,
+    "up_axis": "Z"
+  },
+  "physics": {
+    "density": 1060.0,
+    "gravity": 9.81,
+    "ball_mass": 10.0
+  },
+  "muscle": {
+    "sigma0": 300000.0
+  },
+  "activation": {
+    "type": "dynamics",
+    "tau_act": 0.015,
+    "tau_deact": 0.06,
+    "excitation": 1.0,
+    "substep_dt": 0.001
+  },
+  "solver": {
+    "dt": 0.016666666666666666,
+    "n_steps": 300
+  },
+  "xpbd": {
+    "num_substeps": 100,
+    "veldamping": 0.005,
+    "fiber_stiffness_scale": 100000.0,
+    "volume_stiffness": 10000000000.0,
+    "fiber_stiffness": 1000.0,
+    "arap_stiffness": 10000000000.0,
+    "dampingratio": 0.01,
+    "contraction_factor": 0.41,
+    "optimal_fiber_length": 1.0
+  }
+}

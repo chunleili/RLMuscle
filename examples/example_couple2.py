@@ -311,11 +311,15 @@ def _create_parser() -> argparse.ArgumentParser:
                         help="Steps to run after returning activation to zero")
     parser.add_argument("--eval-warmup-steps", type=int, default=20,
                         help="Zero-activation warmup before each sweep episode")
+    parser.add_argument("--dgf", action="store_true",
+                        help="Use DGF constitutive model (bicep_dgf.json config)")
     return parser
 
 
 def main():
     args = _create_parser().parse_args()
+    if args.dgf and args.config == "data/muscle/config/bicep.json":
+        args.config = "data/muscle/config/bicep_dgf.json"
 
     setup_logging(to_file=True)
 

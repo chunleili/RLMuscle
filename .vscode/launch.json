@@ -18,6 +18,7 @@
             "request": "launch",
             "program": "${file}",
             "cwd": "${workspaceFolder}",
+            "python": "${command:python.interpreterPath}",
             "console": "integratedTerminal",
         },
         {

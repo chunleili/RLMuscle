@@ -20,6 +20,7 @@ TETFIBERNORM  =  -303462111
 DISTANCELINE  =  1621136047
 TETARAP       =  -92199131
 TETARAPNORM   =  -885573303
+TETFIBERDGF   =  -403562211
 
 # ARAP flags (from pbd_types.h)
 LINEARENERGY = 1 << 0
@@ -250,6 +251,59 @@ class ConstraintBuilderMixin:
             constraints.append(c)
         return constraints
 
+    def create_tet_fiber_dgf_constraint(self, params):
+        """DGF fiber constraint: same geometry as TETFIBERNORM, but uses DGF curves.
+
+        Extra params stored in restdir:
+          restdir[0] = optimal_fiber_length (default 1.0)
+          restdir[1] = v_max_scale (default 10.0)
+          restdir[2] = contraction_factor (default 0.4)
+        """
+        stiffness = params.get('stiffness', 1.0)
+        dampingratio = params.get('dampingratio', 0.0)
+        l_opt = params.get('optimal_fiber_length', 1.0)
+        v_max = params.get('v_max_scale', 10.0)
+        contraction_factor = params.get('contraction_factor', 0.4)
+        restmatrices, volumes, valid = self._batch_compute_tet_rest_matrices()
+
+        n_tet = len(self.tet_np)
+        if self.v_fiber_np is not None:
+            fiber_verts = self.v_fiber_np[self.tet_np]
+            w = fiber_verts.sum(axis=1)
+            norms = np.linalg.norm(w, axis=1, keepdims=True)
+            default_w = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float32), (n_tet, 1))
+            norm_ok = (norms > 1e-8).ravel()
+            materialW = default_w.copy()
+            materialW[norm_ok] = w[norm_ok] / norms[norm_ok]
+        else:
+            materialW = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float32), (n_tet, 1))
+
+        materialW_transformed = np.einsum('nj,nkj->nk', materialW, restmatrices)
+
+        constraints = []
+        for i in range(n_tet):
+            tet = self.tet_np[i]
+            if not valid[i]:
+                vol = 0.0
+                mw_t = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+            else:
+                vol = float(volumes[i])
+                mw_t = materialW_transformed[i]
+            c = dict(
+                type=TETFIBERDGF,
+                pts=[int(tet[0]), int(tet[1]), int(tet[2]), int(tet[3])],
+                stiffness=stiffness,
+                dampingratio=dampingratio,
+                tetid=i,
+                L=[0.0, 0.0, 0.0],
+                restlength=float(vol),
+                restvector=[float(mw_t[0]), float(mw_t[1]), float(mw_t[2]), 1.0],
+                restdir=[float(l_opt), float(v_max), float(contraction_factor)],
+                compressionstiffness=-1.0
+            )
+            constraints.append(c)
+        return constraints
+
     def create_attach_constraints(self, params):
         constraints = []
         mask_name = params.get('mask_name')
@@ -411,6 +465,8 @@ class ConstraintBuilderMixin:
                 self.distanceline_constraints.extend(new_constraints)
             elif ctype == 'tetarap':
                 new_constraints = self.create_tet_arap_constraints(params)
+            elif ctype == 'fiberdgf':
+                new_constraints = self.create_tet_fiber_dgf_constraint(params)
 
             if new_constraints:
                 all_constraints.extend(new_constraints)

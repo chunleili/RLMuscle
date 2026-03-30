@@ -4105,6 +4105,7 @@ name = "rlmuscle"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "matplotlib" },
     { name = "newton", extra = ["sim"] },
     { name = "numpy" },
     { name = "python-dotenv" },
@@ -4130,6 +4131,7 @@ usd = [
 
 [package.metadata]
 requires-dist = [
+    { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "matplotlib", marker = "extra == 'optional'", specifier = ">=3.10.8" },
     { name = "newton", extras = ["examples"], marker = "extra == 'optional'", editable = "external/newton" },
     { name = "newton", extras = ["sim"], editable = "external/newton" },

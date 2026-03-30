@@ -9,6 +9,7 @@ description = "A Volumetric Muscle implementation for Reinforcement Learning env
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "matplotlib>=3.10.8",
     "newton[sim]",
     "numpy",
     "python-dotenv>=1.2.1",
