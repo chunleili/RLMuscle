@@ -3,8 +3,14 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+os.environ.setdefault("WARP_CACHE_PATH", str((PROJECT_ROOT / ".cache" / "warp").resolve()))
+os.environ.setdefault("TI_OFFLINE_CACHE_FILE_PATH", str((PROJECT_ROOT / ".cache" / "taichi").resolve()))
+
 import warp
-warp.init()# You have to init warp before taichi, this is a BUG of LLVM. It is OK on Windows but fail on macOS.
+
+warp.init()  # Keep warp init early to preserve existing Taichi/Newton startup ordering.
 
 def _print_available_runs(example_stems: list[str]) -> None:
     print("Available RUN values:")

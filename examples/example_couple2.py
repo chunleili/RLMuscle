@@ -12,13 +12,28 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+from pathlib import Path
 
 import numpy as np
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("WARP_CACHE_PATH", str((PROJECT_ROOT / ".cache" / "warp").resolve()))
+
 import warp as wp
 
 import newton
 
 from VMuscle.config import load_config
+from VMuscle.controllability import (
+    DEFAULT_SWEEP_LEVELS,
+    build_coupling_config,
+    config_to_dict,
+    list_presets,
+    run_activation_sweep,
+    solver_sample,
+    write_sweep_report,
+)
 from VMuscle.muscle_warp import MuscleSim
 from VMuscle.solver_muscle_bone_coupled_warp import SolverMuscleBoneCoupled as SolverMuscleBoneCoupledWarp
 from VMuscle.usd_io import UsdIO
@@ -167,6 +182,54 @@ def _build_bone_prim_map(usd: UsdIO, sim: MuscleSim) -> dict[str, np.ndarray]:
     return mapping
 
 
+def _parse_levels(text: str) -> tuple[float, ...]:
+    values = [float(part.strip()) for part in text.split(",") if part.strip()]
+    return tuple(float(np.clip(value, 0.0, 1.0)) for value in values) if values else DEFAULT_SWEEP_LEVELS
+
+
+def _run_eval_sweep(solver, sim: MuscleSim, state, cfg, dt: float, args):
+    def reset_state():
+        sim.reset()
+        solver.reset_bone(state)
+
+    def step_once():
+        solver.step(state, state, dt=dt)
+
+    def set_excitation(value: float):
+        cfg.activation = float(value)
+
+    report = run_activation_sweep(
+        label=f"example_couple2:{args.preset}",
+        dt=dt,
+        step_fn=step_once,
+        reset_fn=reset_state,
+        set_excitation_fn=set_excitation,
+        sample_fn=lambda: solver_sample(solver, state),
+        levels=_parse_levels(args.eval_levels),
+        hold_steps=args.eval_hold_steps,
+        release_steps=args.eval_release_steps,
+        warmup_steps=args.eval_warmup_steps,
+    )
+    report["control_config"] = config_to_dict(solver.control_config)
+    report_path = PROJECT_ROOT / "output" / f"example_couple2_eval_{args.preset}.json"
+    write_sweep_report(report_path, report)
+    log.info("Evaluation sweep saved: %s", report_path)
+    for episode in report["episodes"]:
+        log.info(
+            "eval act=%.2f steady_tau=%.4f steady_q=%.4f overshoot_tau=%.4f settle=%s",
+            episode["activation"],
+            episode["steady_axis_torque"],
+            episode["steady_joint_angle"],
+            episode["overshoot_axis_torque"],
+            episode["settle_steps_after_release"],
+        )
+    log.info(
+        "monotonic torque=%s angle=%s",
+        report["monotonic_steady_torque"],
+        report["monotonic_steady_angle"],
+    )
+
+
 def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
              usd: UsdIO | None = None, bone_prim_map: dict | None = None,
              sim: MuscleSim | None = None):
@@ -200,20 +263,22 @@ def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
             joint_angle = float(joint_q[0]) if len(joint_q) > 0 else 0.0
             tau = solver._muscle_torque
             log.info(
-                "step=%4d act=%.2f pos=(%.4f, %.4f, %.4f) q=%.4f |tau|=%.4f",
+                "step=%4d exc=%.2f act=%.2f pos=(%.4f, %.4f, %.4f) q=%.4f axis_tau=%.4f |tau|=%.4f",
                 step,
                 float(cfg.activation),
+                float(solver._effective_activation),
                 float(body_q[0]),
                 float(body_q[1]),
                 float(body_q[2]),
                 joint_angle,
+                float(solver._axis_torque),
                 float(np.linalg.norm(tau)),
             )
 
 
 def _create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Warp-only muscle-bone coupling demo")
-    parser.add_argument("--auto", action="store_true", default=True, help="Use built-in activation schedule")
+    parser.add_argument("--auto", action="store_true", help="Use built-in activation schedule")
     parser.add_argument("--steps", type=int, default=300, help="Number of simulation steps")
     parser.add_argument(
         "--config",
@@ -223,8 +288,29 @@ def _create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--device", type=str, default="cpu", help="Warp device, e.g. cpu or cuda:0")
     parser.add_argument("--render", action="store_true", help="Enable OpenGL interactive rendering")
+    parser.add_argument("--export-usd", action="store_true", help="Write animation USD to output/")
     parser.add_argument("--usd-source", type=str, default="data/muscle/model/bicep.usd",
                         help="Source USD for layered export")
+    parser.add_argument("--preset", type=str, default="smooth_nonlinear", choices=list_presets(),
+                        help="Controllability preset")
+    parser.add_argument("--coupling-mode", type=str, choices=["linear", "smooth_nonlinear", "rate_limited"],
+                        help="Override coupling mode")
+    parser.add_argument("--k-coupling", type=float, default=None, help="Override coupling stiffness")
+    parser.add_argument("--max-torque", type=float, default=None, help="Override torque clamp")
+    parser.add_argument("--passive-scale", type=float, default=None, help="Override passive torque floor")
+    parser.add_argument("--torque-ema", type=float, default=None, help="Override torque smoothing factor")
+    parser.add_argument("--torque-slew-rate", type=float, default=None, help="Override torque slew rate")
+    parser.add_argument("--nonlinear-gamma", type=float, default=None, help="Override nonlinear activation gamma")
+    parser.add_argument("--disable-activation-dynamics", action="store_true",
+                        help="Disable first-order activation dynamics")
+    parser.add_argument("--eval", action="store_true", help="Run activation sweep evaluation instead of time schedule")
+    parser.add_argument("--eval-levels", type=str, default="0,0.1,0.3,0.5,0.7,1.0",
+                        help="Comma-separated activation levels for sweep")
+    parser.add_argument("--eval-hold-steps", type=int, default=90, help="Steps to hold each activation level")
+    parser.add_argument("--eval-release-steps", type=int, default=90,
+                        help="Steps to run after returning activation to zero")
+    parser.add_argument("--eval-warmup-steps", type=int, default=20,
+                        help="Zero-activation warmup before each sweep episode")
     return parser
 
 
@@ -261,11 +347,22 @@ def main():
     dt = 1.0 / 60.0
     model, state, radius_link, joint, selected_indices = build_elbow_model(sim)
 
+    control_config = build_coupling_config(
+        args.preset,
+        mode=args.coupling_mode,
+        k_coupling=args.k_coupling,
+        max_torque=args.max_torque,
+        passive_scale=args.passive_scale,
+        torque_ema=args.torque_ema,
+        torque_slew_rate=args.torque_slew_rate,
+        nonlinear_gamma=args.nonlinear_gamma,
+        use_activation_dynamics=False if args.disable_activation_dynamics else None,
+    )
+
     solver = SolverMuscleBoneCoupledWarp(
         model,
         sim,
-        k_coupling=150000.0,
-        max_torque=25.0,
+        control_config=control_config,
     )
 
     if radius_link is not None and selected_indices.size > 0:
@@ -279,29 +376,37 @@ def main():
         )
 
     log.info(
-        "dt=%.6f muscle_substeps=%d bone_substeps=%d",
+        "dt=%.6f muscle_substeps=%d bone_substeps=%d control=%s",
         dt,
         int(cfg.num_substeps),
         int(solver.bone_substeps),
+        config_to_dict(control_config),
     )
 
-    # USD export
-    usd = UsdIO(usd_source, y_up_to_z_up=False)
-    usd.muscle_mesh = usd.find_mesh("muscle")
-    usd.bone_meshes = usd.find_meshes("bone")
-    usd.start("output/example_couple2.anim.usd", copy_usd=True)
-    usd.set_runtime("fps", 60)
-    bone_prim_map = _build_bone_prim_map(usd, sim)
-    log.info("USD export: %s  bone_groups=%s",
-             usd.output_path, list(bone_prim_map.keys()))
+    if args.eval:
+        _run_eval_sweep(solver, sim, state, cfg, dt, args)
+        return
+
+    usd = None
+    bone_prim_map = None
+    if args.export_usd:
+        usd = UsdIO(usd_source, y_up_to_z_up=False)
+        usd.muscle_mesh = usd.find_mesh("muscle")
+        usd.bone_meshes = usd.find_meshes("bone")
+        usd.start("output/example_couple2.anim.usd", copy_usd=True)
+        usd.set_runtime("fps", 60)
+        bone_prim_map = _build_bone_prim_map(usd, sim)
+        log.info("USD export: %s  bone_groups=%s",
+                 usd.output_path, list(bone_prim_map.keys()))
 
     try:
         run_loop(solver, state, cfg, dt=dt, n_steps=int(max(1, args.steps)),
                  auto=bool(args.auto), usd=usd, bone_prim_map=bone_prim_map,
                  sim=sim)
     finally:
-        usd.close()
-        log.info("USD saved: %s", usd.output_path)
+        if usd is not None:
+            usd.close()
+            log.info("USD saved: %s", usd.output_path)
 
 
 if __name__ == "__main__":

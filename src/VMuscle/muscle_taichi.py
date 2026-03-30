@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 import numpy as np
 import taichi as ti
@@ -123,7 +124,13 @@ def get_inv_mass(idx: ti.i32, mass: ti.template(), stopped: ti.template()) -> ti
 class MuscleSim(MuscleSimBase):
 
     def _init_backend(self):
-        ti.init(arch=pick_arch(self.cfg.arch))
+        cache_dir = Path.cwd() / ".cache" / "taichi"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        ti.init(
+            arch=pick_arch(self.cfg.arch),
+            offline_cache=False,
+            offline_cache_file_path=str(cache_dir.resolve()),
+        )
 
     def _build_surface_tris(self):
         self.surface_tris = build_surface_tris(self.tet_np)

@@ -9,7 +9,12 @@ import warp as wp
 
 
 @wp.func
-def dgf_activation_dynamics(excitation: float, activation: float, dt: float) -> float:
+def dgf_activation_dynamics(
+    excitation: float,
+    activation: float,
+    dt: float,
+    min_activation: float = 0.0,
+) -> float:
     """One step of DGF activation dynamics (implicit Euler).
 
     da/dt = f(e, a) * (e - a)
@@ -26,7 +31,7 @@ def dgf_activation_dynamics(excitation: float, activation: float, dt: float) -> 
     da_dt = (f_act + f_deact) * (excitation - activation)
 
     a_new = activation + dt * da_dt
-    return wp.clamp(a_new, 0.01, 1.0)
+    return wp.clamp(a_new, min_activation, 1.0)
 
 
 @wp.kernel
@@ -34,10 +39,11 @@ def update_activations(
     excitations: wp.array(dtype=wp.float32),
     activations: wp.array(dtype=wp.float32),
     dt: float,
+    min_activation: float = 0.0,
 ):
     """Update all tet activations from excitation signals."""
     tid = wp.tid()
-    activations[tid] = dgf_activation_dynamics(excitations[tid], activations[tid], dt)
+    activations[tid] = dgf_activation_dynamics(excitations[tid], activations[tid], dt, min_activation)
 
 
 def activation_dynamics_step_np(
@@ -46,6 +52,7 @@ def activation_dynamics_step_np(
     dt: float,
     tau_act: float = 0.015,
     tau_deact: float = 0.060,
+    min_activation: float = 0.0,
 ) -> np.ndarray:
     """NumPy version of first-order activation dynamics."""
     b = 10.0
@@ -54,4 +61,4 @@ def activation_dynamics_step_np(
     f_deact = (0.5 - 0.5 * t) * (0.5 + 1.5 * activation) / tau_deact
     da_dt = (f_act + f_deact) * (excitation - activation)
     a_new = activation + dt * da_dt
-    return np.clip(a_new, 0.01, 1.0)
+    return np.clip(a_new, min_activation, 1.0)

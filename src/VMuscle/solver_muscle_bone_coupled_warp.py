@@ -12,6 +12,13 @@ import warp as wp
 
 import newton
 from newton.solvers import SolverMuJoCo
+from .controllability import (
+    ActivationController,
+    CouplingControlConfig,
+    build_coupling_config,
+    config_to_dict,
+    shape_torque_target,
+)
 from .muscle_warp import MuscleSim
 
 log = logging.getLogger("couple")
@@ -33,16 +40,26 @@ class SolverMuscleBoneCoupled:
     def __init__(self, model, core: MuscleSim,
                  bone_substeps: int = 5,
                  k_coupling: float = 5000.0,
-                 max_torque: float = 50.0):
+                 max_torque: float = 50.0,
+                 control_config: CouplingControlConfig | None = None):
         self.model = model
         self.core = core
-        self.bone_solver = SolverMuJoCo(model, solver="cg", use_mujoco_cpu=True)
         self.bone_substeps = bone_substeps
-        self.k_coupling = k_coupling
-        self.max_torque = max_torque
+        self.control_config = control_config or build_coupling_config(
+            "legacy",
+            k_coupling=k_coupling,
+            max_torque=max_torque,
+        )
+        self.k_coupling = self.control_config.k_coupling
+        self.max_torque = self.control_config.max_torque
+        self.bone_solver = SolverMuJoCo(model, solver="cg", use_mujoco_cpu=True)
         self._coupling_configured = False
         self._muscle_torque = np.zeros(3, dtype=np.float32)  # last-substep torque, for external inspection
+        self._raw_muscle_torque = np.zeros(3, dtype=np.float32)
+        self._axis_torque = 0.0
         self._step_count = 0
+        self._effective_activation = float(max(getattr(self.core.cfg, "activation", 0.0), 0.0))
+        self._activation_controller = ActivationController(self.control_config, self._effective_activation)
 
     # -- Configuration ------------------------------------------------------
 
@@ -98,7 +115,7 @@ class SolverMuscleBoneCoupled:
         self._coupling_configured = True
         log.info(f"Coupling: {self._n_attach} constraints, "
                  f"DOF={self._joint_dof_index}, n_dofs={self._joint_n_dofs}, "
-                 f"k={self.k_coupling}")
+                 f"k={self.k_coupling}, control={config_to_dict(self.control_config)}")
 
     # -- Bone sync ----------------------------------------------------------
 
@@ -121,8 +138,8 @@ class SolverMuscleBoneCoupled:
 
     # -- Torque extraction --------------------------------------------------
 
-    def _compute_muscle_torque(self, inv_N) -> np.ndarray:
-        """Extract 3D joint torque from bilateral attach constraint reactions via numpy."""
+    def _compute_raw_muscle_torque(self, inv_N) -> np.ndarray:
+        """Extract raw 3D joint torque from bilateral attach reactions via numpy."""
         if self._n_attach == 0:
             return np.zeros(3, dtype=np.float32)
 
@@ -134,17 +151,9 @@ class SolverMuscleBoneCoupled:
         targets = restvec_np[cidxs, :3]                     # (n_attach, 3)
         reactions = reaction_np[cidxs]                       # (n_attach, 3)
 
-        # Scale by activation: passive tissue transmits minimal force
-        act = max(float(self.core.cfg.activation), 0.0)
-        scale = self.k_coupling * (0.05 + 0.95 * act)       # 5% passive + 95% active
-
-        forces = -scale * reactions * inv_N                  # (n_attach, 3)
+        forces = -self.k_coupling * reactions * inv_N        # (n_attach, 3)
         arms = targets - self._joint_pivot                   # (n_attach, 3)
         torque = np.cross(arms, forces).sum(axis=0).astype(np.float32)
-
-        mag = float(np.linalg.norm(torque))
-        if mag > self.max_torque:
-            torque *= self.max_torque / mag
         return torque
 
     # -- Main step ----------------------------------------------------------
@@ -166,7 +175,6 @@ class SolverMuscleBoneCoupled:
         N = self.core.cfg.num_substeps
         dt_sub = dt / N
         self.core.dt = dt_sub
-        self.core.activation.fill_(self.core.cfg.activation)
 
         # Sync initial bone position to muscle before first substep
         if self._coupling_configured:
@@ -174,8 +182,12 @@ class SolverMuscleBoneCoupled:
 
         joint_f_device = control.joint_f.device
         joint_f_np = np.zeros(control.joint_f.shape[0], dtype=np.float32)
+        excitation = float(np.clip(self.core.cfg.activation, 0.0, 1.0))
 
         for _ in range(N):
+            self._effective_activation = self._activation_controller.step(excitation, dt_sub)
+            self.core.activation.fill_(self._effective_activation)
+
             # 1. Muscle: predict positions
             self.core.integrate()
             self.core.clear()
@@ -192,16 +204,32 @@ class SolverMuscleBoneCoupled:
 
             # 3. Apply torque to bone
             if self._coupling_configured:
-                torque = self._compute_muscle_torque(inv_N=1.0)
+                self._raw_muscle_torque = self._compute_raw_muscle_torque(inv_N=1.0)
+                if (
+                    self.control_config.axis_project_torque
+                    and self._joint_n_dofs == 1
+                    and self._joint_axis is not None
+                ):
+                    raw_axis = float(np.dot(self._raw_muscle_torque, self._joint_axis))
+                    self._raw_muscle_torque = (self._joint_axis * raw_axis).astype(np.float32)
+                torque = shape_torque_target(
+                    self._raw_muscle_torque,
+                    self._effective_activation,
+                    self._muscle_torque,
+                    dt_sub,
+                    self.control_config,
+                )
                 self._muscle_torque = torque  # expose for external inspection
                 dof = self._joint_dof_index
                 n_dofs = self._joint_n_dofs
                 joint_f_np[:] = 0.0
                 if n_dofs == 1 and self._joint_axis is not None:
-                    joint_f_np[dof] = float(np.dot(torque, self._joint_axis))
+                    self._axis_torque = float(np.dot(torque, self._joint_axis))
+                    joint_f_np[dof] = self._axis_torque
                 else:
                     m = min(n_dofs, 3)
                     joint_f_np[dof:dof + m] = torque[:m]
+                    self._axis_torque = float(joint_f_np[dof]) if n_dofs > 0 else 0.0
                 control.joint_f = wp.array(joint_f_np, dtype=wp.float32, device=joint_f_device)
 
             # 4. Bone substep
@@ -216,7 +244,7 @@ class SolverMuscleBoneCoupled:
             mag = float(np.linalg.norm(self._muscle_torque))
             axis_info = ""
             if self._joint_axis is not None:
-                axis_info = f" axis_tau={float(np.dot(self._muscle_torque, self._joint_axis)):.4f}"
+                axis_info = f" axis_tau={self._axis_torque:.4f}"
             
             # Joint angle and bone orientation
             joint_q = state_out.joint_q.numpy()
@@ -224,7 +252,10 @@ class SolverMuscleBoneCoupled:
             body_q = state_out.body_q.numpy()[self._bone_body_id]
             qx, qy, qz, qw = float(body_q[3]), float(body_q[4]), float(body_q[5]), float(body_q[6])
             
-            log.info(f"step={self._step_count} act={self.core.cfg.activation:.2f} |tau|={mag:.4f}{axis_info}")
+            log.info(
+                f"step={self._step_count} exc={self.core.cfg.activation:.2f} "
+                f"act={self._effective_activation:.2f} |tau|={mag:.4f}{axis_info}"
+            )
             log.info(f"  q_joint={joint_angle:.4f} q_bone=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})")
 
     # -- Reset ---------------------------------------------------------------
@@ -240,6 +271,10 @@ class SolverMuscleBoneCoupled:
         if self._coupling_configured:
             self._sync_bone_positions(state)
         self._muscle_torque = np.zeros(3, dtype=np.float32)
+        self._raw_muscle_torque = np.zeros(3, dtype=np.float32)
+        self._axis_torque = 0.0
         self._step_count = 0
+        self._effective_activation = 0.0
+        self._activation_controller.reset()
         log.info("Bone reset to initial pose")
 
