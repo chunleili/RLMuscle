@@ -57,10 +57,11 @@ git lfs pull
     - [x] Implement a minimal joint demo using newton
     - [x] USD IO
     - [x] Add muscle coupling solver
-    - [x] Register the constitutive model to Hill-type muscle model (DeGrooteFregly2016)
-    - [ ] Full body USD simulation
+    - [x] Register the constitutive model to Hill-type muscle model (DeGrooteFregly2016): sliding ball
 - reinforcement learning
-    - [ ] Implement a simple RL task
+    - [ ] Implement a simple RL task (simpleArm)
+- final stage
+    - [ ] Full body simulation with RL control
 
 ## Examples
 
