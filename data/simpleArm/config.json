@@ -1,0 +1,33 @@
+{
+  "geometry": {
+    "humerus_length": 1.0,
+    "radius_length": 1.0,
+    "muscle_origin_on_humerus": [0, 0.8, 0],
+    "muscle_insertion_on_radius": [0, 0.7, 0],
+    "muscle_radius": 0.02,
+    "n_circumferential": 8,
+    "n_axial": 10
+  },
+  "muscle": {
+    "max_isometric_force": 200.0,
+    "optimal_fiber_length": 0.6,
+    "tendon_slack_length": 0.55,
+    "max_contraction_velocity": 10.0,
+    "fiber_damping": 0.5
+  },
+  "activation": {
+    "excitation_start_time": 0.5,
+    "excitation_end_time": 3.0,
+    "excitation_off": 0.3,
+    "excitation_on": 1.0,
+    "tau_act": 0.015,
+    "tau_deact": 0.060
+  },
+  "solver": {
+    "dt": 0.0167,
+    "n_steps": 600
+  },
+  "initial_conditions": {
+    "elbow_angle_deg": 90.0
+  }
+}

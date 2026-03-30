@@ -2373,7 +2373,6 @@ wheels = [
 name = "newton"
 source = { editable = "external/newton" }
 dependencies = [
-    { name = "newton-actuators" },
     { name = "warp-lang" },
 ]
 
@@ -2389,7 +2388,9 @@ dev = [
     { name = "meshio" },
     { name = "mujoco", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
     { name = "mujoco-warp", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "newton-actuators" },
     { name = "newton-usd-schemas" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64') or (python_full_version < '3.13' and sys_platform != 'linux') or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
     { name = "pillow" },
     { name = "pycollada" },
     { name = "pyglet" },
@@ -2410,6 +2411,7 @@ docs = [
     { name = "myst-parser" },
     { name = "nbsphinx" },
     { name = "newton-usd-schemas" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64') or (python_full_version < '3.13' and sys_platform != 'linux') or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
     { name = "pycollada" },
     { name = "pydata-sphinx-theme" },
     { name = "pypandoc" },
@@ -2437,7 +2439,9 @@ examples = [
     { name = "meshio" },
     { name = "mujoco", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
     { name = "mujoco-warp", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "newton-actuators" },
     { name = "newton-usd-schemas" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64') or (python_full_version < '3.13' and sys_platform != 'linux') or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
     { name = "pillow" },
     { name = "pycollada" },
     { name = "pyglet" },
@@ -2455,6 +2459,7 @@ importers = [
     { name = "fast-simplification" },
     { name = "meshio" },
     { name = "newton-usd-schemas" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64') or (python_full_version < '3.13' and sys_platform != 'linux') or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
     { name = "pycollada" },
     { name = "requests" },
     { name = "resolve-robotics-uri-py" },
@@ -2474,7 +2479,9 @@ notebook = [
     { name = "meshio" },
     { name = "mujoco", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
     { name = "mujoco-warp", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "newton-actuators" },
     { name = "newton-usd-schemas" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64') or (python_full_version < '3.13' and sys_platform != 'linux') or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
     { name = "pillow" },
     { name = "pycollada" },
     { name = "pyglet" },
@@ -2488,12 +2495,13 @@ notebook = [
     { name = "usd-exchange", marker = "(python_full_version < '3.13' and platform_machine == 'aarch64') or (python_full_version >= '3.13' and extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13') or (platform_machine != 'aarch64' and extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
 ]
 remesh = [
-    { name = "open3d", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64') or (python_full_version < '3.13' and sys_platform != 'linux') or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
     { name = "pyfqmr" },
 ]
 sim = [
     { name = "mujoco", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
     { name = "mujoco-warp", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
+    { name = "newton-actuators" },
 ]
 torch-cu12 = [
     { name = "alphashape" },
@@ -2505,7 +2513,9 @@ torch-cu12 = [
     { name = "meshio" },
     { name = "mujoco", marker = "python_full_version < '3.14'" },
     { name = "mujoco-warp", marker = "python_full_version < '3.14'" },
+    { name = "newton-actuators" },
     { name = "newton-usd-schemas" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64') or (python_full_version < '3.13' and sys_platform != 'linux')" },
     { name = "pillow" },
     { name = "pycollada" },
     { name = "pyglet" },
@@ -2528,7 +2538,9 @@ torch-cu13 = [
     { name = "meshio" },
     { name = "mujoco", marker = "python_full_version < '3.14'" },
     { name = "mujoco-warp", marker = "python_full_version < '3.14'" },
+    { name = "newton-actuators" },
     { name = "newton-usd-schemas" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64') or (python_full_version < '3.13' and sys_platform != 'linux')" },
     { name = "pillow" },
     { name = "pycollada" },
     { name = "pyglet" },
@@ -2609,15 +2621,27 @@ requires-dist = [
     { name = "mujoco-warp", marker = "python_full_version < '3.14' and extra == 'torch-cu13'", specifier = ">=3.5.0.2" },
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=3.0.1" },
     { name = "nbsphinx", marker = "extra == 'docs'", specifier = ">=0.9.0" },
-    { name = "newton-actuators" },
-    { name = "newton-usd-schemas", marker = "extra == 'dev'", specifier = ">=0.1.0rc3" },
-    { name = "newton-usd-schemas", marker = "extra == 'docs'", specifier = ">=0.1.0rc3" },
-    { name = "newton-usd-schemas", marker = "extra == 'examples'", specifier = ">=0.1.0rc3" },
-    { name = "newton-usd-schemas", marker = "extra == 'importers'", specifier = ">=0.1.0rc3" },
-    { name = "newton-usd-schemas", marker = "extra == 'notebook'", specifier = ">=0.1.0rc3" },
-    { name = "newton-usd-schemas", marker = "extra == 'torch-cu12'", specifier = ">=0.1.0rc3" },
-    { name = "newton-usd-schemas", marker = "extra == 'torch-cu13'", specifier = ">=0.1.0rc3" },
-    { name = "open3d", marker = "python_full_version < '3.14' and extra == 'remesh'", specifier = ">=0.18.0" },
+    { name = "newton-actuators", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "newton-actuators", marker = "extra == 'examples'", specifier = ">=0.1.0" },
+    { name = "newton-actuators", marker = "extra == 'notebook'", specifier = ">=0.1.0" },
+    { name = "newton-actuators", marker = "extra == 'sim'", specifier = ">=0.1.0" },
+    { name = "newton-actuators", marker = "extra == 'torch-cu12'", specifier = ">=0.1.0" },
+    { name = "newton-actuators", marker = "extra == 'torch-cu13'", specifier = ">=0.1.0" },
+    { name = "newton-usd-schemas", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "newton-usd-schemas", marker = "extra == 'docs'", specifier = ">=0.1.0" },
+    { name = "newton-usd-schemas", marker = "extra == 'examples'", specifier = ">=0.1.0" },
+    { name = "newton-usd-schemas", marker = "extra == 'importers'", specifier = ">=0.1.0" },
+    { name = "newton-usd-schemas", marker = "extra == 'notebook'", specifier = ">=0.1.0" },
+    { name = "newton-usd-schemas", marker = "extra == 'torch-cu12'", specifier = ">=0.1.0" },
+    { name = "newton-usd-schemas", marker = "extra == 'torch-cu13'", specifier = ">=0.1.0" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64' and extra == 'dev') or (python_full_version < '3.13' and sys_platform != 'linux' and extra == 'dev')", specifier = ">=0.18.0" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64' and extra == 'docs') or (python_full_version < '3.13' and sys_platform != 'linux' and extra == 'docs')", specifier = ">=0.18.0" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64' and extra == 'examples') or (python_full_version < '3.13' and sys_platform != 'linux' and extra == 'examples')", specifier = ">=0.18.0" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64' and extra == 'importers') or (python_full_version < '3.13' and sys_platform != 'linux' and extra == 'importers')", specifier = ">=0.18.0" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64' and extra == 'notebook') or (python_full_version < '3.13' and sys_platform != 'linux' and extra == 'notebook')", specifier = ">=0.18.0" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64' and extra == 'remesh') or (python_full_version < '3.13' and sys_platform != 'linux' and extra == 'remesh')", specifier = ">=0.18.0" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64' and extra == 'torch-cu12') or (python_full_version < '3.13' and sys_platform != 'linux' and extra == 'torch-cu12')", specifier = ">=0.18.0" },
+    { name = "open3d", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64' and extra == 'torch-cu13') or (python_full_version < '3.13' and sys_platform != 'linux' and extra == 'torch-cu13')", specifier = ">=0.18.0" },
     { name = "pillow", marker = "extra == 'dev'", specifier = ">=9.0.0" },
     { name = "pillow", marker = "extra == 'examples'", specifier = ">=9.0.0" },
     { name = "pillow", marker = "extra == 'notebook'", specifier = ">=9.0.0" },
@@ -2659,16 +2683,16 @@ requires-dist = [
     { name = "resolve-robotics-uri-py", marker = "extra == 'notebook'", specifier = ">=0.4.0" },
     { name = "resolve-robotics-uri-py", marker = "extra == 'torch-cu12'", specifier = ">=0.4.0" },
     { name = "resolve-robotics-uri-py", marker = "extra == 'torch-cu13'", specifier = ">=0.4.0" },
-    { name = "scipy", marker = "extra == 'dev'" },
-    { name = "scipy", marker = "extra == 'docs'" },
-    { name = "scipy", marker = "extra == 'examples'" },
-    { name = "scipy", marker = "extra == 'importers'" },
-    { name = "scipy", marker = "extra == 'notebook'" },
-    { name = "scipy", marker = "extra == 'torch-cu12'" },
-    { name = "scipy", marker = "extra == 'torch-cu13'" },
+    { name = "scipy", marker = "extra == 'dev'", specifier = ">=1.11.0" },
+    { name = "scipy", marker = "extra == 'docs'", specifier = ">=1.11.0" },
+    { name = "scipy", marker = "extra == 'examples'", specifier = ">=1.11.0" },
+    { name = "scipy", marker = "extra == 'importers'", specifier = ">=1.11.0" },
+    { name = "scipy", marker = "extra == 'notebook'", specifier = ">=1.11.0" },
+    { name = "scipy", marker = "extra == 'torch-cu12'", specifier = ">=1.11.0" },
+    { name = "scipy", marker = "extra == 'torch-cu13'", specifier = ">=1.11.0" },
     { name = "sphinx", marker = "extra == 'docs'", specifier = ">=7.4.7" },
     { name = "sphinx-copybutton", marker = "extra == 'docs'", specifier = ">=0.5.0" },
-    { name = "sphinx-design", marker = "extra == 'docs'", specifier = "<=0.6.1" },
+    { name = "sphinx-design", marker = "extra == 'docs'", specifier = ">=0.5.0,<=0.6.1" },
     { name = "sphinx-tabs", marker = "extra == 'docs'", specifier = ">=3.3.0" },
     { name = "sphinxcontrib-mermaid", marker = "extra == 'docs'", specifier = ">=1.0.0" },
     { name = "torch", marker = "extra == 'torch-cu12'", specifier = ">=2.7.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "newton", extra = "torch-cu12" } },
@@ -2695,7 +2719,7 @@ requires-dist = [
     { name = "usd-exchange", marker = "python_full_version < '3.13' and platform_machine == 'aarch64' and extra == 'torch-cu12'", specifier = ">=2.2.0" },
     { name = "usd-exchange", marker = "python_full_version < '3.13' and platform_machine == 'aarch64' and extra == 'torch-cu13'", specifier = ">=2.2.0" },
     { name = "viser", marker = "extra == 'docs'", specifier = ">=1.0.16" },
-    { name = "warp-lang", specifier = ">=1.11.0", index = "https://pypi.nvidia.com/" },
+    { name = "warp-lang", specifier = ">=1.12.0", index = "https://pypi.nvidia.com/" },
 ]
 provides-extras = ["dev", "docs", "examples", "importers", "notebook", "remesh", "sim", "torch-cu12", "torch-cu13"]
 
@@ -2715,11 +2739,11 @@ wheels = [
 
 [[package]]
 name = "newton-usd-schemas"
-version = "0.1.0rc3"
+version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e7/3b/702d7abec081b7c183feee38747bc358f262ceb67d9c8f7542edea6a8903/newton_usd_schemas-0.1.0rc3.tar.gz", hash = "sha256:a613e89f4de1ea0c3429093e798ee752c6701879353d4440eb5fe7b8c13bfc04", size = 61041, upload-time = "2026-02-24T20:52:19.099Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/73/5e/95a2c4872ca9bc0e6e31344ab7df5f6dceedacc5ea39d5832d352c98cdf4/newton_usd_schemas-0.1.0.tar.gz", hash = "sha256:07420c425abd6282e1e9ac0dce4ef2d87bc6e08639f0b00db694de63684ef341", size = 61275, upload-time = "2026-03-09T19:08:06.437Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/95/9f/541d01f136db03f9ac4f92ea01c0ba086178b64e0d82e088c7bfefaff25e/newton_usd_schemas-0.1.0rc3-py3-none-any.whl", hash = "sha256:ee4070b20a6f143fc25af15f6713302964a5d5a596616b4443657394ed95d54b", size = 12628, upload-time = "2026-02-24T20:52:17.65Z" },
+    { url = "https://files.pythonhosted.org/packages/08/d1/3c16c963f8026e6e813c442db724abc1293fc67442f9620caa0d295a5d7a/newton_usd_schemas-0.1.0-py3-none-any.whl", hash = "sha256:da83ba6a571cf7a3acec449d83477c8273bf37260314aa135a74f85b64256583", size = 12599, upload-time = "2026-03-09T19:08:04.633Z" },
 ]
 
 [[package]]
