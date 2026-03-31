@@ -8,6 +8,24 @@
 - **RMSE=1.75°，Max error=8.08°**，稳态 82.16° vs OpenSim 82.2°
 - USD 动画导出：`output/anim/simple_arm_vbd.usda`（600帧 tet mesh）
 
+
+提取肌肉力方法:
+```python
+stretch = |Fd| # fiber stretch from deformation gradient
+stretch_to_ltilde = mesh_L / L_opt    # rest mesh 长度 / 最优纤维长度
+l_tilde_vbd = mean(stretches) * stretch_to_ltilde
+ten_length = float(mj_data.ten_length[0]) 
+fiber_length = ten_length - L_slack # 刚性肌腱，fiber_length = ten_length - slack_length
+l_tilde_1d = fiber_length / L_opt # 1D 纤维长度
+delta_ltilde = l_tilde_vbd - (fiber_length / L_opt)  # VBD correction, 反映3D变形对纤维长度的影响
+l_tilde_now = l_tilde_1d + delta_ltilde # 用于DGF 力计算的纤维长度
+fl = float(active_force_length(l_tilde_now)) # DGF曲线计算出肌肉力
+fpe = float(passive_force_length(l_tilde_now))
+fv = float(force_velocity(np.clip(v_norm, -1.0, 1.0)))
+muscle_force = (activation * fl * fv + fpe + d_damp * v_norm) * F_max
+muscle_force = np.clip(muscle_force, 0.0, F_max * 2.0)
+```
+
 ## 架构
 
 ### VBD vmuscle 主动参与（sigma0 > 0）
