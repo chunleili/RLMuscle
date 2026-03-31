@@ -98,6 +98,8 @@ def plot_comparison(datasets, title, out_path, colors=None):
         ax.grid(True, alpha=0.3)
 
     # Compute pairwise error metrics for first two datasets
+    rmse = None
+    max_err = None
     if len(datasets) >= 2 and datasets[0][1] is not None and datasets[1][1] is not None:
         d0, d1 = datasets[0][1], datasets[1][1]
         t_common = np.linspace(
@@ -106,18 +108,19 @@ def plot_comparison(datasets, title, out_path, colors=None):
             500)
         a0 = np.interp(t_common, d0["times"], np.degrees(d0["elbow_angles"]))
         a1 = np.interp(t_common, d1["times"], np.degrees(d1["elbow_angles"]))
-        rmse = np.sqrt(np.mean((a0 - a1) ** 2))
-        max_err = np.max(np.abs(a0 - a1))
-        fig.text(0.5, 0.01,
-                 f"{datasets[0][0]} vs {datasets[1][0]}: RMSE={rmse:.2f} deg, Max error={max_err:.2f} deg",
-                 ha="center", fontsize=11, style="italic")
+        if not (np.any(np.isnan(a0)) or np.any(np.isnan(a1))):
+            rmse = np.sqrt(np.mean((a0 - a1) ** 2))
+            max_err = np.max(np.abs(a0 - a1))
+            fig.text(0.5, 0.01,
+                     f"{datasets[0][0]} vs {datasets[1][0]}: RMSE={rmse:.2f} deg, Max error={max_err:.2f} deg",
+                     ha="center", fontsize=11, style="italic")
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
     os.makedirs("output", exist_ok=True)
     fig.savefig(out_path, dpi=150)
     print(f"Plot saved to {out_path}")
     plt.close()
-    return rmse if len(datasets) >= 2 else None, max_err if len(datasets) >= 2 else None
+    return rmse, max_err
 
 
 def main():

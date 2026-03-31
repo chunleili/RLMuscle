@@ -481,8 +481,9 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
             f"mesh_length={mesh_length:.4f}"
         )
 
-    # Bone targets: one per insertion vertex, initially at the mesh insertion end
-    bone_targets = np.tile(mesh_insertion_pos.astype(np.float32), (len(insertion_ids), 1))
+    # Bone targets: use actual mesh vertex positions for each insertion vertex.
+    # During simulation, these are displaced by MuJoCo insertion site motion.
+    bone_targets = vertices[insertion_ids].copy()
 
     # --- Build XPBD MuscleSim ---
     wp.init()
@@ -536,22 +537,24 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
     )
 
     # --- Warm-up ---
+    # Warm-up with activation=0 to let the mesh settle under constraint system
+    # without any fiber contraction. Both ends are fixed (PIN + ATTACH), so
+    # activating fiber during warm-up causes internal compression instability.
     e_off = act_cfg["excitation_off"]
-    activation = e_off
-    cf = dgf_equilibrium_fiber_length(activation, 0.0)
+    activation = e_off  # will be used in main loop; warm-up uses 0
 
     if verbose:
-        print(f"[XPBD+MuJoCo] Warm-up: {warmup_steps} steps, activation={activation:.3f}, cf={cf:.4f}")
+        print(f"[XPBD+MuJoCo] Warm-up: {warmup_steps} steps (activation=0)")
 
-    # Set activation on GPU
+    # Zero activation during warm-up
     wp.launch(fill_float_kernel, dim=sim.activation.shape[0],
-              inputs=[sim.activation, float(activation)])
+              inputs=[sim.activation, float(0.0)])
 
-    # Update contraction factor for fiber constraints
+    # Set contraction_factor=0 so target_stretch=1.0 (no contraction)
     if TETFIBERDGF in sim.cons_ranges:
         fib_offset, fib_count = sim.cons_ranges[TETFIBERDGF]
         wp.launch(update_cons_restdir1_kernel, dim=fib_count,
-                  inputs=[sim.cons, float(cf), int(TETFIBERDGF), int(fib_offset), int(fib_count)])
+                  inputs=[sim.cons, float(0.0), int(TETFIBERDGF), int(fib_offset), int(fib_count)])
 
     for _ in range(warmup_steps):
         sim.update_attach_targets()
@@ -590,9 +593,11 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         activations_out.append(activation)
 
         # 1. MuJoCo forward -> get new insertion position -> update bone targets
+        # Bone targets are displaced by how much MuJoCo insertion moved from initial.
         mujoco.mj_forward(mj_model, mj_data)
         new_insertion = mj_data.site_xpos[insertion_site_id].copy()
-        new_bone_targets = np.tile(new_insertion.astype(np.float32), (len(insertion_ids), 1))
+        delta = (new_insertion - insertion_pos).astype(np.float32)
+        new_bone_targets = bone_targets + delta
         update_bone_targets(sim, new_bone_targets)
 
         # 2. Set activation on GPU
@@ -600,8 +605,9 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
                   inputs=[sim.activation, float(activation)])
 
         # 3. Update contraction_factor from DGF equilibrium
+        # cf = 1 - lm_eq (contraction_factor, not equilibrium length)
         normalized_load = prev_muscle_force / F_max if F_max > 0 else 0.0
-        cf = dgf_equilibrium_fiber_length(activation, normalized_load)
+        cf = 1.0 - dgf_equilibrium_fiber_length(activation, normalized_load)
         if TETFIBERDGF in sim.cons_ranges:
             fib_offset, fib_count = sim.cons_ranges[TETFIBERDGF]
             wp.launch(update_cons_restdir1_kernel, dim=fib_count,
@@ -660,8 +666,10 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
             prev_fiber_length = fib_len
             v_norm = fib_vel / (V_max * L_opt)
 
-            # Use XPBD-derived l_tilde for position-dependent force
-            l_tilde_now = l_tilde_xpbd
+            # Use 1D fiber length for force (XPBD mesh tracks deformation
+            # but force comes from tendon model, matching MuJoCo-only behavior).
+            # The XPBD l_tilde is recorded for diagnostic/visualization purposes.
+            l_tilde_now = fib_len / L_opt
 
             # DGF force computation
             fl = float(active_force_length(l_tilde_now))
@@ -676,9 +684,12 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
 
         prev_muscle_force = muscle_force
 
-        # 7. Record results
+        # 7. Record results (use 1D fiber length for norm_fiber_length,
+        # since that's what drives the force computation)
+        ten_length_final = float(mj_data.ten_length[0])
+        nfl_1d = (ten_length_final - L_slack) / L_opt
         forces_out.append(muscle_force)
-        norm_fiber_lengths.append(l_tilde_xpbd)
+        norm_fiber_lengths.append(nfl_1d)
 
         if verbose and (step % 100 == 0 or step == n_steps - 1):
             print(
