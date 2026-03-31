@@ -3,8 +3,8 @@
 Runs XPBD-DGF simulation, optionally OpenSim reference, and generates comparison plot.
 
 Usage:
-    uv run python scripts/run_xpbd_dgf_sliding_ball_comparison_xpbd.py
-    uv run python scripts/run_xpbd_dgf_sliding_ball_comparison_xpbd.py --skip-opensim
+    uv run python scripts/run_sliding_ball_comparison_xpbd.py
+    uv run python scripts/run_sliding_ball_comparison_xpbd.py --skip-opensim
 """
 
 import argparse
@@ -150,7 +150,7 @@ def plot_comparison(xpbd_npz, osim_result, label):
 
     plt.tight_layout()
     os.makedirs("output", exist_ok=True)
-    out_path = f"output/xpbd_dgf_sliding_ball_comparison_xpbd_{label}.png"
+    out_path = f"output/sliding_ball_comparison_xpbd_{label}.png"
     fig.savefig(out_path, dpi=150)
     print(f"Plot saved to {out_path}")
     plt.close()
