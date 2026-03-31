@@ -334,3 +334,47 @@ class UsdTetExporter:
     def finalize(self):
         """Write USD file to disk."""
         self.stage.GetRootLayer().Save()
+
+
+class MeshExporter:
+    """General mesh exporter supporting multiple formats (USD, PLY).
+    
+    Example usage:
+        # Setup exporter (after loading mesh and before simulation loop):
+        exporter = MeshExporter(format=cfg["output_format"], fps=int(round(1.0 / (substeps * mj_dt))), tet_indices=tet_idx, positions=s0.particle_q.numpy())
+
+        # In the simulation loop, after updating positions:
+        exporter.save_frame(pos, step)
+
+        # After the loop, finalize if needed (for USD):
+        exporter.finalize()
+    """
+    def __init__(self, path="output/anim", format="ply", **kwargs):
+        import os
+        os.makedirs(path, exist_ok=True)
+        self.format = format
+        self.abspath = Path(path).absolute()
+        if format == "usd":
+            self.usdexporter = UsdTetExporter(**kwargs)
+        elif format == "ply":
+            try:
+                self.surface_faces = build_surface_tris(kwargs["tet_indices"], kwargs.get("positions"))
+            except:
+                raise KeyError(f"You must provide tet_indices and positions to build surface faces for PLY export.")
+
+    def save_frame(self, positions, frame):
+        if self.format == "usd":
+            self.usdexporter.save_frame(positions, frame)
+        elif self.format == "ply":
+            filename = f"frame_{frame:04d}.ply"
+            path = self.abspath / filename
+            save_ply(str(path), positions, self.surface_faces)
+            if frame%10 == 0:
+                print(f"Saved PLY frame {frame} to {filename}")
+    
+    def finalize(self):
+        if self.format == "usd":
+            self.usdexporter.finalize()
+            print(f"USD animation saved to {self.usdexporter.usd_path}")
+        else:
+            print(f"PLY frames saved to {self.abspath}")
