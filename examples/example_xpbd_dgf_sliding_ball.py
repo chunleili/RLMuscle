@@ -21,10 +21,30 @@ import numpy as np
 import warp as wp
 
 from VMuscle.activation import activation_dynamics_step_np
-from VMuscle.dgf_curves import compute_fiber_forces
+from VMuscle.dgf_curves import active_force_length, compute_fiber_forces
 from VMuscle.mesh_io import build_surface_tris
 from VMuscle.mesh_utils import create_cylinder_tet_mesh, assign_fiber_directions
-from VMuscle.muscle_warp import MuscleSim, fill_float_kernel
+from VMuscle.muscle_warp import (MuscleSim, fill_float_kernel,
+                                   update_cons_restdir1_kernel)
+
+
+def dgf_equilibrium_fiber_length(activation, normalized_load):
+    """Invert DGF f_L curve: find lm where a * f_L(lm) = normalized_load.
+
+    Returns equilibrium on the ascending limb (lm < 1).
+    normalized_load = F_ext / F_max (e.g. mg / (sigma0 * A)).
+    """
+    if activation < 1e-8:
+        return 1.0
+    target_fl = normalized_load / activation
+    if target_fl >= 1.0:
+        return 1.0  # can't produce enough force
+    # Search ascending limb [0.3, 1.0]
+    lm_range = np.linspace(0.3, 1.0, 2000)
+    fl = active_force_length(lm_range)
+    # Find closest match
+    idx = np.argmin(np.abs(fl - target_fl))
+    return float(lm_range[idx])
 
 
 def load_config(path):
@@ -63,6 +83,7 @@ def load_config(path):
         "snh_mu": xpbd.get("snh_mu", 0.0),
         "snh_lam": xpbd.get("snh_lam", 10000.0),
         "snh_dampingratio": xpbd.get("snh_dampingratio", 0.01),
+        "n_constraint_iters": xpbd.get("n_constraint_iters", 1),
     }
 
 
@@ -111,7 +132,7 @@ def _build_muscle_sim(cfg):
             {"type": "fiberdgf", "name": "fiber_dgf",
              "stiffness": cfg["fiber_stiffness"],
              "dampingratio": cfg["dampingratio"],
-             "optimal_fiber_length": cfg["optimal_fiber_length"],
+             "sigma0": cfg["sigma0"],
              "contraction_factor": cfg["contraction_factor"]},
         ] + ([{"type": "snh", "name": "snh",
                "mu": cfg["snh_mu"],
@@ -199,6 +220,15 @@ def _build_muscle_sim(cfg):
     sim.mass = wp.from_numpy(mass_np.astype(np.float32), dtype=wp.float32)
     sim.stopped = wp.from_numpy(stopped_np.astype(np.int32), dtype=wp.int32)
 
+    # Compute DGF equilibrium for initial contraction_factor
+    A_cross = np.pi * radius ** 2
+    F_max = cfg["sigma0"] * A_cross
+    norm_load = ball_mass * cfg["gravity"] / F_max
+    lm_eq = dgf_equilibrium_fiber_length(1.0, norm_load)
+    cf_dgf = 1.0 - lm_eq
+    print(f"DGF equilibrium: lm_eq={lm_eq:.4f}, cf={cf_dgf:.4f}, "
+          f"F_max={F_max:.1f}N, norm_load={norm_load:.4f}")
+
     return sim, bottom_ids, axis_idx, tets, vertices, fiber_dirs_per_tet
 
 
@@ -246,6 +276,11 @@ def run_sim(cfg, label="default"):
     act_sub_dt = cfg["act_substep_dt"]
     excitation_val = cfg["excitation"]
 
+    # Normalized load for DGF equilibrium computation
+    A_cross = np.pi * cfg["radius"] ** 2
+    F_max = cfg["sigma0"] * A_cross
+    norm_load = cfg["ball_mass"] * cfg["gravity"] / F_max
+
     # Recording
     rec_t, rec_z, rec_a = [], [], []
     rec_fiber = []
@@ -269,12 +304,24 @@ def run_sim(cfg, label="default"):
         wp.launch(fill_float_kernel, dim=n_tet,
                   inputs=[sim.activation, wp.float32(a)])
 
+        # Compute DGF equilibrium for current activation → contraction_factor
+        lm_eq_a = dgf_equilibrium_fiber_length(a, norm_load)
+        cf_a = 1.0 - lm_eq_a
+        # Update contraction_factor (restdir[1]) for all DGF constraints
+        from VMuscle.constraints import TETFIBERDGF
+        if hasattr(sim, 'cons_ranges') and TETFIBERDGF in sim.cons_ranges:
+            off, cnt = sim.cons_ranges[TETFIBERDGF]
+            wp.launch(update_cons_restdir1_kernel, dim=cnt,
+                      inputs=[sim.cons, cf_a, TETFIBERDGF, off, cnt])
+
         # Step XPBD
+        n_iters = cfg.get("n_constraint_iters", 1)
         sim.update_attach_targets()
         for _ in range(sim.cfg.num_substeps):
             sim.integrate()
             sim.clear()
-            sim.solve_constraints()
+            for _ in range(n_iters):
+                sim.solve_constraints()
             sim.update_velocities()
 
         # Read back positions

@@ -24,7 +24,28 @@
 - 全激活后收缩到 ~0.90（约 10% 收缩）
 - 仿真稳定，无爆炸
 
+### DGF f-L 曲线驱动 + OpenSim 验证 (2026-03-31)
+
+**核心改动**：`solve_tetfiberdgf_kernel` 现在使用 DGF active f-L 曲线调制约束刚度：
+- `stiffness = cstiffness * f_total(lm_tilde) * fiber_stiffness_scale`
+  - `f_total = a * f_L(lm_tilde) + f_PE(lm_tilde)` (active + passive DGF curves)
+- `target_stretch = 1 - a * contraction_factor`
+  - `contraction_factor` 每步从 DGF 曲线反求: `f_L(lm_eq) = mg / (F_max * a)`
+- 添加 `dgf_equilibrium_fiber_length()` 反求 ascending limb 上的平衡点
+- 添加 `update_cons_restdir1_kernel` 每步更新 GPU 约束中的 contraction_factor
+
+**验证结果（sliding ball, excitation=1.0, 300 steps vs OpenSim DGF）**：
+- XPBD-DGF: lm_eq = 0.5945, bottom_z = 0.0405m
+- OpenSim: nfl = 0.5899, y = 0.0400m
+- 误差: ~0.8% 归一化纤维长度
+- 力曲线稳态吻合良好
+
+**关键发现**：
+- `target=0` 方案导致 mesh collapse（内部顶点质量太小，无 lateral resistance）
+- 正确方案：DGF 反求目标拉伸 + f_L 调制刚度，既保证 f-L profile 正确，又防止 mesh 不稳定
+- `sigma0` 通过 `restdir[0]` 传入 kernel，`contraction_factor` 通过 `restdir[1]` 动态更新
+
 ## 下一步
-- 调参：`fiber_stiffness_scale` 对力矩和收缩量的影响
 - 与 VBD 版 sliding ball 对比（需修复 VBD 例子的 Newton 兼容性问题）
 - 考虑动态版本（加入 force-velocity 曲线）
+- 测试变激活（excitation ramp / step）下的瞬态响应

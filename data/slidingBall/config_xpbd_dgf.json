@@ -39,6 +39,7 @@
     "optimal_fiber_length": 1.0,
     "snh_mu": 0.0,
     "snh_lam": 10000.0,
-    "snh_dampingratio": 0.01
+    "snh_dampingratio": 0.01,
+    "n_constraint_iters": 1
   }
 }

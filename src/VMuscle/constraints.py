@@ -256,14 +256,13 @@ class ConstraintBuilderMixin:
         """DGF fiber constraint: same geometry as TETFIBERNORM, but uses DGF curves.
 
         Extra params stored in restdir:
-          restdir[0] = optimal_fiber_length (default 1.0)
-          restdir[1] = v_max_scale (default 10.0)
-          restdir[2] = contraction_factor (default 0.4)
+          restdir[0] = sigma0 (peak isometric stress, Pa)
+          restdir[1] = contraction_factor (from DGF curve, updated per-step)
+          restdir[2] = (reserved)
         """
         stiffness = params.get('stiffness', 1.0)
         dampingratio = params.get('dampingratio', 0.0)
-        l_opt = params.get('optimal_fiber_length', 1.0)
-        v_max = params.get('v_max_scale', 10.0)
+        sigma0 = params.get('sigma0', 300000.0)
         contraction_factor = params.get('contraction_factor', 0.4)
         restmatrices, volumes, valid = self._batch_compute_tet_rest_matrices()
 
@@ -299,7 +298,7 @@ class ConstraintBuilderMixin:
                 L=[0.0, 0.0, 0.0],
                 restlength=float(vol),
                 restvector=[float(mw_t[0]), float(mw_t[1]), float(mw_t[2]), 1.0],
-                restdir=[float(l_opt), float(v_max), float(contraction_factor)],
+                restdir=[float(sigma0), float(contraction_factor), 0.0],
                 compressionstiffness=-1.0
             )
             constraints.append(c)

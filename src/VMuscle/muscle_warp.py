@@ -60,6 +60,21 @@ class Constraint:
     compressionstiffness: wp.float32
 
 
+@wp.kernel
+def update_cons_restdir1_kernel(
+    cons: wp.array(dtype=Constraint),
+    val: float,
+    ctype_match: int,
+    offset: int,
+    count: int,
+):
+    """Update restdir[1] for constraints of a given type."""
+    idx = offset + wp.tid()
+    if cons[idx].type == ctype_match:
+        rd = cons[idx].restdir
+        cons[idx].restdir = wp.vec3(rd[0], val, rd[2])
+
+
 # ---------------------------------------------------------------------------
 # Utility @wp.func helpers
 # ---------------------------------------------------------------------------
@@ -956,11 +971,12 @@ def solve_tetfiberdgf_kernel(
     fiber_stiffness_scale: float,
     offset: int,
 ):
-    """XPBD fiber constraint with DGF force-length and passive curves (quasi-static).
+    """XPBD fiber constraint with DGF force-length curves (quasi-static).
 
-    Fixed target (no f_L feedback), DGF curves modulate stiffness only.
-    target_stretch = 1 - activation * contraction_factor  (same as TETFIBERNORM)
-    stiffness scaled by f_total so force magnitude follows DGF profile.
+    Uses DGF active f_L(lm_tilde) and passive f_PE(lm_tilde) to modulate
+    constraint stiffness. target_stretch = 0 so equilibrium is naturally
+    determined by where DGF contractile force equals external load.
+    No force-velocity curve (quasi-static assumption).
     """
     c = offset + wp.tid()
     cstiffness = cons[c].stiffness
@@ -972,7 +988,6 @@ def solve_tetfiberdgf_kernel(
                  v_fiber_dir[pts[2]] + v_fiber_dir[pts[3]]) / 4.0
     Dminv = rest_matrix[tetid]
     acti = activation[tetid]
-    contraction_factor = cons[c].restdir[2]
 
     # Compute current fiber stretch from deformation gradient
     c0 = pos[pts[0]] - pos[pts[3]]
@@ -986,11 +1001,20 @@ def solve_tetfiberdgf_kernel(
     FwT = _Ds * wTDminvT
     lm_tilde = wp.sqrt(wp.max(wp.length_sq(FwT), 1.0e-12))
 
-    # Constant stiffness matching TETFIBERNORM: fiberscale = 10 * activation
-    fiberscale = 10.0 * acti
+    # DGF force-length: stiffness modulated by f_L(lm) for correct force profile.
+    # restdir[0] = sigma0 (peak isometric stress)
+    # restdir[1] = contraction_factor (from DGF curve inversion, set per-step)
+    sigma0 = cons[c].restdir[0]
+    contraction_factor = cons[c].restdir[1]
+    f_L_val = dgf_active_force_length_wp(lm_tilde)
+    f_PE_val = dgf_passive_force_length_wp(lm_tilde)
+    f_total = acti * f_L_val + f_PE_val
+    # Stiffness follows DGF curve; fiber_stiffness_scale calibrates magnitude
+    fiberscale = wp.max(f_total, 0.01)
     stiffness_val = cstiffness * fiberscale * fiber_stiffness_scale
 
     if stiffness_val > 0.0:
+        # Target from DGF equilibrium: lm_eq ≈ 1 - a * contraction_factor
         target_stretch = 1.0 - acti * contraction_factor
 
         tet_fiber_update_xpbd_fn(
