@@ -25,7 +25,8 @@
   },
   "solver": {
     "dt": 0.0167,
-    "n_steps": 600
+    "n_steps": 600,
+    "arch": "cuda:0"
   },
   "initial_conditions": {
     "elbow_angle_deg": 90.0

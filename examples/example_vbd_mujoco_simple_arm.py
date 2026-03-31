@@ -51,9 +51,11 @@ def load_config(path="data/simpleArm/config.json"):
         return json.load(f)
 
 
-def _get_default_warp_device():
+def _get_default_warp_device(cfg=None):
     """Prefer CUDA for VBD because CPU execution is significantly slower here."""
     wp.init()
+    if cfg is not None:
+        return cfg.get("solver", {}).get("arch", "cuda:0" if wp.is_cuda_available() else "cpu")
     return "cuda:0" if wp.is_cuda_available() else "cpu"
 
 
@@ -83,7 +85,7 @@ def build_vbd_muscle(cfg, mesh_length, device=None):
     muscle forces.
     """
     if device is None:
-        device = _get_default_warp_device()
+        device = _get_default_warp_device(cfg)
 
     geo = cfg["geometry"]
     mus = cfg["muscle"]
@@ -202,7 +204,7 @@ def vbd_mujoco_simple_arm(cfg, verbose=True, device=None):
     n_steps = sol["n_steps"]
     theta0 = np.radians(ic["elbow_angle_deg"])
     if device is None:
-        device = _get_default_warp_device()
+        device = _get_default_warp_device(cfg)
     else:
         wp.init()
 

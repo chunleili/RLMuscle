@@ -252,7 +252,7 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
     outer_dt = sol["dt"]
     n_steps = sol["n_steps"]
     theta0 = np.radians(ic["elbow_angle_deg"])
-    device = "cpu"
+    device = sol.get("arch", "cuda:0" if wp.is_cuda_available() else "cpu")
 
     vbd_substeps = vbd_opts["substeps"]
     vbd_warmup = vbd_opts["warmup_steps"]
