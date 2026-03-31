@@ -55,7 +55,7 @@ def force_velocity(v_norm):
     return _D1 * np.log(x + np.sqrt(x ** 2 + 1.0)) + _D4
 
 
-def compute_fiber_forces(stretches, activation, v_norm=0.0):
+def compute_fiber_forces(stretches, activation, v_norm=0.0, include_passive=True):
     """Compute normalized fiber forces from stretches and activation.
 
     Args:
@@ -67,7 +67,7 @@ def compute_fiber_forces(stretches, activation, v_norm=0.0):
         dict with f_active, f_passive, f_total (mean over tets), f_velocity.
     """
     fl = active_force_length(stretches)
-    fpe = passive_force_length(stretches)
+    fpe = passive_force_length(stretches) if include_passive else np.zeros_like(stretches)
     fv = float(force_velocity(np.clip(v_norm, -1.0, 1.0)))
     f_active = activation * fl * fv
     f_total = f_active + fpe

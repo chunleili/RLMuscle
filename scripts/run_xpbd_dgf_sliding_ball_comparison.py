@@ -65,7 +65,7 @@ def plot_comparison(xpbd_npz, osim_result, label):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from VMuscle.dgf_curves import active_force_length as afl, passive_force_length as pfl
+    from VMuscle.dgf_curves import active_force_length as afl
 
     # Load XPBD-DGF data
     dx = np.load(xpbd_npz)
@@ -107,13 +107,11 @@ def plot_comparison(xpbd_npz, osim_result, label):
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # (1,0) DGF F-L curves + equilibrium points
+    # (1,0) DGF F-L curves + equilibrium points (active only)
     ax = axes[1, 0]
     l_norm = np.linspace(0.2, 1.8, 200)
-    fa, fp = afl(l_norm), pfl(l_norm)
+    fa = afl(l_norm)
     ax.plot(l_norm, fa, "b-", lw=1.5, label="Active $f_L$")
-    ax.plot(l_norm, fp, "g-", lw=1.5, label="Passive $f_{PE}$")
-    ax.plot(l_norm, fa + fp, "k--", lw=1.2, alpha=0.6, label="Total (a=1)")
     eq_force = ball_mass * 9.81 / fmax
     ax.axhline(y=eq_force, color='gray', ls=':', alpha=0.4,
                label=f"Weight/F$_{{max}}$={eq_force:.4f}")
@@ -130,30 +128,24 @@ def plot_comparison(xpbd_npz, osim_result, label):
 
     ax.set_xlabel("Normalized fiber length ($\\tilde{l}$)")
     ax.set_ylabel("Normalized force")
-    ax.set_title("DGF Force-Length Curves")
+    ax.set_title("DGF Active Force-Length Curve")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     ax.set_xlim(0.2, 1.8)
     ax.set_ylim(-0.05, 1.2)
 
-    # (1,1) Forces comparison
+    # (1,1) Active force comparison only
     ax = axes[1, 1]
     ax.plot(xpbd_t, xpbd_a, "k-", lw=1.0, alpha=0.5, label="Activation")
     ax.plot(xpbd_t, xpbd_fa, "b-", lw=1.5, label="XPBD active")
-    ax.plot(xpbd_t, xpbd_fp, "b--", lw=1.0, label="XPBD passive")
-    ax.plot(xpbd_t, xpbd_ft, "b:", lw=1.5, label="XPBD total")
     if has_osim:
         osim_fmax = osim_result.get('max_iso_force', fmax)
         ax.plot(osim_result['times'], osim_result['active_forces'] / osim_fmax,
                 "r-", lw=1.5, label="OpenSim active")
-        ax.plot(osim_result['times'], osim_result['passive_forces'] / osim_fmax,
-                "r--", lw=1.0, label="OpenSim passive")
-        ax.plot(osim_result['times'], osim_result['forces'] / osim_fmax,
-                "r:", lw=1.5, label="OpenSim total")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Normalized force")
-    ax.set_title("Fiber Forces (DGF curves)")
-    ax.legend(fontsize=7, ncol=2)
+    ax.set_title("Active Fiber Force")
+    ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()

@@ -93,10 +93,11 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
     muscle.set_optimal_fiber_length(muscle_length)
     muscle.set_tendon_slack_length(0.001)
     muscle.set_pennation_angle_at_optimal(0.0)
-    muscle.set_fiber_damping(0.01)
+    muscle.set_fiber_damping(0.0)
     muscle.set_max_contraction_velocity(10.0)
     muscle.set_ignore_tendon_compliance(True)
     muscle.set_ignore_activation_dynamics(False)
+    muscle.set_ignore_passive_fiber_force(True)
     muscle.addNewPathPoint("origin", model.updGround(),
                            osim.Vec3(0, muscle_length, 0))
     muscle.addNewPathPoint("insertion", body, osim.Vec3(0, 0, 0))

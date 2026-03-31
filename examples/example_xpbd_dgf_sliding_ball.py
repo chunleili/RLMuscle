@@ -60,6 +60,9 @@ def load_config(path):
         "dampingratio": xpbd.get("dampingratio", 0.1),
         "contraction_factor": xpbd.get("contraction_factor", 0.4),
         "optimal_fiber_length": xpbd.get("optimal_fiber_length", 1.0),
+        "snh_mu": xpbd.get("snh_mu", 0.0),
+        "snh_lam": xpbd.get("snh_lam", 10000.0),
+        "snh_dampingratio": xpbd.get("snh_dampingratio", 0.01),
     }
 
 
@@ -110,7 +113,11 @@ def _build_muscle_sim(cfg):
              "dampingratio": cfg["dampingratio"],
              "optimal_fiber_length": cfg["optimal_fiber_length"],
              "contraction_factor": cfg["contraction_factor"]},
-        ],
+        ] + ([{"type": "snh", "name": "snh",
+               "mu": cfg["snh_mu"],
+               "lam": cfg["snh_lam"],
+               "dampingratio": cfg["snh_dampingratio"]}]
+             if cfg.get("snh_mu", 0.0) > 0.0 else []),
         dt=cfg["dt"],
         num_substeps=cfg["num_substeps"],
         gravity=cfg["gravity"],
@@ -209,7 +216,7 @@ def compute_fiber_data(pos, tet_idx, rest_matrices, fiber_dirs,
 
     l_mean = float(stretches.mean())
     v_norm = 0.0  # quasi-static
-    fd = compute_fiber_forces(stretches, activation, v_norm)
+    fd = compute_fiber_forces(stretches, activation, v_norm, include_passive=False)
     fd['l_mean'] = l_mean
     return fd
 

@@ -21,6 +21,7 @@ DISTANCELINE  =  1621136047
 TETARAP       =  -92199131
 TETARAPNORM   =  -885573303
 TETFIBERDGF   =  -403562211
+TETSNH        =  -503462311
 
 # ARAP flags (from pbd_types.h)
 LINEARENERGY = 1 << 0
@@ -304,6 +305,43 @@ class ConstraintBuilderMixin:
             constraints.append(c)
         return constraints
 
+    def create_tet_snh_constraint(self, params):
+        """Stable Neo-Hookean constraint (coupled deviatoric + volumetric).
+
+        Uses Macklin's XPBD SNH formulation:
+          Deviatoric: C_D = ||F||_F - sqrt(3), compliance = 1/(mu*V*dt^2)
+          Volumetric: C_H = J - alpha,         compliance = 1/(lam*V*dt^2)
+        Solved with a coupled 2x2 linear system per tet.
+
+        params:
+            mu: shear modulus (deviatoric stiffness)
+            lam: bulk modulus (volumetric stiffness)
+            dampingratio: XPBD damping ratio
+        """
+        mu = params.get('mu', 1000.0)
+        lam = params.get('lam', 10000.0)
+        dampingratio = params.get('dampingratio', 0.0)
+        restmatrices, volumes, valid = self._batch_compute_tet_rest_matrices()
+
+        valid_indices = np.where(valid)[0]
+        constraints = []
+        for i in valid_indices:
+            tet = self.tet_np[i]
+            c = dict(
+                type=TETSNH,
+                pts=[int(tet[0]), int(tet[1]), int(tet[2]), int(tet[3])],
+                stiffness=mu,
+                dampingratio=dampingratio,
+                tetid=int(i),
+                L=[0.0, 0.0, 0.0],
+                restlength=float(volumes[i]),
+                restvector=[0.0, 0.0, 0.0, 1.0],  # rotation quaternion (warm start)
+                restdir=[float(lam), 0.0, 0.0],    # restdir[0] = lambda
+                compressionstiffness=-1.0,
+            )
+            constraints.append(c)
+        return constraints
+
     def create_attach_constraints(self, params):
         constraints = []
         mask_name = params.get('mask_name')
@@ -467,6 +505,8 @@ class ConstraintBuilderMixin:
                 new_constraints = self.create_tet_arap_constraints(params)
             elif ctype == 'fiberdgf':
                 new_constraints = self.create_tet_fiber_dgf_constraint(params)
+            elif ctype == 'snh':
+                new_constraints = self.create_tet_snh_constraint(params)
 
             if new_constraints:
                 all_constraints.extend(new_constraints)

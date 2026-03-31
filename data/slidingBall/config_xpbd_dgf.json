@@ -28,14 +28,17 @@
     "n_steps": 300
   },
   "xpbd": {
-    "num_substeps": 100,
-    "veldamping": 0.005,
+    "num_substeps": 40,
+    "veldamping": 0.003,
     "fiber_stiffness_scale": 100000.0,
     "volume_stiffness": 10000000000.0,
     "fiber_stiffness": 1000.0,
     "arap_stiffness": 10000000000.0,
-    "dampingratio": 0.01,
+    "dampingratio": 0.018,
     "contraction_factor": 0.41,
-    "optimal_fiber_length": 1.0
+    "optimal_fiber_length": 1.0,
+    "snh_mu": 0.0,
+    "snh_lam": 10000.0,
+    "snh_dampingratio": 0.01
   }
 }

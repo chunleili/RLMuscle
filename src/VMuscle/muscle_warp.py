@@ -7,7 +7,7 @@ import warp.render
 from VMuscle.config import load_config  # noqa: F401
 from VMuscle.constraints import (
     PIN, ATTACH, TETVOLUME, TETFIBERNORM, DISTANCELINE,
-    TETARAP, TETARAPNORM, TETFIBERDGF,
+    TETARAP, TETARAPNORM, TETFIBERDGF, TETSNH,
     LINEARENERGY, NORMSTIFFNESS,
 )
 from VMuscle.mesh_io import build_surface_tris
@@ -1130,6 +1130,191 @@ def solve_tetarap_kernel(
         cstiffness, cons[c].dampingratio, flags)
 
 
+@wp.func
+def tet_snh_update_xpbd_fn(
+    use_jacobi: int,
+    cidx: int,
+    cons: wp.array(dtype=Constraint),
+    pts: wp.vec4i,
+    dt: float,
+    pos: wp.array(dtype=wp.vec3),
+    pprev: wp.array(dtype=wp.vec3),
+    dP: wp.array(dtype=wp.vec3),
+    dPw: wp.array(dtype=wp.float32),
+    mass: wp.array(dtype=wp.float32),
+    stopped: wp.array(dtype=wp.int32),
+    restvolume: float,
+    restmatrix: wp.mat33,
+    mu: float,
+    lam: float,
+    kdampratio: float,
+):
+    """Stable Neo-Hookean XPBD constraint (coupled deviatoric + volumetric).
+
+    Deviatoric: C_D = ||F||_F - sqrt(3)
+    Volumetric: C_H = J - alpha  where alpha = 1 + mu/lam
+    Coupled 2x2 solve for both Lagrange multipliers.
+    Reference: Macklin "A Constraint-based Formulation of Stable Neo-Hookean Materials"
+    """
+    pt0 = pts[0]
+    pt1 = pts[1]
+    pt2 = pts[2]
+    pt3 = pts[3]
+    p0 = pos[pt0]
+    p1 = pos[pt1]
+    p2 = pos[pt2]
+    p3 = pos[pt3]
+
+    invmass0 = get_inv_mass_fn(pt0, mass, stopped)
+    invmass1 = get_inv_mass_fn(pt1, mass, stopped)
+    invmass2 = get_inv_mass_fn(pt2, mass, stopped)
+    invmass3 = get_inv_mass_fn(pt3, mass, stopped)
+
+    # Deformation gradient F = Ds * Dm^-1
+    c0 = p0 - p3
+    c1 = p1 - p3
+    c2 = p2 - p3
+    Ds = wp.mat33(
+        c0[0], c1[0], c2[0],
+        c0[1], c1[1], c2[1],
+        c0[2], c1[2], c2[2])
+    F = Ds * restmatrix
+
+    # --- Deviatoric constraint: C_D = ||F||_F - sqrt(3) ---
+    Ic = (F[0, 0] * F[0, 0] + F[0, 1] * F[0, 1] + F[0, 2] * F[0, 2] +
+          F[1, 0] * F[1, 0] + F[1, 1] * F[1, 1] + F[1, 2] * F[1, 2] +
+          F[2, 0] * F[2, 0] + F[2, 1] * F[2, 1] + F[2, 2] * F[2, 2])
+    r_s = wp.sqrt(wp.max(Ic, 1.0e-12))
+    dC = r_s - 1.7320508075688772  # sqrt(3)
+
+    if r_s < 1.0e-6:
+        return
+
+    # Deviatoric gradient: dC_D/dF = F/||F||, projected to position space
+    inv_rs = 1.0 / r_s
+    Fnorm = F * inv_rs
+    Ht = restmatrix * wp.transpose(Fnorm)
+    dgrad0 = wp.vec3(Ht[0, 0], Ht[0, 1], Ht[0, 2])
+    dgrad1 = wp.vec3(Ht[1, 0], Ht[1, 1], Ht[1, 2])
+    dgrad2 = wp.vec3(Ht[2, 0], Ht[2, 1], Ht[2, 2])
+    dgrad3 = -dgrad0 - dgrad1 - dgrad2
+
+    dsum_w = (invmass0 * wp.dot(dgrad0, dgrad0) +
+              invmass1 * wp.dot(dgrad1, dgrad1) +
+              invmass2 * wp.dot(dgrad2, dgrad2) +
+              invmass3 * wp.dot(dgrad3, dgrad3))
+    if dsum_w == 0.0:
+        return
+
+    # --- Volumetric constraint: C_H = J - alpha ---
+    # Clamped: only resist volume expansion (J > alpha)
+    alpha_snh = 1.0 + mu / lam
+    J = wp.determinant(F)
+    hC = J - alpha_snh
+
+    # Volume gradients: dJ/dx_i via cross products of edge vectors
+    inv_detDm = 1.0 / wp.max(wp.abs(restvolume) * 6.0, 1.0e-20)
+    hgrad0 = wp.cross(c1, c2) * inv_detDm
+    hgrad1 = wp.cross(c2, c0) * inv_detDm
+    hgrad2 = wp.cross(c0, c1) * inv_detDm
+    hgrad3 = -hgrad0 - hgrad1 - hgrad2
+
+    hsum_w = (invmass0 * wp.dot(hgrad0, hgrad0) +
+              invmass1 * wp.dot(hgrad1, hgrad1) +
+              invmass2 * wp.dot(hgrad2, hgrad2) +
+              invmass3 * wp.dot(hgrad3, hgrad3))
+    if hsum_w == 0.0:
+        return
+
+    # Coupled cross-term
+    dhsum = (invmass0 * wp.dot(dgrad0, hgrad0) +
+             invmass1 * wp.dot(dgrad1, hgrad1) +
+             invmass2 * wp.dot(dgrad2, hgrad2) +
+             invmass3 * wp.dot(dgrad3, hgrad3))
+
+    # XPBD compliances: alpha = 1/(stiffness * volume * dt^2)
+    abs_vol = wp.max(wp.abs(restvolume), 1.0e-20)
+    dalpha = 1.0 / (mu * abs_vol * dt * dt)
+    halpha = 1.0 / (lam * abs_vol * dt * dt)
+
+    # Damping
+    ddamp = float(0.0)
+    dgamma = float(1.0)
+    hdamp = float(0.0)
+    hgamma = float(1.0)
+    if kdampratio > 0.0:
+        prev0 = pprev[pt0]
+        prev1 = pprev[pt1]
+        prev2 = pprev[pt2]
+        prev3 = pprev[pt3]
+        dbeta = mu * abs_vol * kdampratio * dt * dt
+        hbeta = lam * abs_vol * kdampratio * dt * dt
+        dgamma = dalpha * dbeta / dt
+        hgamma = halpha * hbeta / dt
+        ddamp = (wp.dot(dgrad0, p0 - prev0) + wp.dot(dgrad1, p1 - prev1) +
+                 wp.dot(dgrad2, p2 - prev2) + wp.dot(dgrad3, p3 - prev3))
+        hdamp = (wp.dot(hgrad0, p0 - prev0) + wp.dot(hgrad1, p1 - prev1) +
+                 wp.dot(hgrad2, p2 - prev2) + wp.dot(hgrad3, p3 - prev3))
+        ddamp = ddamp * dgamma
+        hdamp = hdamp * hgamma
+        dgamma = dgamma + 1.0
+        hgamma = hgamma + 1.0
+
+    dL = cons[cidx].L[0]
+    hL = cons[cidx].L[2]
+
+    # Coupled 2x2 linear solve for both Lagrange multipliers
+    Axx = dgamma * dsum_w + dalpha
+    Ayy = hgamma * hsum_w + halpha
+    det_A = Axx * Ayy - dhsum * dhsum
+    if det_A < 1.0e-8:
+        return
+    inv_det = 1.0 / det_A
+    db = -dC - dalpha * dL - ddamp
+    hb = -hC - halpha * hL - hdamp
+    ddL = inv_det * (Ayy * db - dhsum * hb)
+    hdL = inv_det * (Axx * hb - dhsum * db)
+
+    if use_jacobi != 0:
+        update_dP(dP, dPw, invmass0 * (ddL * dgrad0 + hdL * hgrad0), pt0)
+        update_dP(dP, dPw, invmass1 * (ddL * dgrad1 + hdL * hgrad1), pt1)
+        update_dP(dP, dPw, invmass2 * (ddL * dgrad2 + hdL * hgrad2), pt2)
+        update_dP(dP, dPw, invmass3 * (ddL * dgrad3 + hdL * hgrad3), pt3)
+    else:
+        pos[pt0] = p0 + invmass0 * (ddL * dgrad0 + hdL * hgrad0)
+        pos[pt1] = p1 + invmass1 * (ddL * dgrad1 + hdL * hgrad1)
+        pos[pt2] = p2 + invmass2 * (ddL * dgrad2 + hdL * hgrad2)
+        pos[pt3] = p3 + invmass3 * (ddL * dgrad3 + hdL * hgrad3)
+        cons[cidx].L = wp.vec3(dL + ddL, cons[cidx].L[1], hL + hdL)
+
+
+@wp.kernel
+def solve_tetsnh_kernel(
+    cons: wp.array(dtype=Constraint),
+    pos: wp.array(dtype=wp.vec3),
+    pprev: wp.array(dtype=wp.vec3),
+    dP: wp.array(dtype=wp.vec3),
+    dPw: wp.array(dtype=wp.float32),
+    mass: wp.array(dtype=wp.float32),
+    stopped: wp.array(dtype=wp.int32),
+    rest_matrix: wp.array(dtype=wp.mat33),
+    dt: float,
+    use_jacobi: int,
+    offset: int,
+):
+    c = offset + wp.tid()
+    mu = cons[c].stiffness
+    if mu <= 0.0:
+        return
+    pts = cons[c].pts
+    tetid = cons[c].tetid
+    lam = cons[c].restdir[0]
+    tet_snh_update_xpbd_fn(
+        use_jacobi, c, cons, pts, dt, pos, pprev, dP, dPw,
+        mass, stopped, cons[c].restlength, rest_matrix[tetid],
+        mu, lam, cons[c].dampingratio)
+
+
 # ---------------------------------------------------------------------------
 # MuscleSim (Warp backend)
 # ---------------------------------------------------------------------------
@@ -1440,6 +1625,12 @@ class MuscleSim(MuscleSimBase):
                     self.dt, use_jacobi_int,
                     self.fiber_stiffness_scale,
                     offset])
+            elif ctype == TETSNH:
+                wp.launch(solve_tetsnh_kernel, dim=count, inputs=[
+                    self.cons, self.pos, self.pprev,
+                    self.dP, self.dPw, self.mass, self.stopped,
+                    self.rest_matrix,
+                    self.dt, use_jacobi_int, offset])
 
     def solve_constraints(self):
         if self.n_cons == 0:
