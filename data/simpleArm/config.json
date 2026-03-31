@@ -40,5 +40,15 @@
     "vbd_scale_guard_max": 1.6,
     "vbd_substeps": 20,
     "vbd_iterations": 20
+  },
+  "xpbd": {
+    "num_substeps": 20,
+    "attach_stiffness": 1e6,
+    "pin_stiffness": 1e8,
+    "fiber_stiffness": 1000.0,
+    "fiber_stiffness_scale": 200.0,
+    "volume_stiffness": 10000.0,
+    "arap_stiffness": 500.0,
+    "warmup_steps": 50
   }
 }
