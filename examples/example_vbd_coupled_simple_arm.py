@@ -32,14 +32,17 @@ import mujoco
 import numpy as np
 import warp as wp
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+from VMuscle.log import setup_logging
+setup_logging()
+
 import newton
 from newton.solvers import SolverVBD
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from VMuscle.activation import activation_dynamics_step_np
 from VMuscle.dgf_curves import active_force_length, force_velocity, passive_force_length
-from VMuscle.mesh_io import UsdTetExporter
+from VMuscle.mesh_io import MeshExporter
 from VMuscle.mesh_utils import (
+    check_mesh_quality,
     create_cylinder_tet_mesh,
     set_vmuscle_properties,
 )
@@ -126,12 +129,10 @@ def build_vbd_muscle_coupled(cfg, origin_pos, insertion_pos, fiber_length, devic
     builder = newton.ModelBuilder(up_axis="Y", gravity=0.0)
     tet_offset = len(builder.tet_indices)
 
-    mesh = newton.TetMesh(
-        vertices=vertices, tet_indices=tets.flatten(),
-        k_mu=1000.0, k_lambda=10000.0, k_damp=1.0, density=1060.0,
-    )
     builder.add_soft_mesh(
-        mesh=mesh, pos=(0, 0, 0), rot=wp.quat_identity(), scale=1.0, vel=(0, 0, 0)
+        pos=(0, 0, 0), rot=wp.quat_identity(), scale=1.0, vel=(0, 0, 0),
+        vertices=vertices.tolist(), indices=tets.flatten().tolist(),
+        k_mu=1000.0, k_lambda=10000.0, k_damp=1.0, density=1060.0,
     )
     set_vmuscle_properties(
         builder, tet_offset, fiber_dirs, sigma0=sigma0,
@@ -316,13 +317,14 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
             f"(iters={vbd_opts['iterations']}, substeps={vbd_opts['substeps']})"
         )
 
-    # --- USD exporter ---
-    anim_dir = "output/anim"
-    os.makedirs(anim_dir, exist_ok=True)
-    usd_path = os.path.join(anim_dir, "simple_arm_coupled.usda")
+    # --- Mesh exporter ---
     fps = int(round(1.0 / (substeps * mj_dt)))
-    exporter = UsdTetExporter(
-        tet_idx, usd_path=usd_path, prim_path="/muscle", fps=fps
+    rest_positions = meta["rest_positions"]
+    exporter = MeshExporter(
+        path="output/anim",
+        format="ply",
+        tet_indices=tet_idx,
+        positions=rest_positions,
     )
 
     # --- Warm-up: let VBD interior find equilibrium ---
@@ -339,6 +341,7 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
 
     # Check warm-up result
     pos_np = s0.particle_q.numpy()
+    check_mesh_quality(pos_np, tet_idx, tet_poses, step=-1)
     warmup_stretches = compute_fiber_stretches(pos_np, tet_idx, tet_poses, fib_np)
     warmup_ltilde = float(warmup_stretches.mean()) * stretch_to_ltilde
     if verbose:
@@ -387,8 +390,9 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
             vbd_solver.step(s0, s1, ctrl, contacts=None, dt=vbd_sub_dt)
             s0, s1 = s1, s0
 
-        # 4. Extract fiber stretch from VBD deformation gradient
+        # 4. Mesh quality check + extract fiber stretch
         vbd_pos = s0.particle_q.numpy()
+        check_mesh_quality(vbd_pos, tet_idx, tet_poses, step=step)
         vbd_valid = not np.any(np.isnan(vbd_pos))
         if vbd_valid:
             stretches = compute_fiber_stretches(vbd_pos, tet_idx, tet_poses, fib_np)
@@ -478,10 +482,8 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
             f"final angle={np.degrees(elbow_angles[-1]):.1f}deg"
         )
 
-    # --- Finalize USD ---
+    # --- Finalize mesh export ---
     exporter.finalize()
-    if verbose:
-        print(f"USD animation saved to {usd_path}")
 
     # --- Save .sto ---
     os.makedirs("output", exist_ok=True)

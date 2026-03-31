@@ -12,21 +12,25 @@ Plotting (in OpenSimExample repo):
     python scripts/plot_sliding_ball.py --vbd output/vbd_muscle_sliding_ball_default.npz
 """
 
+import argparse
 import json
 import os
-import argparse
 
 import numpy as np
 import warp as wp
+
+from VMuscle.log import setup_logging
+setup_logging()
 
 import newton
 from newton.solvers import SolverVBD
 
 from VMuscle.activation import activation_dynamics_step_np
 from VMuscle.dgf_curves import compute_fiber_forces
-from VMuscle.mesh_io import UsdTetExporter
+from VMuscle.mesh_io import MeshExporter
 from VMuscle.mesh_utils import (
     assign_fiber_directions,
+    check_mesh_quality,
     create_cylinder_tet_mesh,
     set_vmuscle_properties,
 )
@@ -115,11 +119,12 @@ def run_sim(cfg, label="default"):
     # Build model
     builder = newton.ModelBuilder(up_axis=cfg["up_axis"])
     tet_offset = len(builder.tet_indices)
-    mesh = newton.TetMesh(vertices=vertices, tet_indices=tets.flatten(),
-                          k_mu=cfg["k_mu"], k_lambda=cfg["k_lambda"],
-                          k_damp=cfg["k_damp"], density=density)
-    builder.add_soft_mesh(mesh=mesh, pos=(0, 0, 0), rot=wp.quat_identity(),
-                          scale=1.0, vel=(0, 0, 0))
+    builder.add_soft_mesh(
+        pos=(0, 0, 0), rot=wp.quat_identity(), scale=1.0, vel=(0, 0, 0),
+        vertices=vertices.tolist(), indices=tets.flatten().tolist(),
+        k_mu=cfg["k_mu"], k_lambda=cfg["k_lambda"],
+        k_damp=cfg["k_damp"], density=density,
+    )
     set_vmuscle_properties(
         builder, tet_offset, fiber_dirs, sigma0,
         fiber_damping=cfg["fiber_damping"],
@@ -156,12 +161,14 @@ def run_sim(cfg, label="default"):
     s0, s1, ctrl = model.state(), model.state(), model.control()
     solver = SolverVBD(model, iterations=iterations, vmuscle_quasi_static=True)
 
-    # USD animation exporter
-    anim_dir = "output/anim"
-    os.makedirs(anim_dir, exist_ok=True)
-    usd_path = os.path.join(anim_dir, f"sliding_ball_{label}.usda")
+    # Mesh exporter
     fps = int(1.0 / dt) if dt > 0 else 60
-    exporter = UsdTetExporter(tets, usd_path=usd_path, prim_path="/muscle", fps=fps)
+    exporter = MeshExporter(
+        path=f"output/anim/sliding_ball_{label}",
+        format="ply",
+        tet_indices=tets,
+        positions=s0.particle_q.numpy(),
+    )
 
     # Simulate
     v_max = cfg["v_max"]
@@ -194,6 +201,7 @@ def run_sim(cfg, label="default"):
         pos = s0.particle_q.numpy()
         vel = s0.particle_qd.numpy()
         exporter.save_frame(pos.astype(np.float32), step)
+        check_mesh_quality(pos, tet_idx, tet_poses, step=step)
         bottom_z = float(np.mean([pos[bid][axis] for bid in bottom_ids]))
         bottom_vz = float(np.mean([vel[bid][axis] for bid in bottom_ids]))
 
@@ -212,7 +220,6 @@ def run_sim(cfg, label="default"):
                   f"bottom_z={bottom_z:.6f}  l~={fd['l_mean']:.4f}")
 
     exporter.finalize()
-    print(f"USD animation saved to {usd_path}")
     print("Done.")
 
     # Save NPZ

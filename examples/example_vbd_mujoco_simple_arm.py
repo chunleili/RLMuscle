@@ -32,15 +32,19 @@ import mujoco
 import numpy as np
 import warp as wp
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+from VMuscle.log import setup_logging
+setup_logging()
+
 import newton
 from newton.solvers import SolverVBD
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from VMuscle.activation import activation_dynamics_step_np
 from VMuscle.dgf_curves import active_force_length, force_velocity, passive_force_length
-from VMuscle.mesh_io import UsdTetExporter
+from VMuscle.mesh_io import MeshExporter
 from VMuscle.mesh_utils import (
     assign_fiber_directions,
+    check_mesh_quality,
     create_cylinder_tet_mesh,
     set_vmuscle_properties,
 )
@@ -106,12 +110,10 @@ def build_vbd_muscle(cfg, mesh_length, device=None):
 
     # Moderate elastic stiffness: enough to resist radial bulging from muscle
     # contraction, but not so high that VBD corrections are suppressed.
-    mesh = newton.TetMesh(
-        vertices=vertices, tet_indices=tets.flatten(),
-        k_mu=1000.0, k_lambda=10000.0, k_damp=1.0, density=1060.0,
-    )
     builder.add_soft_mesh(
-        mesh=mesh, pos=(0, 0, 0), rot=wp.quat_identity(), scale=1.0, vel=(0, 0, 0)
+        pos=(0, 0, 0), rot=wp.quat_identity(), scale=1.0, vel=(0, 0, 0),
+        vertices=vertices.tolist(), indices=tets.flatten().tolist(),
+        k_mu=1000.0, k_lambda=10000.0, k_damp=1.0, density=1060.0,
     )
     # sigma0 > 0: VBD vmuscle kernel computes quasi-static DGF forces internally
     set_vmuscle_properties(
@@ -262,13 +264,13 @@ def vbd_mujoco_simple_arm(cfg, verbose=True, device=None):
             f"(iters={vbd_opts['iterations']}, substeps={vbd_opts['substeps']})"
         )
 
-    # --- USD animation exporter ---
-    anim_dir = "output/anim"
-    os.makedirs(anim_dir, exist_ok=True)
-    usd_path = os.path.join(anim_dir, "simple_arm_vbd.usd")
+    # --- Mesh exporter ---
     fps = int(round(1.0 / (substeps * mj_dt)))
-    exporter = UsdTetExporter(
-        tet_idx, usd_path=usd_path, prim_path="/muscle", fps=fps
+    exporter = MeshExporter(
+        path="output/anim",
+        format="ply",
+        tet_indices=tet_idx,
+        positions=rest_verts,
     )
 
     # --- Simulation ---
@@ -334,10 +336,13 @@ def vbd_mujoco_simple_arm(cfg, verbose=True, device=None):
                 vbd_solver.step(s0, s1, ctrl, contacts=None, dt=vbd_sub_dt)
                 s0, s1 = s1, s0
 
-        # Save VBD mesh frame for USD animation
-        # When VBD is skipped, save the kinematically scaled mesh
+        # Save mesh frame (VBD or kinematic fallback)
         vbd_pos = s0.particle_q.numpy() if run_vbd else pos_np
         exporter.save_frame(vbd_pos.astype(np.float32), step)
+
+        # Mesh quality check
+        if run_vbd:
+            check_mesh_quality(vbd_pos, tet_idx, tet_poses, step=step)
 
         # Extract per-tet fiber stretch from VBD's 3D deformation gradient
         vbd_valid = not np.any(np.isnan(vbd_pos))
@@ -433,10 +438,8 @@ def vbd_mujoco_simple_arm(cfg, verbose=True, device=None):
             f"final angle={np.degrees(elbow_angles[-1]):.1f}deg"
         )
 
-    # --- Finalize USD ---
+    # --- Finalize mesh export ---
     exporter.finalize()
-    if verbose:
-        print(f"USD animation saved to {usd_path}")
 
     # --- Save outputs ---
     os.makedirs("output", exist_ok=True)
