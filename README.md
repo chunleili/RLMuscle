@@ -25,6 +25,12 @@ Then install the package with:
 uv sync 
 ```
 
+or with optional dependencies (for OpenSim comparison):
+
+```
+uv sync --extra optional
+```
+
 Then run the example with:
 ```
 uv run main.py 

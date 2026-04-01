@@ -179,6 +179,23 @@ def transform_capsule(verts, body_pos, body_quat):
     return (R @ verts.astype(np.float64).T).T + body_pos
 
 
+def _rotation_between(u, v):
+    """Rotation matrix that takes unit vector *u* to unit vector *v*."""
+    u = np.asarray(u, dtype=np.float64); u /= np.linalg.norm(u)
+    v = np.asarray(v, dtype=np.float64); v /= np.linalg.norm(v)
+    c = np.dot(u, v)
+    if c > 1.0 - 1e-8:
+        return np.eye(3, dtype=np.float32)
+    if c < -1.0 + 1e-8:
+        return np.diag([-1, -1, 1]).astype(np.float32)
+    ax = np.cross(u, v)
+    ax /= np.linalg.norm(ax)
+    K = np.array([[0, -ax[2], ax[1]], [ax[2], 0, -ax[0]], [-ax[1], ax[0], 0]])
+    s = np.sqrt(1 - c * c)
+    R = np.eye(3) + s * K + (1 - c) * (K @ K)
+    return R.astype(np.float32)
+
+
 def _upload_all_constraints(sim, all_constraints):
     """Sort → assign cidx → upload to warp array.  Sets cons / cons_ranges."""
     all_constraints.sort(key=lambda c: c["type"])
@@ -451,11 +468,16 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         print(f"[XPBD] mesh: {len(vertices)} verts, {n_tets} tets, "
               f"origin={len(origin_ids)}, insertion={len(insertion_ids)}")
 
-    # Bone targets: origin targets are FIXED (rest positions),
-    # insertion targets follow MuJoCo (initially = rest positions).
-    origin_targets = vertices[origin_ids].copy()
-    insertion_targets = vertices[insertion_ids].copy()
-    bone_targets_np = np.vstack([origin_targets, insertion_targets]).astype(np.float32)
+    # Bone targets: both origin and insertion targets will be updated each
+    # substep by rotating the initial mesh to align with the current
+    # origin→insertion path direction.  This models the muscle being
+    # "pulled" by tendons rather than attached rigidly to bones.
+    origin_targets_init = vertices[origin_ids].copy()
+    insertion_targets_init = vertices[insertion_ids].copy()
+    all_attach_init = np.vstack([origin_targets_init, insertion_targets_init]).astype(np.float32)
+    mesh_center_init = (mesh_origin + mesh_end).astype(np.float32) / 2.0
+    tdu_init = tdu.copy()  # initial path direction
+    bone_targets_np = all_attach_init.copy()
 
     # --- Build XPBD sim ---
     wp.init()
@@ -530,13 +552,23 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         for _sub in range(num_substeps):
             t_now = physics_time
 
-            # a) Update insertion bone targets from MuJoCo
+            # a) Update ALL attach targets: rotate initial targets to align
+            #    with the current origin→insertion path direction.
+            #    This models tendons pulling the muscle along the path.
             mujoco.mj_forward(mj_model, mj_data)
-            new_ins = mj_data.site_xpos[insertion_sid].copy()
-            delta = (new_ins - insertion_pos).astype(np.float32)
-            new_ins_targets = insertion_targets + delta
-            # Rebuild full bone array (origin fixed + insertion updated)
-            bone_arr = np.vstack([origin_targets, new_ins_targets]).astype(np.float32)
+            cur_origin = mj_data.site_xpos[origin_sid].copy()
+            cur_insertion = mj_data.site_xpos[insertion_sid].copy()
+            cur_dir = cur_insertion - cur_origin
+            cur_path_len = float(np.linalg.norm(cur_dir))
+            cur_tdu = (cur_dir / cur_path_len).astype(np.float32)
+            cur_tendon_each = (cur_path_len - mesh_length) / 2.0
+            cur_mesh_origin = cur_origin + cur_tdu * cur_tendon_each
+            cur_mesh_center = cur_mesh_origin + cur_tdu * (mesh_length / 2.0)
+
+            # Rotate initial targets from tdu_init to cur_tdu, re-center
+            R_path = _rotation_between(tdu_init, cur_tdu)
+            rotated = (R_path @ (all_attach_init - mesh_center_init).T).T
+            bone_arr = (rotated + cur_mesh_center.astype(np.float32)).astype(np.float32)
             sim.bone_pos_field = wp.from_numpy(bone_arr, dtype=wp.vec3)
 
             # b) One XPBD step

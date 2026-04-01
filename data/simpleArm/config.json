@@ -45,7 +45,7 @@
     "num_substeps": 30,
     "volume_stiffness": 1e6,
     "arap_stiffness": 1e6,
-    "attach_origin_stiffness": 10,
+    "attach_origin_stiffness": 1e10,
     "attach_insertion_stiffness": 1e10,
     "warmup_steps": 10
   }

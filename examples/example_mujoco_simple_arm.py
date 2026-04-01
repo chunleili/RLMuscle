@@ -56,8 +56,10 @@ def build_mjcf(cfg):
     geo = cfg["geometry"]
     L_h = geo["humerus_length"]
     L_r = geo["radius_length"]
-    oy = -(L_h - geo["muscle_origin_on_humerus"][1])
-    iy = -(L_r - geo["muscle_insertion_on_radius"][1])
+    mo = geo["muscle_origin_on_humerus"]
+    mi = geo["muscle_insertion_on_radius"]
+    ox, oy, oz = mo[0], -(L_h - mo[1]), mo[2] if len(mo) > 2 else 0
+    ix, iy, iz = mi[0], -(L_r - mi[1]), mi[2] if len(mi) > 2 else 0
 
     return textwrap.dedent(f"""\
     <?xml version="1.0" ?>
@@ -73,7 +75,7 @@ def build_mjcf(cfg):
           <geom type="capsule" size="0.04" fromto="0 0 0 0 {-L_h} 0"
                 rgba="0.7 0.7 0.7 0.8" mass="0"
                 contype="0" conaffinity="0"/>
-          <site name="muscle_origin" pos="0 {oy} 0" size="0.015"
+          <site name="muscle_origin" pos="{ox} {oy} {oz}" size="0.015"
                 rgba="1 0 0 1"/>
 
           <!-- Radius: elbow hinge at humerus bottom. -->
@@ -88,7 +90,7 @@ def build_mjcf(cfg):
             <geom type="capsule" size="0.03" fromto="0 0 0 0 {-L_r} 0"
                   rgba="0.5 0.5 0.8 0.8" mass="0"
                   contype="0" conaffinity="0"/>
-            <site name="muscle_insertion" pos="0 {iy} 0" size="0.015"
+            <site name="muscle_insertion" pos="{ix} {iy} {iz}" size="0.015"
                   rgba="0 0 1 1"/>
           </body>
         </body>

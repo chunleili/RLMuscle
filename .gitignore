@@ -28,3 +28,4 @@ newton_sim_out.usd
 
 core
 *.log
+MUJOCO_LOG.TXT
