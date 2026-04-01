@@ -47,6 +47,9 @@
     "arap_stiffness": 1e6,
     "attach_origin_stiffness": 1e10,
     "attach_insertion_stiffness": 1e10,
-    "warmup_steps": 10
+    "warmup_steps": 10,
+    "mj_per_xpbd": 10,
+    "density": 1060.0,
+    "veldamping": 0.02
   }
 }
