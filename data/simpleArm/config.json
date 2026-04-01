@@ -46,7 +46,7 @@
     "attach_stiffness": 1e6,
     "pin_stiffness": 1e8,
     "fiber_stiffness": 1000.0,
-    "fiber_stiffness_scale": 200.0,
+    "fiber_stiffness_scale": 10.0,
     "volume_stiffness": 1e5,
     "arap_stiffness": 100.0,
     "warmup_steps": 10

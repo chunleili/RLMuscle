@@ -228,11 +228,9 @@ def build_xpbd_muscle_sim(
         constraints=[
             {"type": "volume", "name": "vol",
              "stiffness": volume_stiffness, "dampingratio": 1.0},
-            {"type": "fiberdgf", "name": "fiber_dgf",
-             "stiffness": fiber_stiffness, "dampingratio": fiber_damping,
-             "sigma0": sigma0, "contraction_factor": contraction_factor},
-            {"type": "tetarap", "name": "arap",
-             "stiffness": arap_stiffness, "dampingratio": arap_damping},
+            # TETFIBERDGF removed: 1D force model, mesh contraction causes instability.
+            # TETARAP removed: fights deformation when arm moves, causes edge inversions.
+            # Keeping only TETVOLUME for basic shape + PIN/ATTACH for boundary.
         ],
         dt=dt,
         num_substeps=num_substeps,
@@ -504,7 +502,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         fiber_stiffness_scale=fiber_stiffness_scale,
         gravity=0.0,
         density=1060.0,
-        veldamping=0.02,
+        veldamping=0.5,
     )
 
     n_tets = len(tets)
@@ -546,15 +544,9 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
     if verbose:
         print(f"[XPBD+MuJoCo] Warm-up: {warmup_steps} steps (activation=0)")
 
-    # Zero activation during warm-up
+    # Zero activation during warm-up (no fiber force)
     wp.launch(fill_float_kernel, dim=sim.activation.shape[0],
               inputs=[sim.activation, float(0.0)])
-
-    # Set contraction_factor=0 so target_stretch=1.0 (no contraction)
-    if TETFIBERDGF in sim.cons_ranges:
-        fib_offset, fib_count = sim.cons_ranges[TETFIBERDGF]
-        wp.launch(update_cons_restdir1_kernel, dim=fib_count,
-                  inputs=[sim.cons, float(0.0), int(TETFIBERDGF), int(fib_offset), int(fib_count)])
 
     for _ in range(warmup_steps):
         sim.update_attach_targets()
@@ -604,14 +596,8 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         wp.launch(fill_float_kernel, dim=sim.activation.shape[0],
                   inputs=[sim.activation, float(activation)])
 
-        # 3. Update contraction_factor from DGF equilibrium
-        # cf = 1 - lm_eq (contraction_factor, not equilibrium length)
-        normalized_load = prev_muscle_force / F_max if F_max > 0 else 0.0
-        cf = 1.0 - dgf_equilibrium_fiber_length(activation, normalized_load)
-        if TETFIBERDGF in sim.cons_ranges:
-            fib_offset, fib_count = sim.cons_ranges[TETFIBERDGF]
-            wp.launch(update_cons_restdir1_kernel, dim=fib_count,
-                      inputs=[sim.cons, float(cf), int(TETFIBERDGF), int(fib_offset), int(fib_count)])
+        # 3. No contraction_factor update needed (TETFIBERDGF removed)
+        cf = 0.0  # for logging only
 
         # 4. XPBD substeps
         sim.update_attach_targets()
@@ -624,10 +610,26 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
 
         sim.step_cnt += 1
 
-        # 5. Extract fiber stretch from deformation gradient
+        # 5. Extract fiber stretch + mesh quality check
         pos_np = sim.pos.numpy()
         stretches = compute_fiber_stretches(pos_np, tet_idx, rest_matrices, fiber_dirs)
         l_tilde_xpbd = float(np.mean(stretches) * stretch_to_ltilde)
+
+        # Mesh quality: check for inverted tets (det(F) <= 0)
+        # rest_matrices use pts[3] as reference; check_mesh_quality uses pts[0].
+        # Compute detF inline with our convention.
+        n_inverted = 0
+        for e in range(n_tets):
+            i0, i1, i2, i3 = tet_idx[e]
+            Ds = np.column_stack([pos_np[i0]-pos_np[i3], pos_np[i1]-pos_np[i3], pos_np[i2]-pos_np[i3]])
+            detF = np.linalg.det(Ds @ rest_matrices[e])
+            if detF <= 0:
+                n_inverted += 1
+        if n_inverted > 0:
+            from VMuscle.mesh_utils import MeshDistortionError
+            raise MeshDistortionError(
+                f"step={step}: {n_inverted}/{n_tets} tets inverted (det(F)<=0)"
+            )
 
         # Save mesh frame
         exporter.save_frame(pos_np.astype(np.float32), step)
