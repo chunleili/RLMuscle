@@ -6,7 +6,7 @@
     "muscle_insertion_on_radius": [0, 0.7, 0],
     "muscle_radius": 0.02,
     "n_circumferential": 8,
-    "n_axial": 10
+    "n_axial": 20
   },
   "muscle": {
     "max_isometric_force": 200.0,
@@ -24,9 +24,9 @@
     "tau_deact": 0.060
   },
   "solver": {
-    "dt": 0.0167,
-    "n_steps": 600,
-    "arch": "cuda:0"
+    "dt": 0.01,
+    "n_steps": 1000,
+    "arch": "cpu"
   },
   "initial_conditions": {
     "elbow_angle_deg": 90.0
@@ -43,12 +43,10 @@
   },
   "xpbd": {
     "num_substeps": 30,
-    "attach_stiffness": 1e6,
-    "pin_stiffness": 1e8,
-    "fiber_stiffness": 1000.0,
-    "fiber_stiffness_scale": 10.0,
-    "volume_stiffness": 1e5,
-    "arap_stiffness": 100.0,
+    "volume_stiffness": 1e6,
+    "arap_stiffness": 1e6,
+    "attach_origin_stiffness": 1e37,
+    "attach_insertion_stiffness": 1e10,
     "warmup_steps": 10
   }
 }
