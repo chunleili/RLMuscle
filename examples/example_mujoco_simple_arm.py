@@ -27,7 +27,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from VMuscle.activation import activation_dynamics_step_np
 from VMuscle.dgf_curves import active_force_length, force_velocity, passive_force_length
-from VMuscle.simple_arm_mujoco import build_mjcf
+from examples.simple_arm_mujoco import build_mjcf
 
 
 def load_config(path="data/simpleArm/config.json"):

@@ -19,7 +19,7 @@ from VMuscle.dgf_curves import active_force_length, force_velocity, passive_forc
 from VMuscle.mesh_io import MeshExporter, save_ply
 from VMuscle.mesh_utils import create_cylinder_tet_mesh
 from VMuscle.muscle_warp import Constraint, MuscleSim
-from VMuscle.simple_arm_mujoco import build_mjcf
+from examples.simple_arm_mujoco import build_mjcf
 
 
 # ---------------------------------------------------------------------------

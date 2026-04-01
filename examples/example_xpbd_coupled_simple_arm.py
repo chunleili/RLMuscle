@@ -14,7 +14,7 @@ import json
 
 import numpy as np
 
-from VMuscle.simple_arm_xpbd import run_xpbd_coupled_loop
+from examples.simple_arm_xpbd import run_xpbd_coupled_loop
 
 
 def load_config(path="data/simpleArm/config.json"):
