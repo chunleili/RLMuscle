@@ -417,10 +417,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
               f"substeps={num_substeps} mj_per_xpbd={mj_per_xpbd}")
 
     # --- MuJoCo ---
-    _ed = os.path.dirname(os.path.abspath(__file__))
-    if _ed not in sys.path:
-        sys.path.insert(0, _ed)
-    from example_mujoco_simple_arm import build_mjcf
+    from VMuscle.simple_arm_mujoco import build_mjcf
 
     mj_model = mujoco.MjModel.from_xml_string(build_mjcf(cfg))
     mj_model.opt.timestep = dtmj
