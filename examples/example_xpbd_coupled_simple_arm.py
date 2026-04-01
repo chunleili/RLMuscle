@@ -421,10 +421,10 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         print(f"[XPBD] fiber_length_init={fiber_length_init:.4f} "
               f"l_tilde={fiber_length_init / L_opt:.4f}")
 
-    # --- Cylinder mesh ---
+    # --- Cylinder mesh spanning full origin → insertion path ---
     tendon_dir = insertion_pos - origin_pos
-    tdu = (tendon_dir / np.linalg.norm(tendon_dir)).astype(np.float32)
-    mesh_length = fiber_length_init
+    mesh_length = float(np.linalg.norm(tendon_dir))
+    tdu = (tendon_dir / mesh_length).astype(np.float32)
 
     vertices, tets = create_cylinder_tet_mesh(mesh_length, r, n_axial, n_circ)
     R = _rotation_matrix_from_z_to(tdu)
@@ -607,6 +607,13 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         r_verts = transform_capsule(radius_verts_local, r_pos, r_quat)
         save_ply(os.path.join(bone_anim_dir, f"radius_{step:04d}.ply"),
                  r_verts.astype(np.float32), radius_faces)
+        # Tendon path: thin capsule from origin site to insertion site
+        cur_origin = mj_data.site_xpos[origin_sid].copy()
+        cur_insertion = mj_data.site_xpos[insertion_sid].copy()
+        t_verts, t_faces = create_capsule_mesh(
+            cur_origin, cur_insertion, radius=0.005, n_circ=6, n_axial=4, n_cap=2)
+        save_ply(os.path.join(bone_anim_dir, f"tendon_{step:04d}.ply"),
+                 t_verts, t_faces)
 
         nfl_1d = (float(mj_data.ten_length[0]) - L_slack) / L_opt
         forces_out.append(muscle_force)
