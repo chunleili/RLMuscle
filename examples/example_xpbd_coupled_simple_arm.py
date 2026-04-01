@@ -421,10 +421,13 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         print(f"[XPBD] fiber_length_init={fiber_length_init:.4f} "
               f"l_tilde={fiber_length_init / L_opt:.4f}")
 
-    # --- Cylinder mesh spanning full origin → insertion path ---
+    # --- Cylinder mesh for fiber portion only ---
+    # Mesh covers fiber_length from origin along tendon direction.
+    # Tendon gap (origin_end → insertion) is visualized separately.
     tendon_dir = insertion_pos - origin_pos
-    mesh_length = float(np.linalg.norm(tendon_dir))
-    tdu = (tendon_dir / mesh_length).astype(np.float32)
+    tendon_path_length = float(np.linalg.norm(tendon_dir))
+    tdu = (tendon_dir / tendon_path_length).astype(np.float32)
+    mesh_length = fiber_length_init
 
     vertices, tets = create_cylinder_tet_mesh(mesh_length, r, n_axial, n_circ)
     R = _rotation_matrix_from_z_to(tdu)
@@ -607,11 +610,14 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         r_verts = transform_capsule(radius_verts_local, r_pos, r_quat)
         save_ply(os.path.join(bone_anim_dir, f"radius_{step:04d}.ply"),
                  r_verts.astype(np.float32), radius_faces)
-        # Tendon path: thin capsule from origin site to insertion site
-        cur_origin = mj_data.site_xpos[origin_sid].copy()
+        # Tendon: thin capsule from muscle mesh bottom to MuJoCo insertion site.
+        # The muscle mesh covers the fiber portion (origin → mesh_end).
+        # The tendon bridges mesh_end → insertion.
+        mesh_bottom_center = pos_np[insertion_ids].mean(axis=0)
         cur_insertion = mj_data.site_xpos[insertion_sid].copy()
         t_verts, t_faces = create_capsule_mesh(
-            cur_origin, cur_insertion, radius=0.005, n_circ=6, n_axial=4, n_cap=2)
+            mesh_bottom_center, cur_insertion, radius=0.005,
+            n_circ=6, n_axial=4, n_cap=2)
         save_ply(os.path.join(bone_anim_dir, f"tendon_{step:04d}.ply"),
                  t_verts, t_faces)
 
