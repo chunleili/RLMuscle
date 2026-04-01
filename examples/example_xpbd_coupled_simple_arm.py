@@ -421,26 +421,29 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         print(f"[XPBD] fiber_length_init={fiber_length_init:.4f} "
               f"l_tilde={fiber_length_init / L_opt:.4f}")
 
-    # --- Cylinder mesh for fiber portion only ---
-    # Mesh covers fiber_length from origin along tendon direction.
-    # Tendon gap (origin_end → insertion) is visualized separately.
+    # --- Cylinder mesh for fiber portion, centered between tendons ---
+    # Layout: origin --[tendon_prox]-- muscle --[tendon_dist]-- insertion
+    # Tendon slack length split equally between proximal and distal.
     tendon_dir = insertion_pos - origin_pos
     tendon_path_length = float(np.linalg.norm(tendon_dir))
     tdu = (tendon_dir / tendon_path_length).astype(np.float32)
     mesh_length = fiber_length_init
+    tendon_each = (tendon_path_length - mesh_length) / 2.0
 
+    # Mesh starts at origin + tendon_each along path
+    mesh_origin = origin_pos + tdu * tendon_each
     vertices, tets = create_cylinder_tet_mesh(mesh_length, r, n_axial, n_circ)
     R = _rotation_matrix_from_z_to(tdu)
-    vertices = (R @ vertices.T).T + origin_pos.astype(np.float32)
+    vertices = (R @ vertices.T).T + mesh_origin.astype(np.float32)
 
     n_tets = len(tets)
     fiber_dirs = np.tile(tdu, (n_tets, 1))
 
-    # Boundary vertices (endcap layers, mask by 5% distance along axis)
-    mesh_end = origin_pos + tdu * mesh_length
-    mask_dist = mesh_length * 0.05 + r  # 5% axial + radius
+    # Boundary vertices (endcap layers)
+    mesh_end = mesh_origin + tdu * mesh_length
+    mask_dist = mesh_length * 0.05 + r
     origin_ids = [i for i in range(len(vertices))
-                  if np.linalg.norm(vertices[i] - origin_pos) < mask_dist]
+                  if np.linalg.norm(vertices[i] - mesh_origin) < mask_dist]
     insertion_ids = [i for i in range(len(vertices))
                      if np.linalg.norm(vertices[i] - mesh_end) < mask_dist]
 
@@ -610,16 +613,23 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         r_verts = transform_capsule(radius_verts_local, r_pos, r_quat)
         save_ply(os.path.join(bone_anim_dir, f"radius_{step:04d}.ply"),
                  r_verts.astype(np.float32), radius_faces)
-        # Tendon: thin capsule from muscle mesh bottom to MuJoCo insertion site.
-        # The muscle mesh covers the fiber portion (origin → mesh_end).
-        # The tendon bridges mesh_end → insertion.
-        mesh_bottom_center = pos_np[insertion_ids].mean(axis=0)
+        # Tendons: thin capsules at both ends of the muscle.
+        # Proximal: origin_site → muscle top
+        # Distal: muscle bottom → insertion_site
+        cur_origin = mj_data.site_xpos[origin_sid].copy()
         cur_insertion = mj_data.site_xpos[insertion_sid].copy()
-        t_verts, t_faces = create_capsule_mesh(
-            mesh_bottom_center, cur_insertion, radius=0.005,
+        mesh_top_center = pos_np[origin_ids].mean(axis=0)
+        mesh_bot_center = pos_np[insertion_ids].mean(axis=0)
+        tp_v, tp_f = create_capsule_mesh(
+            cur_origin, mesh_top_center, radius=0.005,
             n_circ=6, n_axial=4, n_cap=2)
-        save_ply(os.path.join(bone_anim_dir, f"tendon_{step:04d}.ply"),
-                 t_verts, t_faces)
+        save_ply(os.path.join(bone_anim_dir, f"tendon_prox_{step:04d}.ply"),
+                 tp_v, tp_f)
+        td_v, td_f = create_capsule_mesh(
+            mesh_bot_center, cur_insertion, radius=0.005,
+            n_circ=6, n_axial=4, n_cap=2)
+        save_ply(os.path.join(bone_anim_dir, f"tendon_dist_{step:04d}.ply"),
+                 td_v, td_f)
 
         nfl_1d = (float(mj_data.ten_length[0]) - L_slack) / L_opt
         forces_out.append(muscle_force)
