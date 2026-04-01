@@ -1345,6 +1345,141 @@ def solve_tetsnh_kernel(
 
 class MuscleSim(MuscleSimBase):
 
+    @classmethod
+    def from_procedural(cls, vertices, tets, fiber_dirs_per_tet,
+                        bone_targets=None, *, constraint_configs,
+                        dts, device="cpu", density=1060.0, veldamping=0.02,
+                        gravity=0.0):
+        """Create a MuscleSim from procedural mesh data (no file loading).
+
+        Args:
+            vertices: Vertex positions (N, 3) float.
+            tets: Tet connectivity (M, 4) int.
+            fiber_dirs_per_tet: Per-tet fiber directions (M, 3) float.
+            bone_targets: Optional attachment target positions (K, 3) float.
+            constraint_configs: List of constraint config dicts, e.g.
+                [{"type": "volume", "stiffness": 1e6, "dampingratio": 0.1}, ...].
+            dts: Simulation timestep [s].
+            device: Warp device string ("cpu" or "cuda:0").
+            density: Material density [kg/m^3].
+            veldamping: Velocity damping coefficient.
+            gravity: Gravity magnitude [m/s^2].
+
+        Returns:
+            Initialized MuscleSim instance.
+        """
+        from types import SimpleNamespace
+
+        vertices = np.asarray(vertices, dtype=np.float32)
+        tets = np.asarray(tets, dtype=np.int32)
+        n_v = len(vertices)
+
+        # Average per-tet fiber dirs to per-vertex
+        fiber_dirs_per_tet = np.asarray(fiber_dirs_per_tet, dtype=np.float32)
+        vf = np.zeros((n_v, 3), dtype=np.float32)
+        vc = np.zeros(n_v, dtype=np.float32)
+        for e, t in enumerate(tets):
+            for vi in t:
+                vf[vi] += fiber_dirs_per_tet[e]; vc[vi] += 1.0
+        vc = np.maximum(vc, 1.0)
+        vf /= vc[:, None]
+        vf /= np.maximum(np.linalg.norm(vf, axis=1, keepdims=True), 1e-8)
+
+        cfg = SimpleNamespace(
+            geo_path="<procedural>", bone_geo_path="<none>",
+            gui=False, render_mode="none",
+            constraints=list(constraint_configs),
+            dt=dts, num_substeps=1,
+            gravity=gravity, density=density, veldamping=veldamping,
+            contraction_ratio=0.0, fiber_stiffness_scale=1.0,
+            HAS_compressstiffness=False, arch=device,
+            save_image=False, pause=False, reset=False,
+            show_auxiliary_meshes=False, show_wireframe=False,
+            render_fps=24, color_bones=False, color_muscles="tendonmask",
+            activation=0.0, nsteps=1,
+        )
+
+        wp.set_device(device)
+        sim = object.__new__(cls)
+        sim.cfg = cfg
+        sim.constraint_configs = cfg.constraints
+
+        sim.pos0_np = vertices
+        sim.tet_np = tets
+        sim.v_fiber_np = vf
+        sim.v_tendonmask_np = None
+        sim.geo = SimpleNamespace()
+        sim.n_verts = n_v
+
+        if bone_targets is not None:
+            sim.bone_pos = np.asarray(bone_targets, dtype=np.float32)
+        else:
+            sim.bone_pos = np.zeros((0, 3), dtype=np.float32)
+        sim.bone_geo = None
+        sim.bone_indices_np = np.zeros(0, dtype=np.int32)
+        sim.bone_muscle_ids = {}
+
+        wp.init()
+        sim._init_backend()
+        sim._allocate_fields()
+        sim._init_fields()
+        sim._precompute_rest()
+        sim._build_surface_tris()
+        sim._create_bone_fields()
+
+        sim.use_jacobi = False
+        sim.use_colored_gs = False
+        sim.contraction_ratio = 0.0
+        sim.fiber_stiffness_scale = 1.0
+        sim.has_compressstiffness = False
+        sim.dt = dts
+        sim.step_cnt = 0
+        sim.renderer = None
+
+        sim.build_constraints()
+        return sim
+
+    def rebuild_constraints(self, extra_constraints=None):
+        """Rebuild constraint arrays, optionally appending extra constraints.
+
+        Useful for adding ATTACH constraints after initial build.
+
+        Args:
+            extra_constraints: Optional list of constraint dicts to append.
+        """
+        all_cons = list(self.raw_constraints)
+        if extra_constraints:
+            all_cons.extend(extra_constraints)
+
+        all_cons.sort(key=lambda c: c["type"])
+        n = len(all_cons)
+        self.n_cons = n
+        self.cons_ranges = {}
+        if n == 0:
+            self.cons = wp.zeros(0, dtype=Constraint)
+            self.reaction_accum = wp.zeros(1, dtype=wp.vec3)
+            return
+
+        prev, start = None, 0
+        for i, c in enumerate(all_cons):
+            c["cidx"] = i
+            t = c["type"]
+            if t != prev:
+                if prev is not None:
+                    self.cons_ranges[prev] = (start, i - start)
+                start, prev = i, t
+        self.cons_ranges[prev] = (start, n - start)
+
+        dt_np = Constraint.numpy_dtype()
+        arr = np.zeros(n, dtype=dt_np)
+        for key in ("type", "pts", "stiffness", "dampingratio", "tetid",
+                    "L", "restlength", "restvector", "restdir",
+                    "compressionstiffness"):
+            arr[key] = np.array([c[key] for c in all_cons])
+        arr["cidx"] = np.arange(n, dtype=np.int32)
+        self.cons = wp.array(arr, dtype=Constraint)
+        self.reaction_accum = wp.zeros(max(n, 1), dtype=wp.vec3)
+
     def _init_backend(self):
         wp.init()
 

@@ -21,6 +21,30 @@ def get_bbox(pos):
     return np.array([pos.min(axis=0), pos.max(axis=0)])
 
 
+def compute_fiber_stretches(pos, tet_indices, rest_matrices, fiber_dirs):
+    """Compute per-tet fiber stretch from deformed positions.
+
+    Args:
+        pos: Current vertex positions (N, 3).
+        tet_indices: Tet connectivity (M, 4). pts[3] is reference vertex.
+        rest_matrices: Inverse rest-pose matrices (M, 3, 3).
+        fiber_dirs: Per-tet fiber directions (M, 3).
+
+    Returns:
+        Per-tet fiber stretch values (M,).
+    """
+    n = len(tet_indices)
+    out = np.empty(n)
+    for e in range(n):
+        i0, i1, i2, i3 = tet_indices[e]
+        Ds = np.column_stack([pos[i0] - pos[i3],
+                              pos[i1] - pos[i3],
+                              pos[i2] - pos[i3]])
+        Fd = (Ds @ rest_matrices[e]) @ fiber_dirs[e]
+        out[e] = max(np.linalg.norm(Fd), 1e-8)
+    return out
+
+
 def activation_ramp(t: float) -> float:
     """Piecewise activation over normalized time [0,1]: 0→0.5→1.0→0.7→0.3→0."""
     if t <= 0.2:

@@ -256,6 +256,155 @@ def assign_fiber_directions(vertices, tets, axis=2):
     return fiber_dirs
 
 
+# ---------------------------------------------------------------------------
+# Geometry utilities
+# ---------------------------------------------------------------------------
+
+def rotation_matrix_align(src, dst):
+    """Rotation matrix that takes unit direction *src* to *dst*.
+
+    Args:
+        src: Source direction (3,).
+        dst: Destination direction (3,).
+
+    Returns:
+        (3, 3) float32 rotation matrix.
+    """
+    u = np.asarray(src, dtype=np.float64); u /= np.linalg.norm(u)
+    v = np.asarray(dst, dtype=np.float64); v /= np.linalg.norm(v)
+    c = np.dot(u, v)
+    if c > 1.0 - 1e-8:
+        return np.eye(3, dtype=np.float32)
+    if c < -1.0 + 1e-8:
+        # 180-degree rotation: find a perpendicular axis
+        perp = np.array([1, 0, 0], dtype=np.float64)
+        if abs(np.dot(u, perp)) > 0.9:
+            perp = np.array([0, 1, 0], dtype=np.float64)
+        ax = np.cross(u, perp); ax /= np.linalg.norm(ax)
+        # Rodrigues formula for 180 degrees: R = 2*outer(ax,ax) - I
+        return (2.0 * np.outer(ax, ax) - np.eye(3)).astype(np.float32)
+    ax = np.cross(u, v)
+    ax /= np.linalg.norm(ax)
+    K = np.array([[0, -ax[2], ax[1]], [ax[2], 0, -ax[0]], [-ax[1], ax[0], 0]])
+    s = np.sqrt(1 - c * c)
+    R = np.eye(3) + s * K + (1 - c) * (K @ K)
+    return R.astype(np.float32)
+
+
+def create_capsule_mesh(p0, p1, radius, n_circ=12, n_axial=8, n_cap=4):
+    """Create a capsule surface mesh (cylinder + two hemispheres).
+
+    Args:
+        p0: Start endpoint (3,).
+        p1: End endpoint (3,).
+        radius: Capsule radius [m].
+        n_circ: Circumferential segments.
+        n_axial: Axial segments along the cylinder portion.
+        n_cap: Latitude rings per hemisphere.
+
+    Returns:
+        (vertices, faces): vertices (N, 3) float32, faces (M, 3) int32.
+    """
+    p0, p1 = np.asarray(p0, dtype=np.float64), np.asarray(p1, dtype=np.float64)
+    axis = p1 - p0
+    length = np.linalg.norm(axis)
+    if length < 1e-12:
+        axis = np.array([0, 1, 0], dtype=np.float64)
+        length = 1e-6
+    az = axis / length
+
+    # Build local frame
+    up = np.array([0, 0, 1], dtype=np.float64)
+    if abs(np.dot(az, up)) > 0.99:
+        up = np.array([1, 0, 0], dtype=np.float64)
+    ax = np.cross(az, up); ax /= np.linalg.norm(ax)
+    ay = np.cross(az, ax)
+
+    verts, faces = [], []
+
+    def add_ring(center, r_ring):
+        idx0 = len(verts)
+        for i in range(n_circ):
+            theta = 2.0 * np.pi * i / n_circ
+            p = center + r_ring * (np.cos(theta) * ax + np.sin(theta) * ay)
+            verts.append(p)
+        return idx0
+
+    # Bottom hemisphere (at p0, pointing toward -az)
+    verts.append(p0 - az * radius)  # south pole
+    pole_bottom = 0
+    prev_ring = None
+    for j in range(1, n_cap + 1):
+        phi = np.pi / 2 * j / n_cap
+        r_ring = radius * np.sin(phi)
+        z_off = -radius * np.cos(phi)
+        center = p0 + az * z_off
+        ring_start = add_ring(center, r_ring)
+        if prev_ring is None:
+            for i in range(n_circ):
+                i_next = (i + 1) % n_circ
+                faces.append([pole_bottom, ring_start + i_next, ring_start + i])
+        else:
+            for i in range(n_circ):
+                i_next = (i + 1) % n_circ
+                faces.append([prev_ring + i, ring_start + i, ring_start + i_next])
+                faces.append([prev_ring + i, ring_start + i_next, prev_ring + i_next])
+        prev_ring = ring_start
+
+    # Cylinder body
+    for j in range(1, n_axial + 1):
+        t = j / n_axial
+        center = p0 + axis * t
+        ring_start = add_ring(center, radius)
+        for i in range(n_circ):
+            i_next = (i + 1) % n_circ
+            faces.append([prev_ring + i, ring_start + i, ring_start + i_next])
+            faces.append([prev_ring + i, ring_start + i_next, prev_ring + i_next])
+        prev_ring = ring_start
+
+    # Top hemisphere (at p1, pointing toward +az)
+    for j in range(1, n_cap + 1):
+        phi = np.pi / 2 * j / n_cap
+        r_ring = radius * np.cos(phi)
+        z_off = radius * np.sin(phi)
+        center = p1 + az * z_off
+        if r_ring < 1e-10:
+            pole_top = len(verts)
+            verts.append(p1 + az * radius)
+            for i in range(n_circ):
+                i_next = (i + 1) % n_circ
+                faces.append([prev_ring + i, pole_top, prev_ring + i_next])
+        else:
+            ring_start = add_ring(center, r_ring)
+            for i in range(n_circ):
+                i_next = (i + 1) % n_circ
+                faces.append([prev_ring + i, ring_start + i, ring_start + i_next])
+                faces.append([prev_ring + i, ring_start + i_next, prev_ring + i_next])
+            prev_ring = ring_start
+
+    return np.array(verts, dtype=np.float32), np.array(faces, dtype=np.int32)
+
+
+def transform_by_quat(verts, pos, quat):
+    """Transform vertices by position + quaternion (w, x, y, z convention).
+
+    Args:
+        verts: Vertex positions (N, 3).
+        pos: Translation (3,).
+        quat: Quaternion [w, x, y, z].
+
+    Returns:
+        Transformed vertices (N, 3) float64.
+    """
+    w, x, y, z = quat
+    R = np.array([
+        [1 - 2*(y*y + z*z), 2*(x*y - w*z),     2*(x*z + w*y)],
+        [2*(x*y + w*z),     1 - 2*(x*x + z*z), 2*(y*z - w*x)],
+        [2*(x*z - w*y),     2*(y*z + w*x),     1 - 2*(x*x + y*y)],
+    ], dtype=np.float64)
+    return (R @ verts.astype(np.float64).T).T + pos
+
+
 class MeshDistortionError(RuntimeError):
     """Raised when mesh quality check detects severe element distortion."""
     pass
