@@ -83,9 +83,31 @@ XPBD mesh 的 deformation gradient 提取的 fiber stretch 在仿真过程中波
 }
 ```
 
+### 6. TETFIBERDGF + TETARAP 均导致 tet 翻转
+
+**TETFIBERDGF**：两端固定 + fiber 收缩 → 内部等距压缩 → 第一个 substep 就翻转 tet。fss=10（极软）在函数内仍爆炸，fss=200（标准）在 sub 0 就产生 7 m/s 速度。
+
+**TETARAP**：手臂摆动时大变形 → 边界 tet 翻转（step 77）。ARAP 阻碍合理变形。
+
+**最终方案**：仅保留 TETVOLUME + PIN + ATTACH。600 步零翻转。TETFIBERDGF 需等 Millard 能量本构（`C=√(2Ψ)`）才能安全启用。
+
+## 参数
+
+```json
+{
+  "num_substeps": 30,
+  "attach_stiffness": 1e6,
+  "pin_stiffness": 1e8,
+  "volume_stiffness": 1e5,
+  "warmup_steps": 10
+}
+```
+
+约束：TETVOLUME (240) + PIN (11) + ATTACH (11) = 262 总约束
+
 ## 下一步
 
-1. **能量本构方案**：实现 Millard 样条 + C=√(2Ψ) 精确能量约束（docs/plans/2026-03-31-xpbd-energy-constitutive.md），使 XPBD mesh 的力-长度行为与连续力学一致
-2. **XPBD mesh 力提取**：解决 ARAP/fiber 竞争问题后，用 deformation gradient 提取力（添加 3D 效应校正）
+1. **能量本构方案**：实现 Millard 样条 + C=√(2Ψ) 精确能量约束（docs/plans/2026-03-31-xpbd-energy-constitutive.md），使 XPBD mesh fiber 收缩不产生翻转
+2. **XPBD mesh 力提取**：能量本构解决翻转问题后，用 deformation gradient 提取力（添加 3D 效应校正）
 3. **CUDA 验证**：当前仅 CPU 验证，需测试 CUDA + colored GS
 4. **复杂几何**：测试非圆柱几何（如从 USD 加载的真实肌肉 mesh）
