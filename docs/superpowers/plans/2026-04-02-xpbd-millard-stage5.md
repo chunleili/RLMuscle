@@ -14,7 +14,40 @@
 
 ---
 
-### Task 1: 实现 GPU 端 Millard 能量求值函数
+### Task 1: CPU 端验证——能量约束公式正确性
+
+**原则：总是先用 CPU 实验验证数学正确性，再集成到 GPU kernel。**
+
+**Files:**
+- Create: `scripts/experiment_energy_constraint.py`（临时 CPU 验证脚本）
+
+**Context:** 在修改 GPU kernel 之前，先用纯 CPU/NumPy 验证 C=√(2Ψ_L) 的行为。构建一个简化的 1D XPBD 求解循环（单 tet、单约束），验证：
+1. 能量约束能否驱动纤维收缩（activation > 0 时 lm 从 1.0 下降）
+2. 在外力平衡下是否收敛到正确的 lm_eq（对比 Stage 4 的 0.5498）
+3. C 值和梯度在整个 lm 范围内的数值稳定性
+
+- [ ] **Step 1: 编写 CPU 验证脚本**
+
+使用 `MillardCurves` 的 CPU 端 `energy_eval(lm)` 和 `eval(lm)` 方法。模拟 XPBD 单约束求解：
+```python
+for iter in range(n_iters):
+    psi_L = mc.fl.energy_eval(lm_current)  # 闭式能量多项式
+    f_L = mc.fl.eval(lm_current)           # 力
+    C = sqrt(2 * sigma0 * a * psi_L)
+    if C < eps: break
+    dC_dlm = sigma0 * a * f_L / C
+    # XPBD update: dlm = -C / (w * dC_dlm^2 + alpha)
+    ...
+```
+
+验证结果 vs Stage 4 sliding ball 平衡点。
+
+- [ ] **Step 2: 运行 CPU 验证，确认数值正确**
+- [ ] **Step 3: Commit 验证脚本（放 scripts/）**
+
+---
+
+### Task 2: 实现 GPU 端 Millard 能量求值函数
 
 **Files:**
 - Modify: `src/VMuscle/muscle_warp.py` (新增 `millard_energy_eval_wp` 函数)
@@ -49,39 +82,6 @@
 扩展 `tests/test_millard_gpu.py`，对比 `millard_energy_eval_wp(lm)` 和 CPU 端 `mc.fl.energy_eval(lm)` 的结果，确认精度 < 1e-5。
 
 - [ ] **Step 5: Commit**
-
----
-
-### Task 2: CPU 端验证——能量约束公式正确性
-
-**原则：总是先用 CPU 实验验证数学正确性，再集成到 GPU kernel。**
-
-**Files:**
-- Create: `scripts/experiment_energy_constraint.py`（临时 CPU 验证脚本）
-
-**Context:** 在修改 GPU kernel 之前，先用纯 CPU/NumPy 验证 C=√(2Ψ_L) 的行为。构建一个简化的 1D XPBD 求解循环（单 tet、单约束），验证：
-1. 能量约束能否驱动纤维收缩（activation > 0 时 lm 从 1.0 下降）
-2. 在外力平衡下是否收敛到正确的 lm_eq（对比 Stage 4 的 0.5498）
-3. C 值和梯度在整个 lm 范围内的数值稳定性
-
-- [ ] **Step 1: 编写 CPU 验证脚本**
-
-使用 `MillardCurves` 的 CPU 端 `energy_eval(lm)` 和 `eval(lm)` 方法。模拟 XPBD 单约束求解：
-```python
-for iter in range(n_iters):
-    psi_L = mc.fl.energy_eval(lm_current)  # 闭式能量多项式
-    f_L = mc.fl.eval(lm_current)           # 力
-    C = sqrt(2 * sigma0 * a * psi_L)
-    if C < eps: break
-    dC_dlm = sigma0 * a * f_L / C
-    # XPBD update: dlm = -C / (w * dC_dlm^2 + alpha)
-    ...
-```
-
-验证结果 vs Stage 4 sliding ball 平衡点。
-
-- [ ] **Step 2: 运行 CPU 验证，确认数值正确**
-- [ ] **Step 3: Commit 验证脚本（放 scripts/）**
 
 ---
 

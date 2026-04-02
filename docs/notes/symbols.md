@@ -42,7 +42,7 @@
 | ∇C_i | `grad0`..`grad3` | 约束梯度（对顶点位置） | 3D 向量 | |
 | Δλ_xpbd | `dlambda` | Lagrange 乘子增量 | — | **不用 Δλ**，避免与纤维拉伸混淆 |
 | λ_xpbd | `cons[c].L` | 累积 Lagrange 乘子 | — | 同上 |
-| α | `alpha` | compliance = 1/(k·dt²) | — | |
+| α | `alpha` | compliance = 1/(k) | — | |
 | γ | `gamma` | 阻尼因子 | — | |
 | w_sum | `wsum` | 质量加权梯度范数平方和 | — | = Σ m_i⁻¹ ‖∇C_i‖² |
 | m_i⁻¹ | `inv_mass0`.. | 顶点逆质量 | kg⁻¹ | 固定点为 0 |
@@ -63,7 +63,6 @@
 | 字段 | 含义 |
 |------|------|
 | `restdir[0]` | σ₀（fiber 约束）或 λ_Lamé（SNH 约束） |
-| `restdir[1]` | contraction_factor（当前）→ Stage 5 后废弃 |
 | `restvector[0:3]` | 纤维方向 d（fiber）或 四元数 q（ARAP）或目标位置（attach） |
 | `restlength` | tet 体积（fiber/volume）或目标距离（distance） |
 | `pts[0:4]` | 顶点索引，-1 表示不使用 |
