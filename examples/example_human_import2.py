@@ -229,12 +229,12 @@ class Example():
 
 
 def main():
-    from VMuscle.config import load_conifg
+    from VMuscle.config import load_config
     parser = newton.examples.create_parser()
     parser.set_defaults(viewer="null")
     parser.set_defaults(num_frames="100")
     viewer, args = newton.examples.init(parser)
-    args = load_conifg(args, "data/Human/human_import2.json")
+    args = load_config(args, "data/Human/human_import2.json")
     example = Example(viewer, args)
     try:
         example.run(args)
