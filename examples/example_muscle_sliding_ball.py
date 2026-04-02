@@ -38,36 +38,20 @@ from VMuscle.mesh_utils import (
 
 def load_config(path):
     """Load config JSON and return a flat dict of parameters."""
-    with open(path) as f:
-        raw = json.load(f)
-
-    geo = raw["geometry"]
-    phys = raw["physics"]
+    from VMuscle.sliding_ball_helpers import load_sliding_ball_config_base
+    cfg, raw = load_sliding_ball_config_base(path)
     mus = raw["muscle"]
     mat = raw["material"]
-    act = raw["activation"]
     sol = raw["solver"]
-
-    return {
-        "length": geo["muscle_length"],
-        "radius": geo["muscle_radius"],
-        "n_circ": geo["n_circumferential"],
-        "n_axial": geo["n_axial"],
-        "up_axis": geo["up_axis"],
-        "density": phys["density"],
-        "ball_mass": phys["ball_mass"],
-        "sigma0": mus["sigma0"],
+    cfg.update({
         "v_max": mus["max_contraction_velocity"],
         "fiber_damping": mus["fiber_damping"],
         "k_mu": mat["k_mu"],
         "k_lambda": mat["k_lambda"],
         "k_damp": mat["k_damp"],
-        "excitation": act["excitation"],
-        "act_substep_dt": act["substep_dt"],
-        "dt": sol["dt"],
-        "n_steps": sol["n_steps"],
         "iterations": sol["iterations"],
-    }
+    })
+    return cfg
 
 
 def compute_fiber_data(pos, tet_idx, tet_poses, fiber_dirs,
@@ -239,24 +223,14 @@ def run_sim(cfg, label="default"):
              ball_mass=ball_mass, dt=dt)
     print(f"NPZ saved to {out}")
 
-    # Save .sto with OpenSim state-path column names so the file can be
-    # loaded as a motion in OpenSim GUI alongside vbd_muscle_comparison.osim.
+    # Save .sto with OpenSim state-path column names
+    from VMuscle.simple_arm_helpers import write_sto
     sto_path = f"output/vbd_sliding_ball_{label}.sto"
     columns = ["/jointset/slider/height/value",
                "/jointset/slider/height/speed",
                "/forceset/muscle/activation"]
-    n_rows = len(rec_t)
-    with open(sto_path, "w") as f:
-        f.write("vbd_states\n")
-        f.write(f"nRows={n_rows}\n")
-        f.write(f"nColumns={len(columns) + 1}\n")
-        f.write("inDegrees=no\n")
-        f.write("DataType=double\n")
-        f.write("version=3\n")
-        f.write("endheader\n")
-        f.write("time\t" + "\t".join(columns) + "\n")
-        for i in range(n_rows):
-            f.write(f"{rec_t[i]}\t{rec_z[i]}\t{rec_vz[i]}\t{rec_a[i]}\n")
+    write_sto(sto_path, "vbd_states", columns, rec_t,
+              [rec_z, rec_vz, rec_a])
     print(f"Wrote {sto_path}")
     return out
 
