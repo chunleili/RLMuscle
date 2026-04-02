@@ -188,7 +188,9 @@ class SolverMuscleBoneCoupled:
             self._effective_activation = self._activation_controller.step(excitation, dt_sub)
             self.core.activation.fill_(self._effective_activation)
 
-            # 1. Muscle: predict positions
+            # 1. Muscle: explicit active fiber force + predict positions
+            self.core.clear_forces()
+            self.core.accumulate_active_fiber_force()
             self.core.integrate()
             self.core.clear()
 
