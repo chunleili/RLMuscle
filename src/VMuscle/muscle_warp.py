@@ -7,7 +7,7 @@ import warp.render
 from VMuscle.config import load_config  # noqa: F401
 from VMuscle.constraints import (
     PIN, ATTACH, TETVOLUME, TETFIBERNORM, DISTANCELINE,
-    TETARAP, TETARAPNORM, TETFIBERDGF, TETSNH,
+    TETARAP, TETARAPNORM, TETFIBERDGF, TETSNH, TETFIBERMILLARD,
     LINEARENERGY, NORMSTIFFNESS,
 )
 from VMuscle.mesh_io import build_surface_tris
@@ -173,6 +173,97 @@ def dgf_force_velocity_wp(v_norm: float) -> float:
 
     x = D2 * v_norm + D3
     return D1 * wp.log(x + wp.sqrt(x * x + 1.0)) + D4
+
+
+# ---------------------------------------------------------------------------
+# Millard 2012 quintic Bezier curve evaluation (GPU)
+# Coefficients in power basis: f(u) = c0 + c1*u + c2*u^2 + ... + c5*u^5
+# Energy integral F(u) = ∫₀ᵘ y(t)·x'(t)dt is degree-10 polynomial.
+# ---------------------------------------------------------------------------
+
+@wp.func
+def horner5_wp(u: float, c0: float, c1: float, c2: float,
+               c3: float, c4: float, c5: float) -> float:
+    """Evaluate degree-5 polynomial via Horner's method."""
+    return c0 + u * (c1 + u * (c2 + u * (c3 + u * (c4 + u * c5))))
+
+
+@wp.func
+def horner5_deriv_wp(u: float, c1: float, c2: float,
+                     c3: float, c4: float, c5: float) -> float:
+    """Evaluate derivative of degree-5 polynomial: c1 + 2c2*u + ... + 5c5*u^4."""
+    return c1 + u * (2.0 * c2 + u * (3.0 * c3 + u * (4.0 * c4 + u * 5.0 * c5)))
+
+
+@wp.func
+def millard_eval_wp(
+    x_target: float,
+    x_coeffs: wp.array(dtype=wp.float32),
+    y_coeffs: wp.array(dtype=wp.float32),
+    seg_bounds: wp.array(dtype=wp.float32),
+    n_segments: int,
+    x_lo: float, x_hi: float,
+    y_lo: float, y_hi: float,
+    dydx_lo: float, dydx_hi: float,
+) -> float:
+    """Evaluate Millard piecewise quintic Bezier curve y(x) on GPU.
+
+    Args:
+        x_target: Input value (normalized fiber length).
+        x_coeffs: Flattened power-basis coefficients for x(u), shape (n_seg*6,).
+        y_coeffs: Flattened power-basis coefficients for y(u), shape (n_seg*6,).
+        seg_bounds: Segment x-boundaries, shape (n_seg+1,): [x_start_0, x_end_0, ...].
+        n_segments: Number of Bezier segments.
+        x_lo, x_hi: Domain boundaries.
+        y_lo, y_hi, dydx_lo, dydx_hi: Boundary values for linear extrapolation.
+    """
+    # Linear extrapolation outside domain
+    if x_target < x_lo:
+        return y_lo + dydx_lo * (x_target - x_lo)
+    if x_target > x_hi:
+        return y_hi + dydx_hi * (x_target - x_hi)
+
+    # Find segment via linear scan (no break — Warp limitation)
+    seg = int(n_segments - 1)
+    found = int(0)
+    for i in range(n_segments):
+        if found == 0 and x_target <= seg_bounds[i + 1]:
+            seg = i
+            found = 1
+
+    # Read x(u) coefficients for this segment
+    off = seg * 6
+    xc0 = float(x_coeffs[off])
+    xc1 = float(x_coeffs[off + 1])
+    xc2 = float(x_coeffs[off + 2])
+    xc3 = float(x_coeffs[off + 3])
+    xc4 = float(x_coeffs[off + 4])
+    xc5 = float(x_coeffs[off + 5])
+
+    # Newton iteration: x(u) = x_target → solve for u
+    x_at_1 = xc0 + xc1 + xc2 + xc3 + xc4 + xc5
+    denom = x_at_1 - xc0
+    u = float(0.5)
+    if wp.abs(denom) > 1.0e-20:
+        u = (x_target - xc0) / denom
+    u = wp.clamp(u, 0.0, 1.0)
+
+    for _iter in range(5):
+        xu = horner5_wp(u, xc0, xc1, xc2, xc3, xc4, xc5)
+        dxu = horner5_deriv_wp(u, xc1, xc2, xc3, xc4, xc5)
+        if wp.abs(dxu) > 1.0e-20:
+            u = u - (xu - x_target) / dxu
+            u = wp.clamp(u, -0.05, 1.05)
+
+    # Read y(u) coefficients and evaluate
+    yc0 = float(y_coeffs[off])
+    yc1 = float(y_coeffs[off + 1])
+    yc2 = float(y_coeffs[off + 2])
+    yc3 = float(y_coeffs[off + 3])
+    yc4 = float(y_coeffs[off + 4])
+    yc5 = float(y_coeffs[off + 5])
+
+    return horner5_wp(u, yc0, yc1, yc2, yc3, yc4, yc5)
 
 
 @wp.func
@@ -1025,6 +1116,91 @@ def solve_tetfiberdgf_kernel(
 
 
 @wp.kernel
+def solve_tetfibermillard_kernel(
+    cons: wp.array(dtype=Constraint),
+    pos: wp.array(dtype=wp.vec3),
+    pprev: wp.array(dtype=wp.vec3),
+    dP: wp.array(dtype=wp.vec3),
+    dPw: wp.array(dtype=wp.float32),
+    mass: wp.array(dtype=wp.float32),
+    stopped: wp.array(dtype=wp.int32),
+    rest_matrix: wp.array(dtype=wp.mat33),
+    v_fiber_dir: wp.array(dtype=wp.vec3),
+    activation: wp.array(dtype=wp.float32),
+    tendonmask: wp.array(dtype=wp.float32),
+    dt: float,
+    use_jacobi: int,
+    fiber_stiffness_scale: float,
+    offset: int,
+    # Millard active f_L curve data
+    fl_x_coeffs: wp.array(dtype=wp.float32),
+    fl_y_coeffs: wp.array(dtype=wp.float32),
+    fl_seg_bounds: wp.array(dtype=wp.float32),
+    fl_n_segments: int,
+    fl_x_lo: float, fl_x_hi: float,
+    fl_y_lo: float, fl_y_hi: float,
+    fl_dydx_lo: float, fl_dydx_hi: float,
+    # Millard passive f_PE curve data
+    fpe_x_coeffs: wp.array(dtype=wp.float32),
+    fpe_y_coeffs: wp.array(dtype=wp.float32),
+    fpe_seg_bounds: wp.array(dtype=wp.float32),
+    fpe_n_segments: int,
+    fpe_x_lo: float, fpe_x_hi: float,
+    fpe_y_lo: float, fpe_y_hi: float,
+    fpe_dydx_lo: float, fpe_dydx_hi: float,
+):
+    """XPBD fiber constraint with Millard 2012 force-length curves (quasi-static).
+
+    Same structure as solve_tetfiberdgf_kernel but evaluates Millard piecewise
+    quintic Bezier curves instead of DGF 3-Gaussian + exponential curves.
+    """
+    c = offset + wp.tid()
+    cstiffness = cons[c].stiffness
+    if cstiffness <= 0.0:
+        return
+    pts = cons[c].pts
+    tetid = cons[c].tetid
+    fiber_dir = (v_fiber_dir[pts[0]] + v_fiber_dir[pts[1]] +
+                 v_fiber_dir[pts[2]] + v_fiber_dir[pts[3]]) / 4.0
+    Dminv = rest_matrix[tetid]
+    acti = activation[tetid]
+
+    # Compute current fiber stretch from deformation gradient
+    c0 = pos[pts[0]] - pos[pts[3]]
+    c1 = pos[pts[1]] - pos[pts[3]]
+    c2 = pos[pts[2]] - pos[pts[3]]
+    _Ds = wp.mat33(
+        c0[0], c1[0], c2[0],
+        c0[1], c1[1], c2[1],
+        c0[2], c1[2], c2[2])
+    wTDminvT = wp.vec3(cons[c].restvector[0], cons[c].restvector[1], cons[c].restvector[2])
+    FwT = _Ds * wTDminvT
+    lm_tilde = wp.sqrt(wp.max(wp.length_sq(FwT), 1.0e-12))
+
+    # Millard force-length curves evaluated via quintic Bezier + Newton
+    # restdir[0] = sigma0, restdir[1] = contraction_factor
+    contraction_factor = cons[c].restdir[1]
+    f_L_val = millard_eval_wp(lm_tilde,
+        fl_x_coeffs, fl_y_coeffs, fl_seg_bounds, fl_n_segments,
+        fl_x_lo, fl_x_hi, fl_y_lo, fl_y_hi, fl_dydx_lo, fl_dydx_hi)
+    f_PE_val = millard_eval_wp(lm_tilde,
+        fpe_x_coeffs, fpe_y_coeffs, fpe_seg_bounds, fpe_n_segments,
+        fpe_x_lo, fpe_x_hi, fpe_y_lo, fpe_y_hi, fpe_dydx_lo, fpe_dydx_hi)
+    f_total = acti * f_L_val + f_PE_val
+    fiberscale = wp.max(f_total, 0.01)
+    stiffness_val = cstiffness * fiberscale * fiber_stiffness_scale
+
+    if stiffness_val > 0.0:
+        target_stretch = 1.0 - acti * contraction_factor
+
+        tet_fiber_update_xpbd_fn(
+            use_jacobi, pos, pprev, dP, dPw,
+            c, cons, pts, dt, fiber_dir, stiffness_val, Dminv,
+            cons[c].dampingratio, cons[c].restlength, cons[c].restvector,
+            acti, mass, stopped, target_stretch)
+
+
+@wp.kernel
 def solve_attach_kernel(
     cons: wp.array(dtype=Constraint),
     pos: wp.array(dtype=wp.vec3),
@@ -1577,9 +1753,73 @@ class MuscleSim(MuscleSimBase):
 
         self.reaction_accum = wp.zeros(max(n_cons, 1), dtype=wp.vec3)
 
+        # Initialize Millard curve arrays if TETFIBERMILLARD constraints exist
+        if TETFIBERMILLARD in self.cons_ranges:
+            self._init_millard_curves()
+
         # Build colored constraint groups for parallel Gauss-Seidel
         if self.use_colored_gs and n_cons > 0:
             self._build_colored_gs(all_constraints)
+
+    def _init_millard_curves(self):
+        """Initialize Millard 2012 curve coefficient arrays for GPU evaluation."""
+        from VMuscle.millard_curves import MillardCurves
+
+        mc = MillardCurves()
+        self._millard_curves = mc  # keep reference for CPU-side equilibrium solve
+
+        def _upload_curve(curve):
+            """Upload MillardCurve data to Warp arrays."""
+            n_seg = len(curve.segments)
+            x_coeffs = np.zeros((n_seg, 6), dtype=np.float32)
+            y_coeffs = np.zeros((n_seg, 6), dtype=np.float32)
+            seg_bounds = np.zeros(n_seg + 1, dtype=np.float32)
+
+            for i, seg in enumerate(curve.segments):
+                x_coeffs[i] = seg.x_coeffs.astype(np.float32)
+                y_coeffs[i] = seg.y_coeffs.astype(np.float32)
+                seg_bounds[i] = np.float32(seg.x_start)
+            seg_bounds[n_seg] = np.float32(curve.segments[-1].x_end)
+
+            return {
+                'x_coeffs': wp.from_numpy(x_coeffs.flatten(), dtype=wp.float32),
+                'y_coeffs': wp.from_numpy(y_coeffs.flatten(), dtype=wp.float32),
+                'seg_bounds': wp.from_numpy(seg_bounds, dtype=wp.float32),
+                'n_segments': n_seg,
+                'x_lo': curve.x_lo,
+                'x_hi': curve.x_hi,
+                'y_lo': curve.y_lo,
+                'y_hi': curve.y_hi,
+                'dydx_lo': curve.dydx_lo,
+                'dydx_hi': curve.dydx_hi,
+            }
+
+        fl = _upload_curve(mc.fl)
+        self._millard_fl_x_coeffs = fl['x_coeffs']
+        self._millard_fl_y_coeffs = fl['y_coeffs']
+        self._millard_fl_seg_bounds = fl['seg_bounds']
+        self._millard_fl_n_segments = fl['n_segments']
+        self._millard_fl_x_lo = fl['x_lo']
+        self._millard_fl_x_hi = fl['x_hi']
+        self._millard_fl_y_lo = fl['y_lo']
+        self._millard_fl_y_hi = fl['y_hi']
+        self._millard_fl_dydx_lo = fl['dydx_lo']
+        self._millard_fl_dydx_hi = fl['dydx_hi']
+
+        fpe = _upload_curve(mc.fpe)
+        self._millard_fpe_x_coeffs = fpe['x_coeffs']
+        self._millard_fpe_y_coeffs = fpe['y_coeffs']
+        self._millard_fpe_seg_bounds = fpe['seg_bounds']
+        self._millard_fpe_n_segments = fpe['n_segments']
+        self._millard_fpe_x_lo = fpe['x_lo']
+        self._millard_fpe_x_hi = fpe['x_hi']
+        self._millard_fpe_y_lo = fpe['y_lo']
+        self._millard_fpe_y_hi = fpe['y_hi']
+        self._millard_fpe_dydx_lo = fpe['dydx_lo']
+        self._millard_fpe_dydx_hi = fpe['dydx_hi']
+
+        print(f"  Millard curves initialized: f_L ({mc.fl.segments.__len__()} seg), "
+              f"f_PE ({mc.fpe.segments.__len__()} seg)")
 
     def _build_colored_gs(self, all_constraints):
         """Reorder constraints by (color, type) and build per-color dispatch ranges."""
@@ -1784,6 +2024,28 @@ class MuscleSim(MuscleSimBase):
                     self.dt, use_jacobi_int,
                     self.fiber_stiffness_scale,
                     offset])
+            elif ctype == TETFIBERMILLARD:
+                wp.launch(solve_tetfibermillard_kernel, dim=count, inputs=[
+                    self.cons, self.pos, self.pprev,
+                    self.dP, self.dPw, self.mass, self.stopped,
+                    self.rest_matrix, self.v_fiber_dir,
+                    self.activation, self.tendonmask,
+                    self.dt, use_jacobi_int,
+                    self.fiber_stiffness_scale,
+                    offset,
+                    # Millard f_L curve data
+                    self._millard_fl_x_coeffs, self._millard_fl_y_coeffs,
+                    self._millard_fl_seg_bounds, self._millard_fl_n_segments,
+                    self._millard_fl_x_lo, self._millard_fl_x_hi,
+                    self._millard_fl_y_lo, self._millard_fl_y_hi,
+                    self._millard_fl_dydx_lo, self._millard_fl_dydx_hi,
+                    # Millard f_PE curve data
+                    self._millard_fpe_x_coeffs, self._millard_fpe_y_coeffs,
+                    self._millard_fpe_seg_bounds, self._millard_fpe_n_segments,
+                    self._millard_fpe_x_lo, self._millard_fpe_x_hi,
+                    self._millard_fpe_y_lo, self._millard_fpe_y_hi,
+                    self._millard_fpe_dydx_lo, self._millard_fpe_dydx_hi,
+                    ])
             elif ctype == TETSNH:
                 wp.launch(solve_tetsnh_kernel, dim=count, inputs=[
                     self.cons, self.pos, self.pprev,

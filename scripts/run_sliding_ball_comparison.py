@@ -1,11 +1,10 @@
-"""One-click VBD vs OpenSim sliding-ball comparison.
-
-Runs VBD simulation, OpenSim reference, and generates comparison plot.
+"""Sliding-ball comparison: VBD / XPBD-DGF / XPBD-Millard vs OpenSim.
 
 Usage:
-    uv run python scripts/run_sliding_ball_comparison.py
-    uv run python scripts/run_sliding_ball_comparison.py --config data/slidingBall/config.json
-    uv run python scripts/run_sliding_ball_comparison.py --skip-opensim  # VBD only
+    uv run python scripts/run_sliding_ball_comparison.py --mode vbd             # VBD vs OpenSim-DGF
+    uv run python scripts/run_sliding_ball_comparison.py --mode xpbd-dgf        # XPBD-DGF vs OpenSim-DGF
+    uv run python scripts/run_sliding_ball_comparison.py --mode xpbd-millard    # XPBD-Millard vs OpenSim-Millard
+    uv run python scripts/run_sliding_ball_comparison.py --mode xpbd-millard --skip-opensim
 """
 
 import argparse
@@ -13,61 +12,88 @@ import json
 import os
 import sys
 
-# Ensure project root is on sys.path for 'examples' import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
+# ---------------------------------------------------------------------------
+# Runners: each returns an NPZ path (XPBD/VBD) or a result dict (OpenSim)
+# ---------------------------------------------------------------------------
+
 def run_vbd(config_path, label):
-    """Run VBD simulation via example module."""
     print("=" * 60)
-    print("Step 1: VBD Simulation")
+    print("VBD Simulation")
     print("=" * 60)
     from examples.example_muscle_sliding_ball import load_config, run_sim
     cfg = load_config(config_path)
     return run_sim(cfg, label=label)
 
 
-def run_opensim(config_path):
-    """Run OpenSim reference simulation matching config parameters."""
-    print("\n" + "=" * 60)
-    print("Step 2: OpenSim Reference")
+def run_xpbd_dgf(config_path, label):
     print("=" * 60)
+    print("XPBD-DGF Simulation")
+    print("=" * 60)
+    from examples.example_xpbd_dgf_sliding_ball import load_config, run_sim
+    cfg = load_config(config_path)
+    return run_sim(cfg, label=label)
 
+
+def run_xpbd_millard(config_path, label):
+    print("=" * 60)
+    print("XPBD-Millard Simulation")
+    print("=" * 60)
+    from examples.example_xpbd_millard_sliding_ball import load_config, run_sim
+    cfg = load_config(config_path)
+    return run_sim(cfg, label=label)
+
+
+def run_opensim_dgf(config_path):
+    print("\n" + "=" * 60)
+    print("OpenSim DGF Reference")
+    print("=" * 60)
     with open(config_path) as f:
         raw = json.load(f)
     geo, phys, mus, sol = raw["geometry"], raw["physics"], raw["muscle"], raw["solver"]
     t_end = sol["n_steps"] * sol["dt"]
-
     try:
         from scripts.osim_sliding_ball import osim_sliding_ball
         os.makedirs("output", exist_ok=True)
         return osim_sliding_ball(
-            muscle_length=geo["muscle_length"],
-            ball_mass=phys["ball_mass"],
-            sigma0=mus["sigma0"],
-            muscle_radius=geo["muscle_radius"],
-            excitation_func=lambda t: min(t / 0.05, 1.0),
-            t_end=t_end,
-            dt=0.001,
-        )
+            muscle_length=geo["muscle_length"], ball_mass=phys["ball_mass"],
+            sigma0=mus["sigma0"], muscle_radius=geo["muscle_radius"],
+            excitation_func=lambda t: min(t / 0.05, 1.0), t_end=t_end, dt=0.001)
     except Exception as e:
-        print(f"OpenSim failed: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"OpenSim DGF failed: {e}")
         return None
 
 
-def plot_comparison(vbd_npz, osim_result, label):
-    """Generate comparison plot.
-
-    Args:
-        vbd_npz: Path to VBD .npz file.
-        osim_result: dict from osim_sliding_ball() with keys times, positions,
-                     forces, norm_fiber_lengths, etc. Or None.
-        label: Label for output filename.
-    """
+def run_opensim_millard(config_path):
     print("\n" + "=" * 60)
-    print("Step 3: Plotting")
+    print("OpenSim Millard Reference")
+    print("=" * 60)
+    with open(config_path) as f:
+        raw = json.load(f)
+    geo, phys, mus, sol = raw["geometry"], raw["physics"], raw["muscle"], raw["solver"]
+    t_end = sol["n_steps"] * sol["dt"]
+    try:
+        from scripts.osim_sliding_ball_millard import osim_sliding_ball_millard
+        os.makedirs("output", exist_ok=True)
+        return osim_sliding_ball_millard(
+            muscle_length=geo["muscle_length"], ball_mass=phys["ball_mass"],
+            sigma0=mus["sigma0"], muscle_radius=geo["muscle_radius"],
+            excitation_func=lambda t: min(t / 0.05, 1.0), t_end=t_end, dt=0.001)
+    except Exception as e:
+        print(f"OpenSim Millard failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+
+def plot_comparison(xpbd_npz, osim_result, label, curve_module="dgf"):
+    """Generate 2x2 comparison plot."""
+    print("\n" + "=" * 60)
+    print("Plotting")
     print("=" * 60)
 
     import numpy as np
@@ -75,78 +101,80 @@ def plot_comparison(vbd_npz, osim_result, label):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    # --- DGF curves (from shared module) ---
-    from src.VMuscle.dgf_curves import active_force_length as afl, passive_force_length as pfl
-
-    # --- Load data ---
-    d = np.load(vbd_npz)
-    vbd_t, vbd_y = d['times'], d['positions']
-    vbd_vz = d['velocities'] if 'velocities' in d else None
-    vbd_nfl = d['norm_fiber_lengths']
-    sigma0 = float(d['sigma0'])
-    radius = float(d['radius'])
-    ball_mass = float(d['ball_mass'])
+    dx = np.load(xpbd_npz)
+    xpbd_t = dx['times']
+    xpbd_y = dx['positions']
+    xpbd_nfl = dx['norm_fiber_lengths']
+    xpbd_fa = dx['f_active']
+    xpbd_a = dx['activations']
+    sigma0 = float(dx['sigma0'])
+    radius = float(dx['radius'])
+    ball_mass = float(dx['ball_mass'])
     fmax = sigma0 * np.pi * radius ** 2
 
     has_osim = osim_result is not None
 
-    # --- Plot ---
+    # Get f_L curve for equilibrium plot
+    l_norm = np.linspace(0.3, 1.9, 300)
+    if curve_module == "millard":
+        from VMuscle.millard_curves import MillardCurves
+        mc = MillardCurves()
+        fl_vals = mc.fl.eval(l_norm)
+        curve_label = "Millard $f_L$"
+        sim_label = "XPBD-Millard"
+        osim_label = "OpenSim-Millard"
+    else:
+        from VMuscle.dgf_curves import active_force_length
+        fl_vals = active_force_length(l_norm)
+        curve_label = "DGF $f_L$"
+        sim_label = "XPBD-DGF" if "xpbd" in label else "VBD"
+        osim_label = "OpenSim-DGF"
+
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
-    # (0,0) Ball trajectory
     ax = axes[0, 0]
-    ax.plot(vbd_t, vbd_y, "b-", lw=1.5, label="VBD")
+    ax.plot(xpbd_t, xpbd_y, "b-", lw=1.5, label=sim_label)
     if has_osim:
-        ax.plot(osim_result['times'], osim_result['positions'], "r--", lw=1.5, label="OpenSim")
+        ax.plot(osim_result['times'], osim_result['positions'], "r--", lw=1.5, label=osim_label)
     ax.set_xlabel("Time (s)"); ax.set_ylabel("Ball position (m)")
     ax.set_title("Ball Trajectory"); ax.legend(); ax.grid(True, alpha=0.3)
 
-    # (0,1) Fiber length
     ax = axes[0, 1]
-    ax.plot(vbd_t, vbd_nfl, "b-", lw=1.5, label="VBD (mean)")
+    ax.plot(xpbd_t, xpbd_nfl, "b-", lw=1.5, label=sim_label)
     if has_osim:
-        ax.plot(osim_result['times'], osim_result['norm_fiber_lengths'], "r--", lw=1.5, label="OpenSim")
+        ax.plot(osim_result['times'], osim_result['norm_fiber_lengths'], "r--", lw=1.5, label=osim_label)
     ax.set_xlabel("Time (s)"); ax.set_ylabel("Normalized fiber length")
     ax.set_title("Fiber Length Over Time"); ax.legend(); ax.grid(True, alpha=0.3)
 
-    # (1,0) F-L curves + equilibrium
     ax = axes[1, 0]
-    l_norm = np.linspace(0.2, 1.8, 200)
-    fa, fp = afl(l_norm), pfl(l_norm)
-    ax.plot(l_norm, fa, "b-", lw=1.5, label="Active $f_L$")
-    ax.plot(l_norm, fp, "g-", lw=1.5, label="Passive $f_{PE}$")
-    ax.plot(l_norm, fa + fp, "k--", lw=1.2, alpha=0.6, label="Total (a=1)")
+    ax.plot(l_norm, fl_vals, "b-", lw=1.5, label=curve_label)
     eq_force = ball_mass * 9.81 / fmax
     ax.axhline(y=eq_force, color='gray', ls=':', alpha=0.4,
-               label=f"Weight/F$_{{max}}$={eq_force:.2f}")
-    vbd_l_eq = float(vbd_nfl[-1])
-    ax.axvline(x=vbd_l_eq, color='b', ls=':', alpha=0.4)
-    ax.plot(vbd_l_eq, eq_force, 'bo', ms=8, zorder=6,
-            label=f"VBD eq. $\\tilde{{l}}$={vbd_l_eq:.2f}")
+               label=f"Weight/F$_{{max}}$={eq_force:.4f}")
+    xpbd_l_eq = float(xpbd_nfl[-1])
+    ax.axvline(x=xpbd_l_eq, color='b', ls=':', alpha=0.4)
+    ax.plot(xpbd_l_eq, eq_force, 'bo', ms=8, zorder=6,
+            label=f"{sim_label} eq. $\\tilde{{l}}$={xpbd_l_eq:.4f}")
     if has_osim:
         osim_l_eq = float(osim_result['norm_fiber_lengths'][-1])
         ax.axvline(x=osim_l_eq, color='r', ls=':', alpha=0.4)
         ax.plot(osim_l_eq, eq_force, 'rs', ms=8, zorder=6,
-                label=f"OpenSim eq. $\\tilde{{l}}$={osim_l_eq:.2f}")
+                label=f"{osim_label} eq. $\\tilde{{l}}$={osim_l_eq:.4f}")
     ax.set_xlabel("Normalized fiber length ($\\tilde{l}$)")
     ax.set_ylabel("Normalized force")
-    ax.set_title("DGF Force-Length Curves")
+    ax.set_title(f"{curve_label.split('$')[0].strip()} Force-Length Curve")
     ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
-    ax.set_xlim(0.2, 1.8); ax.set_ylim(-0.05, 1.2)
+    ax.set_xlim(0.3, 1.9); ax.set_ylim(-0.05, 1.2)
 
-    # (1,1) Force on ball
     ax = axes[1, 1]
-    if vbd_vz is not None:
-        dt_vbd = np.diff(vbd_t)
-        acc = np.diff(vbd_vz) / dt_vbd
-        vbd_force = ball_mass * (9.81 + acc)
-        ax.plot(vbd_t[:-1], vbd_force / fmax, "b-", lw=1.5, label="VBD")
-    ax.axhline(y=eq_force, color='gray', ls=':', alpha=0.5,
-               label=f"Weight/F_max={eq_force:.3f}")
+    ax.plot(xpbd_t, xpbd_a, "k-", lw=1.0, alpha=0.5, label="Activation")
+    ax.plot(xpbd_t, xpbd_fa, "b-", lw=1.5, label=f"{sim_label} active")
     if has_osim:
-        ax.plot(osim_result['times'], osim_result['forces'] / fmax, "r--", lw=1.5, label="OpenSim")
-    ax.set_xlabel("Time (s)"); ax.set_ylabel("Force / F_max")
-    ax.set_title("Force on Ball"); ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
+        osim_fmax = osim_result.get('max_iso_force', fmax)
+        ax.plot(osim_result['times'], osim_result['active_forces'] / osim_fmax,
+                "r-", lw=1.5, label=f"{osim_label} active")
+    ax.set_xlabel("Time (s)"); ax.set_ylabel("Normalized force")
+    ax.set_title("Active Fiber Force"); ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
     os.makedirs("output", exist_ok=True)
@@ -154,27 +182,69 @@ def plot_comparison(vbd_npz, osim_result, label):
     fig.savefig(out_path, dpi=150)
     print(f"Plot saved to {out_path}")
     plt.close()
+
+    # Summary
+    print(f"\n--- Summary ---")
+    print(f"  {sim_label} final NFL: {xpbd_l_eq:.4f}")
+    print(f"  {sim_label} final pos: {xpbd_y[-1]:.6f} m")
+    if has_osim:
+        osim_l_eq = float(osim_result['norm_fiber_lengths'][-1])
+        osim_pos = float(osim_result['positions'][-1])
+        print(f"  {osim_label} NFL:      {osim_l_eq:.4f}")
+        print(f"  {osim_label} pos:      {osim_pos:.6f} m")
+        nfl_err = abs(xpbd_l_eq - osim_l_eq) / osim_l_eq * 100
+        pos_err = abs(xpbd_y[-1] - osim_pos) / osim_pos * 100
+        print(f"  NFL error: {nfl_err:.1f}%")
+        print(f"  Pos error: {pos_err:.1f}%")
+
     return out_path
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+MODE_CONFIGS = {
+    "vbd":           "data/slidingBall/config.json",
+    "xpbd-dgf":      "data/slidingBall/config_xpbd_dgf.json",
+    "xpbd-millard":   "data/slidingBall/config_xpbd_millard.json",
+}
+
+
 def main():
-    parser = argparse.ArgumentParser(description="VBD vs OpenSim sliding-ball comparison")
-    parser.add_argument("--config", default="data/slidingBall/config.json")
-    parser.add_argument("--label", default="default")
-    parser.add_argument("--skip-opensim", action="store_true",
-                        help="Skip OpenSim, plot VBD only")
+    parser = argparse.ArgumentParser(description="Sliding-ball comparison")
+    parser.add_argument("--mode",
+                        choices=["vbd", "xpbd-dgf", "xpbd-millard"],
+                        default="xpbd-millard",
+                        help="vbd / xpbd-dgf / xpbd-millard")
+    parser.add_argument("--config", default=None,
+                        help="Override config JSON path")
+    parser.add_argument("--label", default=None)
+    parser.add_argument("--skip-opensim", action="store_true")
     args = parser.parse_args()
 
-    # Step 1: VBD
-    vbd_npz = run_vbd(args.config, args.label)
+    config_path = args.config or MODE_CONFIGS[args.mode]
+    label = args.label or args.mode.replace("-", "_")
 
-    # Step 2: OpenSim
+    # Run simulation
+    if args.mode == "vbd":
+        npz = run_vbd(config_path, label)
+    elif args.mode == "xpbd-dgf":
+        npz = run_xpbd_dgf(config_path, label)
+    elif args.mode == "xpbd-millard":
+        npz = run_xpbd_millard(config_path, label)
+
+    # Run OpenSim reference
     osim_result = None
     if not args.skip_opensim:
-        osim_result = run_opensim(args.config)
+        if args.mode == "xpbd-millard":
+            osim_result = run_opensim_millard(config_path)
+        else:
+            osim_result = run_opensim_dgf(config_path)
 
-    # Step 3: Plot
-    plot_comparison(vbd_npz, osim_result, args.label)
+    # Plot
+    curve = "millard" if args.mode == "xpbd-millard" else "dgf"
+    plot_comparison(npz, osim_result, label, curve_module=curve)
 
     print("\n" + "=" * 60)
     print("Done!")

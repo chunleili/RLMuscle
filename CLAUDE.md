@@ -1,15 +1,30 @@
 # INSTRUCTION
-- 如果你是初次运行，请注意初始化git submodule，阅读`@README.md`中的运行说明。
-- 使用 uv 运行和测试代码，必要时可以写测试文件放到tests/文件夹下。总是测试直到正常运行后才结束任务。
-- `@docs/progress/*.md` 放日志（下一步 + 已完成）。`@docs/plans/*.md`放详细的执行方案。`@docs/experiments/*.md`放实验总结。
-- 可复用代码放 `@src/`，示例放 `@examples/`（各自独立可运行，简单有教学意义）。
-- 代码注释使用英文，文档 markdown 尽量使用中文，不要更改README， 实验总结放在`@docs/experiments/*.md`。
-- 当作出功能修改时，指出关键的工作流的改变（如有）。
-- main.py是程序入口，使用环境变量`RUN`来指定运行的示例, 使用uv run main.py来运行。
-- 进行重构时，需要简化代码结构，去除冗余，增加注释，保持代码清晰易读。重构后需要进行测试，确保功能正确。必要时可以改动外部API。
-- 在feature分支工作，如合并均应该合并到dev分支，master分支应保持稳定。
-- 在worktree工作应在项目目录外部创建../<PRJ_NAME>-<WORKTREE_NAME>，并建立分支<WORKTREE_NAME>，在该分支上进行开发，完成后合并到dev分支。
-- 输出放到output/下。需要可视化的测试应把截图/图片放到output/下对比。
-- Taichi will be deprecated（but still keep it for now）. 
-- If there is taichi LLVM error, try first use `taichi cache clean`. Also, you should try to call warp init first then import taichi.
-- Implement the plan stage by stage. Each time after finishing a stage, record the key findings in progress, and update the plan.
+- Running
+    - 如果你是初次运行，请注意初始化git submodule，阅读`@README.md`中的运行说明。
+    - 使用 uv 运行。
+    - main.py是程序入口，使用环境变量`RUN`来指定运行的示例, 使用uv run main.py来运行。
+- Docs
+    - `@docs/progress/*.md` 放日志（实验/plan实行的进展，已完成+下一步）。`@docs/plans/*.md`放计划。`@docs/experiments/*.md`放实验总结。`@docs/notes/*.md`放原理笔记。
+    - 当你计划/实施一项大的功能时，为了了解当前情况先去阅读`docs/`中的内容。
+    - 你可以在`@docs/imgs/`下放一些图片来作为docs的插图，请做好目录分类。
+    - 代码注释使用英文，文档 markdown使用中文，不要更改README。
+- Code Structure
+    - 共享的基础设施放 `@src/`， `@examples/`放可独立运行的Simulation Example，脚本（如绘图或运行外部程序）放 `@scripts/`。
+    - 输入数据（包括json格式的config和输入文件）放 `@data/`。
+    - 总是把config和代码分离，防止参数硬编码，除非临时测试/临时脚本。
+    - 输出放到output/下。需要可视化的测试应把图片放到output/下对比。
+- Workflow
+    - 完成一个新功能必须告知和记录如何复现/使用。
+    - 进行重构时，需要简化代码结构，去除冗余，增加注释，保持代码清晰易读。重构后需要进行测试，确保功能正确。必要时可以改动外部API。
+    - Implement the plan stage by stage. Each time after finishing a stage, record the key findings in docs/progress, and update the docs/plans/
+    - 结束任务前必须测试是否正确运行。
+- Git
+    - 使用rebase而非merge来保持线性历史。
+    - 实现新功能新建feat/XXX分支，修复新建fix/XXX分支，完成后合并到dev分支，master分支保持稳定，不允许更改。
+    - 采用worktree来进行代码的隔离。新的worktree需要`uv sync --extra optional`来安装依赖。
+    - 在worktree工作应在项目目录外部创建../<PRJ_NAME>-<WORKTREE_NAME>，并建立分支<WORKTREE_NAME>，在该分支上进行开发。完成后rebase到dev分支，结束后删除worktree和分支（由于有submodule，需要`--force`）。
+- Code Style
+    - 代码风格应保持一致。
+- Other
+    - Taichi will be deprecated（but still keep it for now）. 
+    - If there is taichi LLVM error, try first use `taichi cache clean`. Also, you should try to call warp init first then import taichi.
