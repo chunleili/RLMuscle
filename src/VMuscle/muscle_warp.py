@@ -1225,7 +1225,7 @@ def solve_tetfibermillard_kernel(
     use_jacobi: int,
     fiber_stiffness_scale: float,
     offset: int,
-    # Millard active f_L curve data
+    # Millard active f_L curve data (force)
     fl_x_coeffs: wp.array(dtype=wp.float32),
     fl_y_coeffs: wp.array(dtype=wp.float32),
     fl_seg_bounds: wp.array(dtype=wp.float32),
@@ -1233,7 +1233,9 @@ def solve_tetfibermillard_kernel(
     fl_x_lo: float, fl_x_hi: float,
     fl_y_lo: float, fl_y_hi: float,
     fl_dydx_lo: float, fl_dydx_hi: float,
-    # Millard passive f_PE curve data
+    # Millard active f_L curve data (energy)
+    fl_F_coeffs: wp.array(dtype=wp.float32),
+    # Millard passive f_PE curve data (unused for now, kept for API compat)
     fpe_x_coeffs: wp.array(dtype=wp.float32),
     fpe_y_coeffs: wp.array(dtype=wp.float32),
     fpe_seg_bounds: wp.array(dtype=wp.float32),
@@ -1242,10 +1244,11 @@ def solve_tetfibermillard_kernel(
     fpe_y_lo: float, fpe_y_hi: float,
     fpe_dydx_lo: float, fpe_dydx_hi: float,
 ):
-    """XPBD fiber constraint with Millard 2012 force-length curves (quasi-static).
+    """XPBD fiber constraint with energy-based Millard 2012 formulation.
 
-    Same structure as solve_tetfiberdgf_kernel but evaluates Millard piecewise
-    quintic Bezier curves instead of DGF 3-Gaussian + exponential curves.
+    C = sqrt(2 * sigma0 * a * Psi_L(lm))
+    gradC_i = (dC/dlm) * (dlm/dx_i)
+    where dC/dlm = sigma0 * a * f_L / C
     """
     c = offset + wp.tid()
     cstiffness = cons[c].stiffness
@@ -1253,12 +1256,14 @@ def solve_tetfibermillard_kernel(
         return
     pts = cons[c].pts
     tetid = cons[c].tetid
-    fiber_dir = (v_fiber_dir[pts[0]] + v_fiber_dir[pts[1]] +
-                 v_fiber_dir[pts[2]] + v_fiber_dir[pts[3]]) / 4.0
-    Dminv = rest_matrix[tetid]
     acti = activation[tetid]
+    sigma0 = cons[c].restdir[0]
 
-    # Compute current fiber stretch from deformation gradient
+    # Skip if no activation (no energy → C=0)
+    if acti < 1.0e-6:
+        return
+
+    # ── Deformation gradient: lm and dlm/dx_i ──
     c0 = pos[pts[0]] - pos[pts[3]]
     c1 = pos[pts[1]] - pos[pts[3]]
     c2 = pos[pts[2]] - pos[pts[3]]
@@ -1268,29 +1273,95 @@ def solve_tetfibermillard_kernel(
         c0[2], c1[2], c2[2])
     wTDminvT = wp.vec3(cons[c].restvector[0], cons[c].restvector[1], cons[c].restvector[2])
     FwT = _Ds * wTDminvT
-    lm_tilde = wp.sqrt(wp.max(wp.length_sq(FwT), 1.0e-12))
+    lm_sq = wp.length_sq(FwT)
+    if lm_sq < 1.0e-12:
+        return
+    lm = wp.sqrt(lm_sq)
 
-    # Millard force-length curves evaluated via quintic Bezier + Newton
-    # restdir[0] = sigma0, restdir[1] = contraction_factor
-    contraction_factor = cons[c].restdir[1]
-    f_L_val = millard_eval_wp(lm_tilde,
+    # ── Evaluate Millard energy and force ──
+    psi_L = millard_energy_eval_wp(lm,
+        fl_x_coeffs, fl_F_coeffs, fl_seg_bounds, fl_n_segments,
+        fl_x_lo, fl_x_hi, fl_y_lo, fl_y_hi, fl_dydx_lo, fl_dydx_hi)
+
+    # Skip if no energy (lm near lm_min or below)
+    if psi_L < 1.0e-10:
+        return
+
+    f_L_val = millard_eval_wp(lm,
         fl_x_coeffs, fl_y_coeffs, fl_seg_bounds, fl_n_segments,
         fl_x_lo, fl_x_hi, fl_y_lo, fl_y_hi, fl_dydx_lo, fl_dydx_hi)
-    f_PE_val = millard_eval_wp(lm_tilde,
-        fpe_x_coeffs, fpe_y_coeffs, fpe_seg_bounds, fpe_n_segments,
-        fpe_x_lo, fpe_x_hi, fpe_y_lo, fpe_y_hi, fpe_dydx_lo, fpe_dydx_hi)
-    f_total = acti * f_L_val + f_PE_val
-    fiberscale = wp.max(f_total, 0.01)
-    stiffness_val = cstiffness * fiberscale * fiber_stiffness_scale
 
-    if stiffness_val > 0.0:
-        target_stretch = 1.0 - acti * contraction_factor
+    # ── Energy constraint: C = sqrt(2 * sigma0 * a * Psi_L) ──
+    C_energy = wp.sqrt(2.0 * sigma0 * acti * psi_L)
+    if C_energy < 1.0e-10:
+        return
+    dC_dlm = sigma0 * acti * f_L_val / C_energy
 
-        tet_fiber_update_xpbd_fn(
-            use_jacobi, pos, pprev, dP, dPw,
-            c, cons, pts, dt, fiber_dir, stiffness_val, Dminv,
-            cons[c].dampingratio, cons[c].restlength, cons[c].restvector,
-            acti, mass, stopped, target_stretch)
+    # ── Geometric gradients: dlm/dx_i ──
+    # Ht = wTDminvT ⊗ FwT, grad_lm_i = (1/lm) * row_i(Ht)
+    inv_lm = 1.0 / lm
+    Ht = wp.outer(wTDminvT, FwT)
+    grad_lm0 = inv_lm * wp.vec3(Ht[0, 0], Ht[0, 1], Ht[0, 2])
+    grad_lm1 = inv_lm * wp.vec3(Ht[1, 0], Ht[1, 1], Ht[1, 2])
+    grad_lm2 = inv_lm * wp.vec3(Ht[2, 0], Ht[2, 1], Ht[2, 2])
+    grad_lm3 = -grad_lm0 - grad_lm1 - grad_lm2
+
+    # ── Chain rule: gradC_i = dC/dlm * dlm/dx_i ──
+    grad0 = dC_dlm * grad_lm0
+    grad1 = dC_dlm * grad_lm1
+    grad2 = dC_dlm * grad_lm2
+    grad3 = dC_dlm * grad_lm3
+
+    # ── XPBD update ──
+    inv_mass0 = get_inv_mass_fn(pts[0], mass, stopped)
+    inv_mass1 = get_inv_mass_fn(pts[1], mass, stopped)
+    inv_mass2 = get_inv_mass_fn(pts[2], mass, stopped)
+    inv_mass3 = get_inv_mass_fn(pts[3], mass, stopped)
+
+    w_sum = (inv_mass0 * wp.length_sq(grad0) +
+             inv_mass1 * wp.length_sq(grad1) +
+             inv_mass2 * wp.length_sq(grad2) +
+             inv_mass3 * wp.length_sq(grad3))
+
+    if w_sum < 1.0e-9:
+        return
+
+    # Compliance: alpha = 1/(k * V0 * dt^2)
+    stiffness_val = cstiffness * fiber_stiffness_scale
+    restlength = cons[c].restlength  # V0 (tet volume)
+    alpha = 1.0 / stiffness_val
+    alpha = alpha / restlength
+    alpha = alpha / (dt * dt)
+
+    l = cons[c].L[0]  # accumulated Lagrange multiplier
+    kdampratio = cons[c].dampingratio
+
+    # Damping
+    dsum = float(0.0)
+    gamma = float(1.0)
+    if kdampratio > 0.0:
+        beta = stiffness_val * kdampratio * dt * dt
+        beta = beta * restlength
+        gamma = alpha * beta / dt
+        dsum = (wp.dot(grad0, pos[pts[0]] - pprev[pts[0]]) +
+                wp.dot(grad1, pos[pts[1]] - pprev[pts[1]]) +
+                wp.dot(grad2, pos[pts[2]] - pprev[pts[2]]) +
+                wp.dot(grad3, pos[pts[3]] - pprev[pts[3]]))
+        dsum = dsum * gamma
+        gamma = gamma + 1.0
+
+    dL = (-C_energy - alpha * l - dsum) / (gamma * w_sum + alpha)
+    if use_jacobi != 0:
+        update_dP(dP, dPw, dL * inv_mass0 * grad0, pts[0])
+        update_dP(dP, dPw, dL * inv_mass1 * grad1, pts[1])
+        update_dP(dP, dPw, dL * inv_mass2 * grad2, pts[2])
+        update_dP(dP, dPw, dL * inv_mass3 * grad3, pts[3])
+    else:
+        pos[pts[0]] = pos[pts[0]] + dL * inv_mass0 * grad0
+        pos[pts[1]] = pos[pts[1]] + dL * inv_mass1 * grad1
+        pos[pts[2]] = pos[pts[2]] + dL * inv_mass2 * grad2
+        pos[pts[3]] = pos[pts[3]] + dL * inv_mass3 * grad3
+        cons[c].L = wp.vec3(cons[c].L[0] + dL, cons[c].L[1], cons[c].L[2])
 
 
 @wp.kernel
@@ -2131,12 +2202,13 @@ class MuscleSim(MuscleSimBase):
                     self.dt, use_jacobi_int,
                     self.fiber_stiffness_scale,
                     offset,
-                    # Millard f_L curve data
+                    # Millard f_L curve data (force + energy)
                     self._millard_fl_x_coeffs, self._millard_fl_y_coeffs,
                     self._millard_fl_seg_bounds, self._millard_fl_n_segments,
                     self._millard_fl_x_lo, self._millard_fl_x_hi,
                     self._millard_fl_y_lo, self._millard_fl_y_hi,
                     self._millard_fl_dydx_lo, self._millard_fl_dydx_hi,
+                    self._millard_fl_F_coeffs,
                     # Millard f_PE curve data
                     self._millard_fpe_x_coeffs, self._millard_fpe_y_coeffs,
                     self._millard_fpe_seg_bounds, self._millard_fpe_n_segments,
