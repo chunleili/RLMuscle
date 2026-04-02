@@ -4,8 +4,8 @@
     - 使用 uv 运行。
     - main.py是程序入口，使用环境变量`RUN`来指定运行的示例, 使用uv run main.py来运行。
 - Docs
-    - `@docs/progress/*.md` 放日志（实验/plan实行的进展，已完成+下一步）。`@docs/plans/*.md`放计划。`@docs/experiments/*.md`放实验总结。`@docs/notes/*.md`放原理笔记。
-    - 当你计划/实施一项大的功能时，为了了解当前情况先去阅读`docs/`中的内容。
+    - `@docs/progress/*.md` 放日志（实验/plan实行的进展，已完成+下一步）。`@docs/plans/*.md`放计划。`@docs/spec/`放具体方案。`@docs/experiments/*.md`放实验总结。`@docs/notes/*.md`放原理（公式）笔记。
+    - 当你计划/实施一项大的功能时，为了了解当前情况先去阅读`docs/`中的内容，并分阶段进行。
     - 你可以在`@docs/imgs/`下放一些图片来作为docs的插图，请做好目录分类。
     - 代码注释使用英文，文档 markdown使用中文，不要更改README。
 - Code Structure

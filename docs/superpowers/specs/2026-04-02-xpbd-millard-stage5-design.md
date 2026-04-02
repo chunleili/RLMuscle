@@ -53,7 +53,7 @@ stiffness = 1.0（或适当缩放）
 2. **GPU-only**：C 从当前 λ 直接计算，无需 CPU 端平衡反求
 3. **物理一致性**：约束力 = ∂E/∂x ∝ dΨ/dλ = f_hill(λ)，自动恢复 Hill 力-长度关系
 4. **有界性**：Ψ ≥ 0（被动能量天然非负；主动能量需偏移处理），C ≥ 0
-5. **无需 target_stretch**：约束的 rest state 即为 Ψ=0 的状态（纤维最优长度附近）
+5. **无需 target_stretch**：约束的 rest state 对应能量最小值的位置（不一定是 Ψ=0，但一定是 Ψ 的极小值点）
 
 ### 数学推导
 
@@ -70,7 +70,7 @@ stiffness = 1.0（或适当缩放）
 
 **偏移处理**：定义 Ψ_active 的参考点为 f_L 的左肩 λ_min（Millard: 0.4441）：
 ```
-Ψ_active(λ, a) = σ₀ · a · ∫_{λ_min}^λ f_L(s) ds
+Ψ_active(λ, a) = σ₀ · a · ∫_{λ_min}^{λ} f_L(λ') dλ'
 ```
 
 由于 f_L(λ_min) = y_low = 0.1 > 0（Millard 肩部非零），且 f_L 在 [λ_min, λ_max] 上恒正，所以 Ψ_active ≥ 0 对所有 λ ≥ λ_min。
@@ -105,19 +105,23 @@ GPU: XPBD solve with C_act                (新)
 **具体修改**：
 
 ```python
-# 新增 GPU 函数：Millard 能量求值
+# 新增 GPU 函数：Millard 能量解析求值（闭式多项式，非数值积分）
 @wp.func
 def millard_energy_eval_wp(
     lm: float,
     x_coeffs: wp.array(dtype=float),
-    e_coeffs: wp.array(dtype=float),  # 能量积分系数（10次多项式）
+    e_coeffs: wp.array(dtype=float),  # 闭式能量多项式系数（10次，预计算）
     seg_bounds: wp.array(dtype=float),
     n_seg: int,
     x_lo: float, x_hi: float,
 ) -> float:
-    """Evaluate Millard energy integral Ψ_L(λ) = ∫_{λ_min}^λ f_L(s)ds on GPU."""
-    # 域外：返回边界值（线性外推的二次积分）
-    # 域内：查找段 → Newton x→u → Horner 求值 e_coeffs（10次多项式）
+    """Evaluate Millard energy Ψ_L(λ) via closed-form 10th-degree polynomial.
+
+    Energy coefficients are pre-computed analytically from Bezier control points
+    (y(u)·x'(u) convolution + term-by-term antiderivative), NOT numerical quadrature.
+    """
+    # 域外：返回边界值
+    # 域内：查找段 → Newton x→u → Horner 求值 e_coeffs（10次多项式直接求值）
     ...
 
 # 约束内核修改

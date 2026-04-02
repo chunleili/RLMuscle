@@ -20,29 +20,29 @@
 - Modify: `src/VMuscle/muscle_warp.py` (新增 `millard_energy_eval_wp` 函数)
 - Modify: `src/VMuscle/millard_curves.py` (上传 f_L 能量积分系数到 GPU)
 
-**Context:** `MillardCurves` 已在 CPU 端计算了 f_L 的能量积分系数（`_build_energy_integral()` → 10次多项式 `F_coeffs[11]`）。需要：
-1. 将 f_L 的能量系数上传为 Warp 数组
-2. 实现 GPU 函数 `millard_energy_eval_wp`，输入 λ，输出 Ψ_L(λ)
+**Context:** `MillardCurves` 已在 CPU 端通过解析方法预计算了 f_L 的能量多项式系数（`_build_energy_integral()` → 闭式10次多项式 `F_coeffs[11]`，由 Bezier 控制点的 y(u)·x'(u) 卷积 + 逐项求原函数得到，**非数值积分**）。需要：
+1. 将 f_L 的能量多项式系数上传为 Warp 数组
+2. 实现 GPU 函数 `millard_energy_eval_wp`，输入 λ，直接求值闭式多项式输出 Ψ_L(λ)
 
 能量参考点：Ψ_L(λ_min=0.4441) = 0，确保 Ψ_L ≥ 0 对所有 λ ≥ λ_min。
 
-- [ ] **Step 1: 检查现有能量积分实现**
+- [ ] **Step 1: 检查现有能量多项式实现**
 
-阅读 `src/VMuscle/millard_curves.py` 中的 `_build_energy_integral()` 方法，理解能量系数的存储格式和求值方式。确认 CPU 端 `energy_eval(lm)` 的正确性。
+阅读 `src/VMuscle/millard_curves.py` 中的 `_build_energy_integral()` 方法，理解闭式能量多项式系数的存储格式和求值方式。确认 CPU 端 `energy_eval(lm)` 的正确性。
 
-- [ ] **Step 2: 在 MillardCurves 中添加能量系数上传到 GPU**
+- [ ] **Step 2: 在 MillardCurves 中添加能量多项式系数上传到 GPU**
 
-在 `_init_millard_curves()`（`muscle_warp.py`）或 MillardCurves 中，将 f_L 的能量积分系数（每段11个系数 × n_seg段）和段边界上传为 `wp.array`。
+在 `_init_millard_curves()`（`muscle_warp.py`）或 MillardCurves 中，将 f_L 的闭式能量多项式系数（每段11个系数 × n_seg段）和段边界上传为 `wp.array`。
 
 - [ ] **Step 3: 实现 `millard_energy_eval_wp` GPU 函数**
 
-逻辑与 `millard_eval_wp`（已有的力求值）类似：
+逻辑与 `millard_eval_wp`（已有的力求值）类似，直接求值预计算的闭式多项式（非数值积分）：
 1. 域外检查（λ < x_lo 或 λ > x_hi）→ 边界能量值（需预计算）
 2. 线性扫描找段
 3. Newton 迭代 x → u
-4. Horner 求值 e_coeffs（10次多项式，而非5次）
+4. Horner 求值 e_coeffs（闭式10次多项式，而非力的5次）
 
-关键：能量积分在参数空间 u 中求值，需要加上该段起始点的累积能量偏移。
+关键：能量多项式在参数空间 u 中求值，需要加上该段起始点的累积能量偏移。
 
 - [ ] **Step 4: 单元测试——GPU 能量求值 vs CPU 能量求值**
 
