@@ -135,7 +135,7 @@ def main():
     parser = argparse.ArgumentParser(description="SimpleArm comparison")
     parser.add_argument("--config", default="data/simpleArm/config.json")
     parser.add_argument("--mode", choices=["osim", "mujoco", "vbd", "coupled", "xpbd", "xpbd-millard", "all"],
-                        default="coupled",
+                        default="xpbd-millard",
                         help="osim=Stage0, mujoco=Stage1, vbd=Stage2, coupled=Stage3, xpbd=Stage3x, xpbd-millard=Stage3x-Millard, all=all")
     args = parser.parse_args()
 

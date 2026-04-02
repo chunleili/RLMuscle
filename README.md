@@ -75,7 +75,7 @@ git lfs pull
 
 `uv run -m examples.example_human_import` 
 
-## Sliding Ball Comparison
+### Sliding Ball Comparison agianst OpenSim
 Run the sliding ball muscle experiment and generate force/displacement comparison curves:
 ```
 uv run python scripts/run_sliding_ball_comparison.py
@@ -88,6 +88,19 @@ This example coresponds to a sliding ball lift above by a single muscle.
   <img src="./docs/imgs/sliding_ball_osim.gif" width="40%" />
   <img src="./docs/imgs/sliding_ball_vbd.gif" width="49%" />
 </p>
+
+### Simple Arm Comparison against OpenSim
+```
+uv run python scripts/run_simple_arm_comparison.py
+```
+
+![simple_arm_comparison](docs/imgs/simple_arm_xpbd_millard_vs_osim.png)
+
+<p float="left">
+  <video src="./docs/imgs/simpleArm-osim-motion.mp4" width="47%" autoplay loop muted playsinline></video>
+  <video src="./docs/imgs/simpleArm-xpbd-millard.mp4" width="49%" autoplay loop muted playsinline></video>
+</p>
+
 
 ## Test
 You can run all the tests with:
