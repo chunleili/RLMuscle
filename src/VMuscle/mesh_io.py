@@ -300,7 +300,7 @@ def save_ply(filename: str, positions: np.ndarray, surface_faces):
 class UsdTetExporter:
     """Export tet mesh animation to a USD file with per-frame vertex positions."""
 
-    def __init__(self, tet_indices, usd_path="output/anim.usda", prim_path="tet", fps=24, start_frame=0):
+    def __init__(self, tet_indices, usd_path="output/anim.usd", prim_path="/tet", fps=24, start_frame=0):
         from pxr import Usd, UsdGeom, Gf, Vt
 
         self.usd_path = usd_path
@@ -338,40 +338,90 @@ class UsdTetExporter:
 
 class MeshExporter:
     """General mesh exporter supporting multiple formats (USD, PLY).
-    
-    Example usage:
-        # Setup exporter (after loading mesh and before simulation loop):
-        exporter = MeshExporter(format=cfg["output_format"], fps=int(round(1.0 / (substeps * mj_dt))), tet_indices=tet_idx, positions=s0.particle_q.numpy())
 
-        # In the simulation loop, after updating positions:
-        exporter.save_frame(pos, step)
+    Supports a primary tet mesh plus optional additional triangle meshes
+    (e.g., bones, tendons). For USD, all meshes are written to the same
+    stage as separate prims. For PLY, each mesh is written as separate
+    per-frame files.
 
-        # After the loop, finalize if needed (for USD):
-        exporter.finalize()
+    Args:
+        path: Output directory (PLY frames) or base name (USD gets .usd suffix).
+        format: "ply" or "usd".
+        tet_indices: (N, 4) int array of tet vertex indices.
+        positions: (V, 3) float array of rest positions (used by PLY to build surface faces).
+        fps: Frames per second (USD only).
+        prim_path: USD prim path for the primary tet mesh (USD only).
     """
-    def __init__(self, path="output/anim", format="ply", **kwargs):
+    def __init__(self, path="output/anim", format="ply", tet_indices=None, positions=None,
+                 fps=24, prim_path="/tet"):
         import os
         os.makedirs(path, exist_ok=True)
         self.format = format
         self.abspath = Path(path).absolute()
+        self._extra_meshes = {}  # name -> {faces, usd_points_attr (usd only)}
         if format == "usd":
-            self.usdexporter = UsdTetExporter(**kwargs)
+            usd_path = str(self.abspath) + ".usd"
+            self.usdexporter = UsdTetExporter(
+                tet_indices=tet_indices, usd_path=usd_path,
+                prim_path=prim_path, fps=fps)
         elif format == "ply":
-            try:
-                self.surface_faces = build_surface_tris(kwargs["tet_indices"], kwargs.get("positions"))
-            except:
-                raise KeyError(f"You must provide tet_indices and positions to build surface faces for PLY export.")
+            if tet_indices is None:
+                raise ValueError("tet_indices is required for PLY export.")
+            self.surface_faces = build_surface_tris(tet_indices, positions)
+
+    def add_mesh(self, name, faces):
+        """Register an additional triangle mesh with fixed topology.
+
+        Args:
+            name: Unique name for this mesh (e.g., "humerus", "tendon_prox").
+            faces: (F, 3) int array of triangle face indices.
+        """
+        import numpy as np
+        faces = np.asarray(faces, dtype=np.int32)
+        entry = {"faces": faces}
+        if self.format == "usd":
+            from pxr import UsdGeom, Vt
+            stage = self.usdexporter.stage
+            prim_path = f"/{name}"
+            mesh = UsdGeom.Mesh.Define(stage, prim_path)
+            mesh.CreateOrientationAttr().Set(UsdGeom.Tokens.rightHanded)
+            # Flat face-vertex indices and per-face vertex counts
+            fvi = Vt.IntArray(faces.flatten().tolist())
+            fvc = Vt.IntArray([3] * len(faces))
+            mesh.CreateFaceVertexIndicesAttr().Set(fvi)
+            mesh.CreateFaceVertexCountsAttr().Set(fvc)
+            entry["usd_points_attr"] = mesh.GetPointsAttr()
+        self._extra_meshes[name] = entry
 
     def save_frame(self, positions, frame):
+        """Save the primary tet mesh positions for this frame."""
         if self.format == "usd":
             self.usdexporter.save_frame(positions, frame)
         elif self.format == "ply":
             filename = f"frame_{frame:04d}.ply"
             path = self.abspath / filename
             save_ply(str(path), positions, self.surface_faces)
-            if frame%10 == 0:
+            if frame % 10 == 0:
                 print(f"Saved PLY frame {frame} to {filename}")
-    
+
+    def save_mesh_frame(self, name, positions, frame):
+        """Save positions for a registered triangle mesh at this frame.
+
+        Args:
+            name: Name passed to add_mesh().
+            positions: (V, 3) float array of vertex positions.
+            frame: Frame number.
+        """
+        entry = self._extra_meshes[name]
+        if self.format == "usd":
+            from pxr import Usd, Vt
+            pts = Vt.Vec3fArray.FromNumpy(positions.astype("float32"))
+            entry["usd_points_attr"].Set(pts, Usd.TimeCode(frame))
+        elif self.format == "ply":
+            filename = f"{name}_{frame:04d}.ply"
+            path = self.abspath / filename
+            save_ply(str(path), positions, entry["faces"])
+
     def finalize(self):
         if self.format == "usd":
             self.usdexporter.finalize()

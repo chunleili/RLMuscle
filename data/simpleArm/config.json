@@ -41,6 +41,7 @@
     "vbd_substeps": 20,
     "vbd_iterations": 20
   },
+  "output_format": "usd",
   "xpbd": {
     "num_substeps": 30,
     "volume_stiffness": 1e6,

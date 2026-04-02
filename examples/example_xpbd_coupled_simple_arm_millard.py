@@ -20,7 +20,7 @@ from VMuscle.activation import activation_dynamics_step_np
 from VMuscle.constraints import ATTACH
 from VMuscle.dgf_curves import force_velocity  # keep f_V from DGF (Millard f_V not yet implemented)
 from VMuscle.millard_curves import MillardCurves
-from VMuscle.mesh_io import MeshExporter, save_ply
+from VMuscle.mesh_io import MeshExporter
 from VMuscle.mesh_utils import (
     create_capsule_mesh,
     create_cylinder_tet_mesh,
@@ -282,7 +282,8 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
 
     # Mesh exporter
     os.makedirs("output", exist_ok=True)
-    exporter = MeshExporter(path="output/anim_xpbd", format="ply",
+    output_fmt = cfg.get("output_format", "ply")
+    exporter = MeshExporter(path="output/anim_xpbd", format=output_fmt,
                             tet_indices=tet_idx, positions=vertices)
 
     # Bone capsule meshes (rest-pose, body-local coords)
@@ -292,9 +293,14 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
         [0, 0, 0], [0, -L_h, 0], radius=0.04, n_circ=12, n_axial=6)
     radius_verts_local, radius_faces = create_capsule_mesh(
         [0, 0, 0], [0, -L_r, 0], radius=0.03, n_circ=12, n_axial=6)
+    # Tendon capsule template (topology is fixed, only endpoints change)
+    _tendon_template_v, tendon_faces = create_capsule_mesh(
+        [0, 0, 0], [0, 0, 1], radius=0.005, n_circ=6, n_axial=4, n_cap=2)
 
-    bone_anim_dir = "output/anim_xpbd_bones"
-    os.makedirs(bone_anim_dir, exist_ok=True)
+    exporter.add_mesh("humerus", humerus_faces)
+    exporter.add_mesh("radius", radius_faces)
+    exporter.add_mesh("tendon_prox", tendon_faces)
+    exporter.add_mesh("tendon_dist", tendon_faces)
 
     # Warm-up
     if verbose:
@@ -412,29 +418,24 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
 
         exporter.save_frame(pos_np.astype(np.float32), step)
 
-        # Export bone capsules at current MuJoCo pose
-        h_verts = humerus_verts_local
-        save_ply(os.path.join(bone_anim_dir, f"humerus_{step:04d}.ply"),
-                 h_verts, humerus_faces)
+        # Export bone capsules and tendons at current MuJoCo pose
+        exporter.save_mesh_frame("humerus", humerus_verts_local, step)
         r_pos = mj_data.xpos[2]
         r_quat = mj_data.xquat[2]
         r_verts = transform_by_quat(radius_verts_local, r_pos, r_quat)
-        save_ply(os.path.join(bone_anim_dir, f"radius_{step:04d}.ply"),
-                 r_verts.astype(np.float32), radius_faces)
+        exporter.save_mesh_frame("radius", r_verts.astype(np.float32), step)
         cur_origin = mj_data.site_xpos[origin_sid].copy()
         cur_insertion = mj_data.site_xpos[insertion_sid].copy()
         mesh_top_center = pos_np[origin_ids].mean(axis=0)
         mesh_bot_center = pos_np[insertion_ids].mean(axis=0)
-        tp_v, tp_f = create_capsule_mesh(
+        tp_v, _ = create_capsule_mesh(
             cur_origin, mesh_top_center, radius=0.005,
             n_circ=6, n_axial=4, n_cap=2)
-        save_ply(os.path.join(bone_anim_dir, f"tendon_prox_{step:04d}.ply"),
-                 tp_v, tp_f)
-        td_v, td_f = create_capsule_mesh(
+        exporter.save_mesh_frame("tendon_prox", tp_v, step)
+        td_v, _ = create_capsule_mesh(
             mesh_bot_center, cur_insertion, radius=0.005,
             n_circ=6, n_axial=4, n_cap=2)
-        save_ply(os.path.join(bone_anim_dir, f"tendon_dist_{step:04d}.ply"),
-                 td_v, td_f)
+        exporter.save_mesh_frame("tendon_dist", td_v, step)
 
         nfl_1d = (float(mj_data.ten_length[0]) - L_slack) / L_opt
         forces_out.append(muscle_force)
