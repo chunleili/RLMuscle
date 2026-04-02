@@ -4,13 +4,13 @@
 
 **Goal:** 用能量本构约束 C=√(2·Ψ_L) 替代当前的 stiffness-modulated + target_stretch 方案，使 XPBD 约束力自动匹配 Millard 主动力-长度曲线，消除 CPU 端平衡反求。
 
-**Architecture:** 在 GPU kernel 中直接从 Millard f_L 的能量积分（已有闭式10次多项式）计算 C 值。约束力 ∝ dΨ/dλ = σ₀·a·f_L(λ)，自动恢复 Hill 力-长度关系。
+**Architecture:** 在 GPU kernel 中直接从 Millard f_L 的能量积分（已有闭式10次多项式）计算 C 值。约束力 ∝ dΨ/dlm = σ₀·a·f_L(lm)，自动恢复 Hill 力-长度关系。
 
 **Tech Stack:** Python, Warp (GPU kernels), NumPy, MuJoCo (coupling)
 
 **Spec:** `docs/superpowers/specs/2026-04-02-xpbd-millard-stage5-design.md`
 
-**失败方案记录:** 动态目标力注入 `target = λ - σ₀·f_total/k_base` 已证明不可行（k_base cancel、质量比问题无法解决）。
+**失败方案记录:** 动态目标力注入 `target = lm - σ₀·f_total/k_base` 已证明不可行（k_base cancel、质量比问题无法解决）。
 
 ---
 
@@ -22,9 +22,9 @@
 
 **Context:** `MillardCurves` 已在 CPU 端通过解析方法预计算了 f_L 的能量多项式系数（`_build_energy_integral()` → 闭式10次多项式 `F_coeffs[11]`，由 Bezier 控制点的 y(u)·x'(u) 卷积 + 逐项求原函数得到，**非数值积分**）。需要：
 1. 将 f_L 的能量多项式系数上传为 Warp 数组
-2. 实现 GPU 函数 `millard_energy_eval_wp`，输入 λ，直接求值闭式多项式输出 Ψ_L(λ)
+2. 实现 GPU 函数 `millard_energy_eval_wp`，输入 lm，直接求值闭式多项式输出 Ψ_L(lm)
 
-能量参考点：Ψ_L(λ_min=0.4441) = 0，确保 Ψ_L ≥ 0 对所有 λ ≥ λ_min。
+能量参考点：Ψ_L(lm_min=0.4441) = 0，确保 Ψ_L ≥ 0 对所有 lm ≥ lm_min。
 
 - [ ] **Step 1: 检查现有能量多项式实现**
 
@@ -37,7 +37,7 @@
 - [ ] **Step 3: 实现 `millard_energy_eval_wp` GPU 函数**
 
 逻辑与 `millard_eval_wp`（已有的力求值）类似，直接求值预计算的闭式多项式（非数值积分）：
-1. 域外检查（λ < x_lo 或 λ > x_hi）→ 边界能量值（需预计算）
+1. 域外检查（lm < x_lo 或 lm > x_hi）→ 边界能量值（需预计算）
 2. 线性扫描找段
 3. Newton 迭代 x → u
 4. Horner 求值 e_coeffs（闭式10次多项式，而非力的5次）
@@ -46,7 +46,7 @@
 
 - [ ] **Step 4: 单元测试——GPU 能量求值 vs CPU 能量求值**
 
-扩展 `tests/test_millard_gpu.py`，对比 `millard_energy_eval_wp(λ)` 和 CPU 端 `mc.fl.energy_eval(λ)` 的结果，确认精度 < 1e-5。
+扩展 `tests/test_millard_gpu.py`，对比 `millard_energy_eval_wp(lm)` 和 CPU 端 `mc.fl.energy_eval(lm)` 的结果，确认精度 < 1e-5。
 
 - [ ] **Step 5: Commit**
 
@@ -60,21 +60,21 @@
 - Create: `scripts/experiment_energy_constraint.py`（临时 CPU 验证脚本）
 
 **Context:** 在修改 GPU kernel 之前，先用纯 CPU/NumPy 验证 C=√(2Ψ_L) 的行为。构建一个简化的 1D XPBD 求解循环（单 tet、单约束），验证：
-1. 能量约束能否驱动纤维收缩（activation > 0 时 λ 从 1.0 下降）
-2. 在外力平衡下是否收敛到正确的 λ_eq（对比 Stage 4 的 0.5498）
-3. C 值和梯度在整个 λ 范围内的数值稳定性
+1. 能量约束能否驱动纤维收缩（activation > 0 时 lm 从 1.0 下降）
+2. 在外力平衡下是否收敛到正确的 lm_eq（对比 Stage 4 的 0.5498）
+3. C 值和梯度在整个 lm 范围内的数值稳定性
 
 - [ ] **Step 1: 编写 CPU 验证脚本**
 
 使用 `MillardCurves` 的 CPU 端 `energy_eval(lm)` 和 `eval(lm)` 方法。模拟 XPBD 单约束求解：
 ```python
 for iter in range(n_iters):
-    psi_L = mc.fl.energy_eval(lambda_current)  # 能量积分
-    f_L = mc.fl.eval(lambda_current)            # 力
+    psi_L = mc.fl.energy_eval(lm_current)  # 闭式能量多项式
+    f_L = mc.fl.eval(lm_current)           # 力
     C = sqrt(2 * sigma0 * a * psi_L)
     if C < eps: break
-    dC_dlambda = sigma0 * a * f_L / C
-    # XPBD update: delta_lambda = -C / (w * dC^2 + alpha)
+    dC_dlm = sigma0 * a * f_L / C
+    # XPBD update: dlm = -C / (w * dC_dlm^2 + alpha)
     ...
 ```
 
@@ -90,15 +90,15 @@ for iter in range(n_iters):
 **Files:**
 - Modify: `src/VMuscle/muscle_warp.py` (`solve_tetfibermillard_kernel`)
 
-**Context:** 当前 kernel 使用 `stiffness = k * max(f_total, 0.01) * scale` + `target = 1 - a * cf`。替换为能量约束 `C = √(2·σ₀·a·Ψ_L(λ))`。
+**Context:** 当前 kernel 使用 `stiffness = k * max(f_total, 0.01) * scale` + `target = 1 - a * cf`。替换为能量约束 `C = √(2·σ₀·a·Ψ_L(lm))`。
 
 约束梯度推导：
 ```
 C = √(2·σ₀·a·Ψ_L)
-dC/dλ = σ₀·a·f_L(λ) / C    (when C > ε)
+dC/dlm = σ₀·a·f_L(lm) / C    (when C > ε)
 ```
 
-XPBD 更新公式不变：`Δλ_n = -C / (Σw_i|∇C_i|² + α)`，只是 C 和 ∇C 的计算方式改变。
+XPBD 更新公式不变：`Δλ_xpbd = -C / (Σw_i|∇C_i|² + α)`，只是 C 和 ∇C 的计算方式改变。
 
 - [ ] **Step 1: 修改 kernel**
 
@@ -130,7 +130,7 @@ XPBD 更新公式不变：`Δλ_n = -C / (Σw_i|∇C_i|² + α)`，只是 C 和 
 - [ ] **Step 1: CPU 模式运行 sliding ball，验证能量约束行为**
 
 先用 CPU device 运行，便于调试和打印中间值。确认：
-- λ_eq 收敛到 ~0.5498
+- lm_eq 收敛到 ~0.5498
 - 球位置收敛到 ~0.0449m
 - 无 NaN、无发散
 
@@ -139,7 +139,7 @@ XPBD 更新公式不变：`Δλ_n = -C / (Σw_i|∇C_i|² + α)`，只是 C 和 
 
 `RUN=example_xpbd_millard_sliding_ball uv run main.py`
 
-对比 Stage 4 结果：λ_eq ≈ 0.5498, 球位置 ≈ 0.0449m（误差 <5%）
+对比 Stage 4 结果：lm_eq ≈ 0.5498, 球位置 ≈ 0.0449m（误差 <5%）
 
 - [ ] **Step 4: Commit**
 

@@ -115,6 +115,9 @@ uv run python tests/xxx.py
 
 
 
+## Symbol Table
+See [docs/notes/symbols.md](docs/notes/symbols.md) for the unified symbol table used across code and documentation.
+
 ## Note
 
 ### Layered USD

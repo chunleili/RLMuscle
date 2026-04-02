@@ -8,6 +8,7 @@
     - 当你计划/实施一项大的功能时，为了了解当前情况先去阅读`docs/`中的内容，并分阶段进行。
     - 你可以在`@docs/imgs/`下放一些图片来作为docs的插图，请做好目录分类。
     - 代码注释使用英文，文档 markdown使用中文，不要更改README。
+    - 符号使用必须遵循 `@docs/notes/symbols.md` 中的符号表。
 - Code Structure
     - 共享的基础设施放 `@src/`， `@examples/`放可独立运行的Simulation Example，脚本（如绘图或运行外部程序）放 `@scripts/`。
     - 输入数据（包括json格式的config和输入文件）放 `@data/`。
