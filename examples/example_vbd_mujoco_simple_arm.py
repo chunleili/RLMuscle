@@ -26,13 +26,11 @@ Usage:
 import argparse
 import json
 import os
-import sys
 
 import mujoco
 import numpy as np
 import warp as wp
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from VMuscle.log import setup_logging
 setup_logging()
 
@@ -48,11 +46,7 @@ from VMuscle.mesh_utils import (
     create_cylinder_tet_mesh,
     set_vmuscle_properties,
 )
-
-
-def load_config(path="data/simpleArm/config.json"):
-    with open(path) as f:
-        return json.load(f)
+from VMuscle.simple_arm_helpers import build_mjcf, compute_excitation, write_sto
 
 
 def _get_default_warp_device(cfg=None):
@@ -211,11 +205,6 @@ def vbd_mujoco_simple_arm(cfg, verbose=True, device=None):
         wp.init()
 
     # --- Build MuJoCo ---
-    _examples_dir = os.path.dirname(os.path.abspath(__file__))
-    if _examples_dir not in sys.path:
-        sys.path.insert(0, _examples_dir)
-    from example_mujoco_simple_arm import build_mjcf
-
     mjcf_str = build_mjcf(cfg)
     mj_model = mujoco.MjModel.from_xml_string(mjcf_str)
     mj_data = mujoco.MjData(mj_model)
@@ -373,19 +362,7 @@ def vbd_mujoco_simple_arm(cfg, verbose=True, device=None):
         for sub in range(substeps):
             t_sub = t + sub * mj_dt
 
-            # Excitation schedule (matches OpenSim StepFunction)
-            t_start = act_cfg["excitation_start_time"]
-            t_end_exc = act_cfg["excitation_end_time"]
-            e_off = act_cfg["excitation_off"]
-            e_on = act_cfg["excitation_on"]
-            if t_sub < t_start:
-                excitation = e_off
-            elif t_sub >= t_end_exc:
-                excitation = e_on
-            else:
-                frac = (t_sub - t_start) / (t_end_exc - t_start)
-                frac = frac * frac * (3.0 - 2.0 * frac)
-                excitation = e_off + (e_on - e_off) * frac
+            excitation = compute_excitation(t_sub, act_cfg)
 
             # Activation dynamics at substep rate (matching Stage 1)
             activation = float(activation_dynamics_step_np(
@@ -444,27 +421,14 @@ def vbd_mujoco_simple_arm(cfg, verbose=True, device=None):
     # --- Save outputs ---
     os.makedirs("output", exist_ok=True)
     sto_path = "output/SimpleArm_VBD_MuJoCo_states.sto"
-    n_rows = len(times)
     cols = [
         "/jointset/elbow/elbow_coord_0/value",
         "/forceset/biceps/activation",
         "/forceset/biceps/fiber_force",
         "/forceset/biceps/norm_fiber_length",
     ]
-    with open(sto_path, "w") as f:
-        f.write("SimpleArm_VBD_MuJoCo\n")
-        f.write("inDegrees=no\n")
-        f.write(f"nColumns={len(cols) + 1}\n")
-        f.write(f"nRows={n_rows}\n")
-        f.write("DataType=double\n")
-        f.write("version=3\n")
-        f.write("endheader\n")
-        f.write("time\t" + "\t".join(cols) + "\n")
-        for i in range(n_rows):
-            f.write(
-                f"{times[i]}\t{elbow_angles[i]}\t{activations_out[i]}\t"
-                f"{forces_out[i]}\t{norm_fiber_lengths[i]}\n"
-            )
+    write_sto(sto_path, "SimpleArm_VBD_MuJoCo", cols, times,
+              [elbow_angles, activations_out, forces_out, norm_fiber_lengths])
     if verbose:
         print(f"STO saved to {sto_path}")
 
@@ -492,7 +456,8 @@ def main():
     )
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
+    with open(args.config) as f:
+        cfg = json.load(f)
     result = vbd_mujoco_simple_arm(cfg, device=args.device)
     if result:
         print(f"\nFinal elbow angle: {np.degrees(result['elbow_angles'][-1]):.2f}deg")

@@ -26,13 +26,11 @@ Usage:
 import argparse
 import json
 import os
-import sys
 
 import mujoco
 import numpy as np
 import warp as wp
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from VMuscle.log import setup_logging
 setup_logging()
 
@@ -44,13 +42,10 @@ from VMuscle.mesh_io import MeshExporter
 from VMuscle.mesh_utils import (
     check_mesh_quality,
     create_cylinder_tet_mesh,
+    rotation_matrix_align,
     set_vmuscle_properties,
 )
-
-
-def load_config(path="data/simpleArm/config.json"):
-    with open(path) as f:
-        return json.load(f)
+from VMuscle.simple_arm_helpers import build_mjcf, compute_excitation, write_sto
 
 
 def _get_vbd_options(cfg):
@@ -64,27 +59,6 @@ def _get_vbd_options(cfg):
     }
 
 
-def _rotation_matrix_from_z_to(target_dir):
-    """Compute rotation matrix that rotates Z-axis to target_dir."""
-    z = np.array([0, 0, 1], dtype=np.float64)
-    t = np.asarray(target_dir, dtype=np.float64)
-    t = t / np.linalg.norm(t)
-
-    cos_theta = np.dot(z, t)
-    if cos_theta > 1.0 - 1e-8:
-        return np.eye(3, dtype=np.float32)
-    if cos_theta < -1.0 + 1e-8:
-        return np.diag([1, -1, -1]).astype(np.float32)
-
-    axis = np.cross(z, t)
-    axis = axis / np.linalg.norm(axis)
-    K = np.array([
-        [0, -axis[2], axis[1]],
-        [axis[2], 0, -axis[0]],
-        [-axis[1], axis[0], 0],
-    ])
-    R = np.eye(3) + np.sin(np.arccos(cos_theta)) * K + (1 - cos_theta) * (K @ K)
-    return R.astype(np.float32)
 
 
 def build_vbd_muscle_coupled(cfg, origin_pos, insertion_pos, fiber_length, device="cpu"):
@@ -118,7 +92,7 @@ def build_vbd_muscle_coupled(cfg, origin_pos, insertion_pos, fiber_length, devic
     vertices, tets = create_cylinder_tet_mesh(mesh_length, r, n_circ, n_axial)
 
     # Rotate+translate to world frame
-    R = _rotation_matrix_from_z_to(tendon_dir)
+    R = rotation_matrix_align(np.array([0, 0, 1]), tendon_dir)
     vertices = (R @ vertices.T).T + insertion_pos.astype(np.float32)
     fiber_origin_pos = insertion_pos + tendon_dir.astype(np.float64) * mesh_length
 
@@ -260,11 +234,6 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
     vbd_sub_dt = outer_dt / vbd_substeps
 
     # --- Build MuJoCo ---
-    _examples_dir = os.path.dirname(os.path.abspath(__file__))
-    if _examples_dir not in sys.path:
-        sys.path.insert(0, _examples_dir)
-    from example_mujoco_simple_arm import build_mjcf
-
     mjcf_str = build_mjcf(cfg)
     mj_model = mujoco.MjModel.from_xml_string(mjcf_str)
     mj_data = mujoco.MjData(mj_model)
@@ -416,19 +385,7 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
         for sub in range(substeps):
             t_sub = t + sub * mj_dt
 
-            # Excitation schedule
-            t_start = act_cfg["excitation_start_time"]
-            t_end_exc = act_cfg["excitation_end_time"]
-            e_off = act_cfg["excitation_off"]
-            e_on = act_cfg["excitation_on"]
-            if t_sub < t_start:
-                excitation = e_off
-            elif t_sub >= t_end_exc:
-                excitation = e_on
-            else:
-                frac = (t_sub - t_start) / (t_end_exc - t_start)
-                frac = frac * frac * (3.0 - 2.0 * frac)
-                excitation = e_off + (e_on - e_off) * frac
+            excitation = compute_excitation(t_sub, act_cfg)
 
             # Activation dynamics at substep rate
             activation = float(activation_dynamics_step_np(
@@ -488,27 +445,14 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
     # --- Save .sto ---
     os.makedirs("output", exist_ok=True)
     sto_path = "output/SimpleArm_Coupled_states.sto"
-    n_rows = len(times)
     cols = [
         "/jointset/elbow/elbow_coord_0/value",
         "/forceset/biceps/activation",
         "/forceset/biceps/fiber_force",
         "/forceset/biceps/norm_fiber_length",
     ]
-    with open(sto_path, "w") as f:
-        f.write("SimpleArm_VBD_Coupled\n")
-        f.write("inDegrees=no\n")
-        f.write(f"nColumns={len(cols) + 1}\n")
-        f.write(f"nRows={n_rows}\n")
-        f.write("DataType=double\n")
-        f.write("version=3\n")
-        f.write("endheader\n")
-        f.write("time\t" + "\t".join(cols) + "\n")
-        for i in range(n_rows):
-            f.write(
-                f"{times[i]}\t{elbow_angles[i]}\t{activations_out[i]}\t"
-                f"{forces_out[i]}\t{norm_fiber_lengths[i]}\n"
-            )
+    write_sto(sto_path, "SimpleArm_VBD_Coupled", cols, times,
+              [elbow_angles, activations_out, forces_out, norm_fiber_lengths])
     if verbose:
         print(f"STO saved to {sto_path}")
 
@@ -530,7 +474,8 @@ def main():
     parser.add_argument("--config", default="data/simpleArm/config.json")
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
+    with open(args.config) as f:
+        cfg = json.load(f)
     result = vbd_coupled_simple_arm(cfg)
     if result:
         print(f"\nFinal elbow angle: {np.degrees(result['elbow_angles'][-1]):.2f}deg")

@@ -12,14 +12,12 @@ Usage:
 import argparse
 import json
 import os
-import textwrap
 
 import mujoco
 import numpy as np
 import warp as wp
 
 from VMuscle.activation import activation_dynamics_step_np
-from VMuscle.constraints import ATTACH
 from VMuscle.dgf_curves import active_force_length, force_velocity, passive_force_length
 from VMuscle.mesh_io import MeshExporter, save_ply
 from VMuscle.mesh_utils import (
@@ -31,104 +29,12 @@ from VMuscle.mesh_utils import (
 )
 from VMuscle.muscle_common import compute_fiber_stretches
 from VMuscle.muscle_warp import MuscleSim
-
-
-# ---------------------------------------------------------------------------
-# SimpleArm-specific helpers
-# ---------------------------------------------------------------------------
-
-def build_mjcf(cfg):
-    """Generate MJCF XML for the SimpleArm model."""
-    geo = cfg["geometry"]
-    L_h = geo["humerus_length"]
-    L_r = geo["radius_length"]
-    mo = geo["muscle_origin_on_humerus"]
-    mi = geo["muscle_insertion_on_radius"]
-    ox, oy, oz = mo[0], -(L_h - mo[1]), mo[2] if len(mo) > 2 else 0
-    ix, iy, iz = mi[0], -(L_r - mi[1]), mi[2] if len(mi) > 2 else 0
-
-    return textwrap.dedent(f"""\
-    <?xml version="1.0" ?>
-    <mujoco model="simple_arm">
-      <option timestep="0.002" gravity="0 -9.81 0"
-              integrator="implicit" solver="Newton"
-              iterations="50" tolerance="1e-10"/>
-      <compiler angle="radian"/>
-
-      <worldbody>
-        <body name="humerus" pos="0 0 0">
-          <geom type="capsule" size="0.04" fromto="0 0 0 0 {-L_h} 0"
-                rgba="0.7 0.7 0.7 0.8" mass="0"
-                contype="0" conaffinity="0"/>
-          <site name="muscle_origin" pos="{ox} {oy} {oz}" size="0.015"
-                rgba="1 0 0 1"/>
-
-          <body name="radius" pos="0 {-L_h} 0">
-            <joint name="elbow" type="hinge" axis="0 0 1"
-                   limited="true" range="0 3.14159"
-                   damping="0" armature="0"/>
-            <inertial pos="0 {-L_r} 0" mass="1"
-                      diaginertia="0.001 0.001 0.001"/>
-            <geom type="capsule" size="0.03" fromto="0 0 0 0 {-L_r} 0"
-                  rgba="0.5 0.5 0.8 0.8" mass="0"
-                  contype="0" conaffinity="0"/>
-            <site name="muscle_insertion" pos="{ix} {iy} {iz}" size="0.015"
-                  rgba="0 0 1 1"/>
-          </body>
-        </body>
-      </worldbody>
-
-      <tendon>
-        <spatial name="biceps_tendon" stiffness="0" damping="0"
-                 width="0.008" rgba="0.8 0.2 0.2 1">
-          <site site="muscle_origin"/>
-          <site site="muscle_insertion"/>
-        </spatial>
-      </tendon>
-
-      <actuator>
-        <motor name="biceps_motor" tendon="biceps_tendon" gear="-1"/>
-      </actuator>
-    </mujoco>""")
-
-
-def _build_attach_constraints(vertices, origin_ids, insertion_ids,
-                              bone_targets_np, tets,
-                              origin_stiffness, insertion_stiffness):
-    """Build ATTACH constraint dicts for origin and insertion vertices."""
-    pt2tet = {}
-    for i, t in enumerate(tets):
-        for vi in t:
-            pt2tet.setdefault(int(vi), int(i))
-
-    n_origin = len(origin_ids)
-    attach_cons = []
-
-    for j, vid in enumerate(origin_ids):
-        bone_idx = j
-        tgt = bone_targets_np[bone_idx]
-        dist = float(np.linalg.norm(vertices[vid] - tgt))
-        attach_cons.append(dict(
-            type=ATTACH, pts=[int(vid), -1, int(bone_idx), -1],
-            stiffness=origin_stiffness, dampingratio=0.0,
-            tetid=pt2tet.get(int(vid), -1), L=[0.0, 0.0, 0.0],
-            restlength=dist,
-            restvector=[float(tgt[0]), float(tgt[1]), float(tgt[2]), 1.0],
-            restdir=[0.0, 0.0, 0.0], compressionstiffness=-1.0))
-
-    for j, vid in enumerate(insertion_ids):
-        bone_idx = n_origin + j
-        tgt = bone_targets_np[bone_idx]
-        dist = float(np.linalg.norm(vertices[vid] - tgt))
-        attach_cons.append(dict(
-            type=ATTACH, pts=[int(vid), -1, int(bone_idx), -1],
-            stiffness=insertion_stiffness, dampingratio=0.0,
-            tetid=pt2tet.get(int(vid), -1), L=[0.0, 0.0, 0.0],
-            restlength=dist,
-            restvector=[float(tgt[0]), float(tgt[1]), float(tgt[2]), 1.0],
-            restdir=[0.0, 0.0, 0.0], compressionstiffness=-1.0))
-
-    return attach_cons
+from VMuscle.simple_arm_helpers import (
+    build_attach_constraints,
+    build_mjcf,
+    compute_excitation,
+    write_sto,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +157,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
     )
 
     # Add ATTACH constraints for origin + insertion
-    attach_cons = _build_attach_constraints(
+    attach_cons = build_attach_constraints(
         vertices, origin_ids, insertion_ids, bone_targets_np, tets,
         attach_origin_k, attach_insertion_k)
     sim.rebuild_constraints(extra_constraints=attach_cons)
@@ -343,17 +249,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
 
             # c) MuJoCo substeps
             for _ in range(mj_per_xpbd):
-                t_start = act_cfg["excitation_start_time"]
-                t_end = act_cfg["excitation_end_time"]
-                e_off = act_cfg["excitation_off"]
-                if t_now < t_start:
-                    exc = e_off
-                elif t_now >= t_end:
-                    exc = act_cfg["excitation_on"]
-                else:
-                    f_ = (t_now - t_start) / (t_end - t_start)
-                    f_ = f_ * f_ * (3.0 - 2.0 * f_)
-                    exc = e_off + (act_cfg["excitation_on"] - e_off) * f_
+                exc = compute_excitation(t_now, act_cfg)
 
                 activation = float(activation_dynamics_step_np(
                     np.array([exc], dtype=np.float32),
@@ -443,14 +339,8 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
             "/forceset/biceps/activation",
             "/forceset/biceps/fiber_force",
             "/forceset/biceps/norm_fiber_length"]
-    with open(sto_path, "w") as f:
-        f.write("SimpleArm_XPBD_Coupled\ninDegrees=no\n"
-                f"nColumns={len(cols)+1}\nnRows={len(times)}\n"
-                "DataType=double\nversion=3\nendheader\n"
-                "time\t" + "\t".join(cols) + "\n")
-        for i in range(len(times)):
-            f.write(f"{times[i]}\t{elbow_angles[i]}\t{activations_out[i]}\t"
-                    f"{forces_out[i]}\t{norm_fiber_lengths[i]}\n")
+    write_sto(sto_path, "SimpleArm_XPBD_Coupled", cols, times,
+              [elbow_angles, activations_out, forces_out, norm_fiber_lengths])
     if verbose:
         print(f"STO saved to {sto_path}")
 
