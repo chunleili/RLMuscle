@@ -18,6 +18,7 @@
     - 进行重构时，需要简化代码结构，去除冗余，增加注释，保持代码清晰易读。重构后需要进行测试，确保功能正确。必要时可以改动外部API。
     - Implement the plan stage by stage. Each time after finishing a stage, record the key findings in docs/progress, and update the docs/plans/
     - 结束任务前必须测试是否正确运行。
+    - 实验/feature探索失败时需要如实记录失败的原因、过程和可复现的方法。
 - Git
     - 使用rebase而非merge来保持线性历史。
     - 实现新功能新建feat/XXX分支，修复新建fix/XXX分支，完成后合并到dev分支，master分支保持稳定，不允许更改。
