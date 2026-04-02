@@ -182,6 +182,15 @@ def dgf_force_velocity_wp(v_norm: float) -> float:
 # ---------------------------------------------------------------------------
 
 @wp.func
+def horner10_wp(u: float, c0: float, c1: float, c2: float, c3: float,
+                c4: float, c5: float, c6: float, c7: float, c8: float,
+                c9: float, c10: float) -> float:
+    """Evaluate degree-10 polynomial via Horner's method."""
+    return c0 + u * (c1 + u * (c2 + u * (c3 + u * (c4 + u * (
+           c5 + u * (c6 + u * (c7 + u * (c8 + u * (c9 + u * c10)))))))))
+
+
+@wp.func
 def horner5_wp(u: float, c0: float, c1: float, c2: float,
                c3: float, c4: float, c5: float) -> float:
     """Evaluate degree-5 polynomial via Horner's method."""
@@ -264,6 +273,90 @@ def millard_eval_wp(
     yc5 = float(y_coeffs[off + 5])
 
     return horner5_wp(u, yc0, yc1, yc2, yc3, yc4, yc5)
+
+
+@wp.func
+def millard_energy_eval_wp(
+    x_target: float,
+    x_coeffs: wp.array(dtype=wp.float32),
+    F_coeffs: wp.array(dtype=wp.float32),
+    seg_bounds: wp.array(dtype=wp.float32),
+    n_segments: int,
+    x_lo: float, x_hi: float,
+    y_lo: float, y_hi: float,
+    dydx_lo: float, dydx_hi: float,
+) -> float:
+    """Evaluate cumulative energy integral Psi(x) = integral_{x_lo}^{x} y(s) ds.
+
+    Uses precomputed degree-10 polynomial F_coeffs per segment.
+    F_coeffs layout: (n_seg*11,) flat, F_coeffs[seg*11 : seg*11+11].
+    """
+    # Left extrapolation: quadratic (integral of linear extrapolation)
+    if x_target <= x_lo:
+        dx = x_target - x_lo
+        return y_lo * dx + 0.5 * dydx_lo * dx * dx
+
+    # Accumulate complete segments + partial segment
+    total = float(0.0)
+
+    # Warp has no break — use done flag
+    done = int(0)
+    for i in range(n_segments):
+        if done == 0:
+            if x_target >= seg_bounds[i + 1]:
+                # Complete segment: add F(1)
+                off = i * 11
+                total += horner10_wp(
+                    1.0,
+                    float(F_coeffs[off]), float(F_coeffs[off + 1]),
+                    float(F_coeffs[off + 2]), float(F_coeffs[off + 3]),
+                    float(F_coeffs[off + 4]), float(F_coeffs[off + 5]),
+                    float(F_coeffs[off + 6]), float(F_coeffs[off + 7]),
+                    float(F_coeffs[off + 8]), float(F_coeffs[off + 9]),
+                    float(F_coeffs[off + 10]),
+                )
+            else:
+                # Partial segment: Newton x→u, then F(u)
+                xoff = i * 6
+                xc0 = float(x_coeffs[xoff])
+                xc1 = float(x_coeffs[xoff + 1])
+                xc2 = float(x_coeffs[xoff + 2])
+                xc3 = float(x_coeffs[xoff + 3])
+                xc4 = float(x_coeffs[xoff + 4])
+                xc5 = float(x_coeffs[xoff + 5])
+
+                x_at_1 = xc0 + xc1 + xc2 + xc3 + xc4 + xc5
+                denom = x_at_1 - xc0
+                u = float(0.5)
+                if wp.abs(denom) > 1.0e-20:
+                    u = (x_target - xc0) / denom
+                u = wp.clamp(u, 0.0, 1.0)
+
+                for _iter in range(5):
+                    xu = horner5_wp(u, xc0, xc1, xc2, xc3, xc4, xc5)
+                    dxu = horner5_deriv_wp(u, xc1, xc2, xc3, xc4, xc5)
+                    if wp.abs(dxu) > 1.0e-20:
+                        u = u - (xu - x_target) / dxu
+                        u = wp.clamp(u, -0.05, 1.05)
+
+                off = i * 11
+                total += horner10_wp(
+                    u,
+                    float(F_coeffs[off]), float(F_coeffs[off + 1]),
+                    float(F_coeffs[off + 2]), float(F_coeffs[off + 3]),
+                    float(F_coeffs[off + 4]), float(F_coeffs[off + 5]),
+                    float(F_coeffs[off + 6]), float(F_coeffs[off + 7]),
+                    float(F_coeffs[off + 8]), float(F_coeffs[off + 9]),
+                    float(F_coeffs[off + 10]),
+                )
+                done = 1
+
+    # Right extrapolation: quadratic
+    if x_target > x_hi:
+        dx = x_target - x_hi
+        total += y_hi * dx + 0.5 * dydx_hi * dx * dx
+
+    return total
 
 
 @wp.func
@@ -1773,17 +1866,20 @@ class MuscleSim(MuscleSimBase):
             n_seg = len(curve.segments)
             x_coeffs = np.zeros((n_seg, 6), dtype=np.float32)
             y_coeffs = np.zeros((n_seg, 6), dtype=np.float32)
+            F_coeffs = np.zeros((n_seg, 11), dtype=np.float32)
             seg_bounds = np.zeros(n_seg + 1, dtype=np.float32)
 
             for i, seg in enumerate(curve.segments):
                 x_coeffs[i] = seg.x_coeffs.astype(np.float32)
                 y_coeffs[i] = seg.y_coeffs.astype(np.float32)
+                F_coeffs[i] = seg.F_coeffs.astype(np.float32)
                 seg_bounds[i] = np.float32(seg.x_start)
             seg_bounds[n_seg] = np.float32(curve.segments[-1].x_end)
 
             return {
                 'x_coeffs': wp.from_numpy(x_coeffs.flatten(), dtype=wp.float32),
                 'y_coeffs': wp.from_numpy(y_coeffs.flatten(), dtype=wp.float32),
+                'F_coeffs': wp.from_numpy(F_coeffs.flatten(), dtype=wp.float32),
                 'seg_bounds': wp.from_numpy(seg_bounds, dtype=wp.float32),
                 'n_segments': n_seg,
                 'x_lo': curve.x_lo,
@@ -1797,6 +1893,7 @@ class MuscleSim(MuscleSimBase):
         fl = _upload_curve(mc.fl)
         self._millard_fl_x_coeffs = fl['x_coeffs']
         self._millard_fl_y_coeffs = fl['y_coeffs']
+        self._millard_fl_F_coeffs = fl['F_coeffs']
         self._millard_fl_seg_bounds = fl['seg_bounds']
         self._millard_fl_n_segments = fl['n_segments']
         self._millard_fl_x_lo = fl['x_lo']
@@ -1809,6 +1906,7 @@ class MuscleSim(MuscleSimBase):
         fpe = _upload_curve(mc.fpe)
         self._millard_fpe_x_coeffs = fpe['x_coeffs']
         self._millard_fpe_y_coeffs = fpe['y_coeffs']
+        self._millard_fpe_F_coeffs = fpe['F_coeffs']
         self._millard_fpe_seg_bounds = fpe['seg_bounds']
         self._millard_fpe_n_segments = fpe['n_segments']
         self._millard_fpe_x_lo = fpe['x_lo']
