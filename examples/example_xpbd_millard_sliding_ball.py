@@ -18,9 +18,8 @@ import warp as wp
 
 from VMuscle.activation import activation_dynamics_step_np
 from VMuscle.mesh_utils import create_cylinder_tet_mesh, assign_fiber_directions
-from VMuscle.millard_curves import MillardCurves, millard_equilibrium_fiber_length
-from VMuscle.muscle_warp import (MuscleSim, fill_float_kernel,
-                                   update_cons_restdir1_kernel)
+from VMuscle.millard_curves import MillardCurves
+from VMuscle.muscle_warp import MuscleSim, fill_float_kernel
 
 
 def load_config(path):
@@ -43,6 +42,7 @@ def load_config(path):
         "gravity": phys.get("gravity", 9.81),
         "ball_mass": phys["ball_mass"],
         "sigma0": mus["sigma0"],
+        "lambda_opt": mus.get("lambda_opt", 1.0),
         "excitation": act["excitation"],
         "act_substep_dt": act["substep_dt"],
         "dt": sol["dt"],
@@ -50,15 +50,10 @@ def load_config(path):
         "num_substeps": xpbd.get("num_substeps", 10),
         "veldamping": xpbd.get("veldamping", 0.02),
         "fiber_stiffness_scale": xpbd.get("fiber_stiffness_scale", 100000.0),
-        "volume_stiffness": xpbd.get("volume_stiffness", 1e10),
-        "fiber_stiffness": xpbd.get("fiber_stiffness", 1000.0),
-        "arap_stiffness": xpbd.get("arap_stiffness", 1e10),
         "dampingratio": xpbd.get("dampingratio", 0.1),
-        "contraction_factor": xpbd.get("contraction_factor", 0.4),
-        "snh_mu": xpbd.get("snh_mu", 0.0),
-        "snh_lam": xpbd.get("snh_lam", 10000.0),
-        "snh_dampingratio": xpbd.get("snh_dampingratio", 0.01),
         "n_constraint_iters": xpbd.get("n_constraint_iters", 1),
+        # Constraints read from JSON "constraints" array
+        "constraints": raw.get("constraints", []),
     }
 
 
@@ -96,30 +91,30 @@ def _build_muscle_sim(cfg):
     norms = np.linalg.norm(v_fiber, axis=1, keepdims=True)
     v_fiber /= np.maximum(norms, 1e-8)
 
-    # Build SimConfig — using fibermillard instead of fiberdgf
+    # Build SimConfig — constraints from JSON config
+    constraint_list = []
+    for cc in cfg.get("constraints", []):
+        entry = dict(cc)  # copy
+        entry.setdefault("name", cc["type"])
+        constraint_list.append(entry)
+    if not constraint_list:
+        raise ValueError("No constraints defined in config JSON")
+
     sim_cfg = SimpleNamespace(
         geo_path="<procedural>",
         bone_geo_path="<none>",
         gui=False,
         render_mode="none",
-        constraints=[
-            {"type": "fibermillard", "name": "fiber_millard",
-             "stiffness": cfg["fiber_stiffness"],
-             "dampingratio": cfg["dampingratio"],
-             "sigma0": cfg["sigma0"],
-             "contraction_factor": cfg["contraction_factor"]},
-        ] + ([{"type": "snh", "name": "snh",
-               "mu": cfg["snh_mu"],
-               "lam": cfg["snh_lam"],
-               "dampingratio": cfg["snh_dampingratio"]}]
-             if cfg.get("snh_mu", 0.0) > 0.0 else []),
+        constraints=constraint_list,
         dt=cfg["dt"],
         num_substeps=cfg["num_substeps"],
         gravity=cfg["gravity"],
         density=cfg["density"],
         veldamping=cfg["veldamping"],
-        contraction_ratio=cfg["contraction_factor"],
+        contraction_ratio=0.0,
         fiber_stiffness_scale=cfg["fiber_stiffness_scale"],
+        sigma0=cfg["sigma0"],
+        lambda_opt=cfg["lambda_opt"],
         HAS_compressstiffness=False,
         arch="cpu",
         save_image=False,
@@ -160,7 +155,7 @@ def _build_muscle_sim(cfg):
 
     sim.use_jacobi = False
     sim.use_colored_gs = False
-    sim.contraction_ratio = cfg["contraction_factor"]
+    sim.contraction_ratio = 0.0
     sim.fiber_stiffness_scale = cfg["fiber_stiffness_scale"]
     sim.has_compressstiffness = False
     sim.dt = cfg["dt"] / cfg["num_substeps"]
@@ -168,6 +163,15 @@ def _build_muscle_sim(cfg):
     sim.renderer = None
 
     sim.build_constraints()
+
+    # Set gravity vector based on up axis
+    g = cfg["gravity"]
+    if axis_idx == 0:
+        sim._gravity_vec = wp.vec3(-g, 0.0, 0.0)
+    elif axis_idx == 1:
+        sim._gravity_vec = wp.vec3(0.0, -g, 0.0)
+    else:
+        sim._gravity_vec = wp.vec3(0.0, 0.0, -g)
 
     # Fix top vertices and add ball mass to bottom
     mass_np = sim.mass.numpy()
@@ -189,15 +193,14 @@ def _build_muscle_sim(cfg):
     sim.mass = wp.from_numpy(mass_np.astype(np.float32), dtype=wp.float32)
     sim.stopped = wp.from_numpy(stopped_np.astype(np.int32), dtype=wp.int32)
 
-    # Compute Millard equilibrium for initial contraction_factor
+    # Explicit active force mode — log expected equilibrium values
     mc = MillardCurves()
     A_cross = np.pi * radius ** 2
     F_max = cfg["sigma0"] * A_cross
     norm_load = ball_mass * cfg["gravity"] / F_max
-    lm_eq = millard_equilibrium_fiber_length(1.0, norm_load, mc.fl)
-    cf = 1.0 - lm_eq
-    print(f"Millard equilibrium: lm_eq={lm_eq:.4f}, cf={cf:.4f}, "
-          f"F_max={F_max:.1f}N, norm_load={norm_load:.4f}")
+    print(f"Explicit active force mode: F_max={F_max:.1f}N, norm_load={norm_load:.4f}")
+    print(f"  lambda_opt={cfg['lambda_opt']:.3f}")
+    print(f"  Expected: f_L(lm_eq)={norm_load:.4f} → lm_eq≈0.546")
 
     return sim, bottom_ids, axis_idx, tets, vertices, fiber_dirs_per_tet, mc
 
@@ -253,11 +256,6 @@ def run_sim(cfg, label="default"):
     act_sub_dt = cfg["act_substep_dt"]
     excitation_val = cfg["excitation"]
 
-    # Normalized load for equilibrium computation
-    A_cross = np.pi * cfg["radius"] ** 2
-    F_max = cfg["sigma0"] * A_cross
-    norm_load = cfg["ball_mass"] * cfg["gravity"] / F_max
-
     rec_t, rec_z, rec_a, rec_fiber = [], [], [], []
 
     print(f"\nSimulating {n_steps * dt:.1f}s (Millard, "
@@ -277,20 +275,14 @@ def run_sim(cfg, label="default"):
         wp.launch(fill_float_kernel, dim=n_tet,
                   inputs=[sim.activation, wp.float32(a)])
 
-        # Compute Millard equilibrium → contraction_factor
-        lm_eq_a = millard_equilibrium_fiber_length(a, norm_load, mc.fl)
-        cf_a = 1.0 - lm_eq_a
+        # Explicit active force: no CPU equilibrium solve needed
 
-        from VMuscle.constraints import TETFIBERMILLARD
-        if hasattr(sim, 'cons_ranges') and TETFIBERMILLARD in sim.cons_ranges:
-            off, cnt = sim.cons_ranges[TETFIBERMILLARD]
-            wp.launch(update_cons_restdir1_kernel, dim=cnt,
-                      inputs=[sim.cons, cf_a, TETFIBERMILLARD, off, cnt])
-
-        # Step XPBD
+        # Step XPBD (active force explicit + passive constraints)
         n_iters = cfg.get("n_constraint_iters", 1)
         sim.update_attach_targets()
         for _ in range(sim.cfg.num_substeps):
+            sim.clear_forces()
+            sim.accumulate_active_fiber_force()
             sim.integrate()
             sim.clear()
             for _ in range(n_iters):

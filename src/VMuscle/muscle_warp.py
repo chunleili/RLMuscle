@@ -941,17 +941,122 @@ def integrate_kernel(
     pos: wp.array(dtype=wp.vec3),
     pprev: wp.array(dtype=wp.vec3),
     vel: wp.array(dtype=wp.vec3),
-    gravity: float,
+    force: wp.array(dtype=wp.vec3),
+    mass: wp.array(dtype=wp.float32),
+    stopped: wp.array(dtype=wp.int32),
+    gravity_vec: wp.vec3,
     veldamping: float,
     dt: float,
 ):
     i = wp.tid()
-    extacc = wp.vec3(0.0, gravity, 0.0)
+    if stopped[i] != 0:
+        pprev[i] = pos[i]
+        vel[i] = wp.vec3(0.0, 0.0, 0.0)
+        return
+    extacc = gravity_vec
+    m = mass[i]
+    if m > 1.0e-12:
+        extacc = extacc + force[i] / m
     pprev[i] = pos[i]
     v = (1.0 - veldamping) * vel[i]
     v = v + dt * extacc
     vel[i] = v
     pos[i] = pos[i] + dt * v
+
+
+@wp.kernel
+def accumulate_active_fiber_force_kernel(
+    tet_indices: wp.array(dtype=wp.vec4i),
+    pos: wp.array(dtype=wp.vec3),
+    force: wp.array(dtype=wp.vec3),
+    rest_matrix: wp.array(dtype=wp.mat33),
+    rest_volume: wp.array(dtype=wp.float32),
+    v_fiber_dir: wp.array(dtype=wp.vec3),
+    activation: wp.array(dtype=wp.float32),
+    sigma0: float,
+    lambda_opt: float,
+    # Millard f_L curve data (force evaluation only)
+    fl_x_coeffs: wp.array(dtype=wp.float32),
+    fl_y_coeffs: wp.array(dtype=wp.float32),
+    fl_seg_bounds: wp.array(dtype=wp.float32),
+    fl_n_segments: int,
+    fl_x_lo: float,
+    fl_x_hi: float,
+    fl_y_lo: float,
+    fl_y_hi: float,
+    fl_dydx_lo: float,
+    fl_dydx_hi: float,
+):
+    """Explicit active fiber force per tet, scattered to vertex force field.
+
+    f_j = -V0 * tau_act * w[j] * n   (j=0,1,2)
+    f_3 = -(f_0 + f_1 + f_2)
+    where tau_act = sigma0 * a * f_FL(r), r = lambda_f / lambda_opt
+    """
+    tid = wp.tid()
+    pts = tet_indices[tid]
+    acti = activation[tid]
+    if acti < 1.0e-6:
+        return
+
+    p0 = pos[pts[0]]
+    p1 = pos[pts[1]]
+    p2 = pos[pts[2]]
+    p3 = pos[pts[3]]
+
+    c0 = p0 - p3
+    c1 = p1 - p3
+    c2 = p2 - p3
+    _Ds = wp.mat33(
+        c0[0], c1[0], c2[0],
+        c0[1], c1[1], c2[1],
+        c0[2], c1[2], c2[2])
+
+    Dminv = rest_matrix[tid]
+    V0 = rest_volume[tid]
+
+    # Per-tet fiber direction (average vertex dirs, normalized)
+    d_raw = (v_fiber_dir[pts[0]] + v_fiber_dir[pts[1]]
+             + v_fiber_dir[pts[2]] + v_fiber_dir[pts[3]])
+    d_len = wp.length(d_raw)
+    if d_len < 1.0e-8:
+        return
+    d = d_raw / d_len
+
+    # w = Dminv @ d
+    w = Dminv * d
+
+    # Fd = F @ d = Ds @ w
+    Fd = _Ds * w
+    lm_raw = wp.length(Fd)
+    if lm_raw < 1.0e-8:
+        return
+
+    # Stretch ratio alignment: r = lambda_f / lambda_opt
+    r = lm_raw / lambda_opt
+
+    # Evaluate Millard f_FL(r)
+    f_FL_val = millard_eval_wp(
+        r, fl_x_coeffs, fl_y_coeffs, fl_seg_bounds, fl_n_segments,
+        fl_x_lo, fl_x_hi, fl_y_lo, fl_y_hi, fl_dydx_lo, fl_dydx_hi)
+
+    # tau_act = sigma0 * a * f_FL(r)
+    tau_act = sigma0 * acti * f_FL_val
+
+    # Current fiber unit direction
+    n = Fd / lm_raw
+
+    # Scatter node forces: f_j = -V0 * tau_act * w[j] * n
+    s = -V0 * tau_act
+    f0 = s * w[0] * n
+    f1 = s * w[1] * n
+    f2 = s * w[2] * n
+    f3 = -(f0 + f1 + f2)
+
+    wp.atomic_add(force, pts[0], f0)
+    wp.atomic_add(force, pts[1], f1)
+    wp.atomic_add(force, pts[2], f2)
+    wp.atomic_add(force, pts[3], f3)
 
 
 @wp.kernel
@@ -1235,6 +1340,7 @@ def solve_tetfibermillard_kernel(
     fl_dydx_lo: float, fl_dydx_hi: float,
     # Millard active f_L curve data (energy)
     fl_F_coeffs: wp.array(dtype=wp.float32),
+    fl_energy_offset: float,
     # Millard passive f_PE curve data (unused for now, kept for API compat)
     fpe_x_coeffs: wp.array(dtype=wp.float32),
     fpe_y_coeffs: wp.array(dtype=wp.float32),
@@ -1282,19 +1388,14 @@ def solve_tetfibermillard_kernel(
     psi_L = millard_energy_eval_wp(lm,
         fl_x_coeffs, fl_F_coeffs, fl_seg_bounds, fl_n_segments,
         fl_x_lo, fl_x_hi, fl_y_lo, fl_y_hi, fl_dydx_lo, fl_dydx_hi)
-
-    # Skip if no energy (lm near lm_min or below)
-    if psi_L < 1.0e-10:
-        return
+    psi_L = psi_L + fl_energy_offset  # shift so Psi > 0 for all physical lm
 
     f_L_val = millard_eval_wp(lm,
         fl_x_coeffs, fl_y_coeffs, fl_seg_bounds, fl_n_segments,
         fl_x_lo, fl_x_hi, fl_y_lo, fl_y_hi, fl_dydx_lo, fl_dydx_hi)
 
-    # ── Energy constraint: C = sqrt(2 * sigma0 * a * Psi_L) ──
-    C_energy = wp.sqrt(2.0 * sigma0 * acti * psi_L)
-    if C_energy < 1.0e-10:
-        return
+    # ── Energy constraint: C = sqrt(2 * sigma0 * a * (Psi_L + offset)) ──
+    C_energy = wp.sqrt(2.0 * sigma0 * acti * wp.max(psi_L, 1.0e-20))
     dC_dlm = sigma0 * acti * f_L_val / C_energy
 
     # ── Geometric gradients: dlm/dx_i ──
@@ -1689,7 +1790,7 @@ class MuscleSim(MuscleSimBase):
     def from_procedural(cls, vertices, tets, fiber_dirs_per_tet,
                         bone_targets=None, *, constraint_configs,
                         dts, device="cpu", density=1060.0, veldamping=0.02,
-                        gravity=0.0):
+                        gravity=0.0, sigma0=0.0, lambda_opt=1.0):
         """Create a MuscleSim from procedural mesh data (no file loading).
 
         Args:
@@ -1704,6 +1805,10 @@ class MuscleSim(MuscleSimBase):
             density: Material density [kg/m^3].
             veldamping: Velocity damping coefficient.
             gravity: Gravity magnitude [m/s^2].
+            sigma0: Peak isometric stress [Pa] for explicit active fiber force.
+                If > 0, enables active fiber force accumulation.
+            lambda_opt: Optimal fiber stretch ratio (l_opt / L_ref).
+                Converts 3D fiber stretch to Millard curve input: r = lambda_f / lambda_opt.
 
         Returns:
             Initialized MuscleSim instance.
@@ -1737,6 +1842,7 @@ class MuscleSim(MuscleSimBase):
             show_auxiliary_meshes=False, show_wireframe=False,
             render_fps=24, color_bones=False, color_muscles="tendonmask",
             activation=0.0, nsteps=1,
+            sigma0=sigma0, lambda_opt=lambda_opt,
         )
 
         wp.set_device(device)
@@ -1917,9 +2023,22 @@ class MuscleSim(MuscleSimBase):
 
         self.reaction_accum = wp.zeros(max(n_cons, 1), dtype=wp.vec3)
 
-        # Initialize Millard curve arrays if TETFIBERMILLARD constraints exist
-        if TETFIBERMILLARD in self.cons_ranges:
+        # Initialize Millard curve arrays if needed (for constraints or active force)
+        needs_millard = (TETFIBERMILLARD in self.cons_ranges
+                         or getattr(self.cfg, 'sigma0', 0.0) > 0)
+        if needs_millard:
             self._init_millard_curves()
+
+        # Initialize explicit active fiber force if sigma0 is configured
+        sigma0 = getattr(self.cfg, 'sigma0', 0.0)
+        if sigma0 > 0:
+            self.sigma0 = sigma0
+            self.lambda_opt = getattr(self.cfg, 'lambda_opt', 1.0)
+            self._has_active_fiber_force = True
+            print(f"  Active fiber force: sigma0={sigma0:.0f} Pa, "
+                  f"lambda_opt={self.lambda_opt:.3f}")
+        else:
+            self._has_active_fiber_force = False
 
         # Build colored constraint groups for parallel Gauss-Seidel
         if self.use_colored_gs and n_cons > 0:
@@ -1965,6 +2084,8 @@ class MuscleSim(MuscleSimBase):
         self._millard_fl_x_coeffs = fl['x_coeffs']
         self._millard_fl_y_coeffs = fl['y_coeffs']
         self._millard_fl_F_coeffs = fl['F_coeffs']
+        # Energy offset: -eval_integral(0) so that Psi(lm) + offset > 0 for all lm > 0
+        self._millard_fl_energy_offset = float(-mc.fl.eval_integral(0.0))
         self._millard_fl_seg_bounds = fl['seg_bounds']
         self._millard_fl_n_segments = fl['n_segments']
         self._millard_fl_x_lo = fl['x_lo']
@@ -2108,9 +2229,39 @@ class MuscleSim(MuscleSimBase):
                       inputs=[self.cons, self.bone_pos_field, self.n_cons])
 
     def integrate(self):
+        gravity_vec = getattr(self, '_gravity_vec', None)
+        if gravity_vec is None:
+            # Default: Y-axis gravity (legacy behavior)
+            gravity_vec = wp.vec3(0.0, self.cfg.gravity, 0.0)
         wp.launch(integrate_kernel, dim=self.n_verts,
                   inputs=[self.pos, self.pprev, self.vel,
-                          self.cfg.gravity, self.cfg.veldamping, self.dt])
+                          self.force, self.mass, self.stopped,
+                          gravity_vec, self.cfg.veldamping, self.dt])
+
+    def clear_forces(self):
+        """Zero the per-vertex force accumulator."""
+        self.force.zero_()
+
+    def accumulate_active_fiber_force(self):
+        """Compute explicit active fiber force per tet, scatter to vertex force field.
+
+        Uses tau_act = sigma0 * a * f_FL(r) with r = lambda_f / lambda_opt.
+        See docs/notes/xpbd_fem_fiber_lm.md for derivation.
+        """
+        if not getattr(self, '_has_active_fiber_force', False):
+            return
+        n_tet = self.tet_np.shape[0]
+        wp.launch(accumulate_active_fiber_force_kernel, dim=n_tet, inputs=[
+            self.tet_indices, self.pos, self.force,
+            self.rest_matrix, self.rest_volume,
+            self.v_fiber_dir, self.activation,
+            self.sigma0, self.lambda_opt,
+            self._millard_fl_x_coeffs, self._millard_fl_y_coeffs,
+            self._millard_fl_seg_bounds, self._millard_fl_n_segments,
+            self._millard_fl_x_lo, self._millard_fl_x_hi,
+            self._millard_fl_y_lo, self._millard_fl_y_hi,
+            self._millard_fl_dydx_lo, self._millard_fl_dydx_hi,
+        ])
 
     def update_velocities(self):
         wp.launch(update_velocities_kernel, dim=self.n_verts,
@@ -2209,6 +2360,7 @@ class MuscleSim(MuscleSimBase):
                     self._millard_fl_y_lo, self._millard_fl_y_hi,
                     self._millard_fl_dydx_lo, self._millard_fl_dydx_hi,
                     self._millard_fl_F_coeffs,
+                    self._millard_fl_energy_offset,
                     # Millard f_PE curve data
                     self._millard_fpe_x_coeffs, self._millard_fpe_y_coeffs,
                     self._millard_fpe_seg_bounds, self._millard_fpe_n_segments,

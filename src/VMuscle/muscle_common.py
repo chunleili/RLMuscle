@@ -186,6 +186,8 @@ class MuscleSimBase(ConstraintBuilderMixin):
     def step(self):
         self.update_attach_targets()
         for _ in range(self.cfg.num_substeps):
+            self.clear_forces()
+            self.accumulate_active_fiber_force()
             self.integrate()
             self.clear()
             self.solve_constraints()

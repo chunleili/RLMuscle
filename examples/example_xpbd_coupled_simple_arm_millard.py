@@ -29,7 +29,7 @@ from VMuscle.mesh_utils import (
     transform_by_quat,
 )
 from VMuscle.muscle_common import compute_fiber_stretches
-from VMuscle.muscle_warp import MuscleSim
+from VMuscle.muscle_warp import MuscleSim, fill_float_kernel
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +238,14 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
     bone_targets_np = all_attach_init.copy()
 
     # --- Build XPBD sim using generic API ---
+    # Derive sigma0 from max_isometric_force and cross-section area
+    A_cross = np.pi * r ** 2
+    sigma0 = F_max / A_cross
+    # lambda_opt: ratio of optimal fiber length to mesh rest length
+    lambda_opt = L_opt / mesh_length
+    print(f"[XPBD] sigma0={sigma0:.0f} Pa, lambda_opt={lambda_opt:.4f} "
+          f"(L_opt={L_opt:.3f}, mesh_length={mesh_length:.4f})")
+
     wp.init()
     sim = MuscleSim.from_procedural(
         vertices, tets, fiber_dirs,
@@ -247,6 +255,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
             {"type": "tetarap", "name": "arap", "stiffness": arap_stiffness,   "dampingratio": 0.01},
         ],
         dts=dts, device=device, density=density, veldamping=veldamping,
+        sigma0=sigma0, lambda_opt=lambda_opt,
     )
 
     # Add ATTACH constraints for origin + insertion
@@ -338,8 +347,12 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
             bone_arr = (rotated + cur_mesh_center.astype(np.float32)).astype(np.float32)
             sim.bone_pos_field = wp.from_numpy(bone_arr, dtype=wp.vec3)
 
-            # b) One XPBD step
+            # b) One XPBD step (with explicit active fiber force)
+            wp.launch(fill_float_kernel, dim=n_tets,
+                      inputs=[sim.activation, wp.float32(activation)])
             sim.update_attach_targets()
+            sim.clear_forces()
+            sim.accumulate_active_fiber_force()
             sim.integrate(); sim.clear(); sim.clear_reaction()
             sim.solve_constraints(); sim.update_velocities()
 

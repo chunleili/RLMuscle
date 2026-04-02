@@ -1,6 +1,6 @@
 {
   "name": "slidingBall_xpbd_millard",
-  "description": "1-DOF sliding ball with XPBD-Millard 2012 constitutive model",
+  "description": "1-DOF sliding ball with XPBD-Millard 2012 energy constitutive model",
   "geometry": {
     "muscle_length": 0.1,
     "muscle_radius": 0.02,
@@ -14,7 +14,8 @@
     "ball_mass": 10.0
   },
   "muscle": {
-    "sigma0": 300000.0
+    "sigma0": 300000.0,
+    "lambda_opt": 1.0
   },
   "activation": {
     "type": "dynamics",
@@ -31,15 +32,15 @@
     "num_substeps": 40,
     "veldamping": 0.003,
     "fiber_stiffness_scale": 100000.0,
-    "volume_stiffness": 10000000000.0,
-    "fiber_stiffness": 1000.0,
-    "arap_stiffness": 10000000000.0,
     "dampingratio": 0.018,
-    "contraction_factor": 0.41,
-    "optimal_fiber_length": 1.0,
-    "snh_mu": 0.0,
-    "snh_lam": 10000.0,
-    "snh_dampingratio": 0.01,
     "n_constraint_iters": 1
-  }
+  },
+  "constraints": [
+    {
+      "type": "snh",
+      "mu": 0.0,
+      "lam": 10000.0,
+      "dampingratio": 0.01
+    }
+  ]
 }
