@@ -13,7 +13,6 @@ Plotting (in OpenSimExample repo):
 """
 
 import argparse
-import json
 import os
 
 import numpy as np

@@ -17,14 +17,11 @@ Usage (USD output):
 
 import argparse
 import logging
-import sys
-
-sys.path.insert(0, "src")
 
 import warp as wp
 
 from VMuscle.log import setup_logging
-from VMuscle.config import  load_config
+from VMuscle.config import load_config
 from VMuscle.muscle_common import activation_ramp
 from VMuscle.muscle_warp import MuscleSim, fill_float_kernel
 
