@@ -955,30 +955,115 @@ def _clamp_force_by_accel_kernel(
         force[i] = f * (f_limit / f_mag)
 
 
+@wp.func
+def mat33_inverse_fn(M: wp.mat33) -> wp.mat33:
+    """Compute 3x3 matrix inverse via cofactor expansion."""
+    d = wp.determinant(M)
+    if wp.abs(d) < 1.0e-30:
+        return wp.identity(n=3, dtype=float)
+    inv_d = 1.0 / d
+    return wp.mat33(
+        (M[1, 1] * M[2, 2] - M[1, 2] * M[2, 1]) * inv_d,
+        (M[0, 2] * M[2, 1] - M[0, 1] * M[2, 2]) * inv_d,
+        (M[0, 1] * M[1, 2] - M[0, 2] * M[1, 1]) * inv_d,
+        (M[1, 2] * M[2, 0] - M[1, 0] * M[2, 2]) * inv_d,
+        (M[0, 0] * M[2, 2] - M[0, 2] * M[2, 0]) * inv_d,
+        (M[0, 2] * M[1, 0] - M[0, 0] * M[1, 2]) * inv_d,
+        (M[1, 0] * M[2, 1] - M[1, 1] * M[2, 0]) * inv_d,
+        (M[0, 1] * M[2, 0] - M[0, 0] * M[2, 1]) * inv_d,
+        (M[0, 0] * M[1, 1] - M[0, 1] * M[1, 0]) * inv_d,
+    )
+
+
 @wp.kernel
-def _repair_inverted_tets_kernel(
+def _svd_clamp_accumulate_kernel(
     tet_indices: wp.array(dtype=wp.vec4i),
     pos: wp.array(dtype=wp.vec3),
     rest_matrix: wp.array(dtype=wp.mat33),
     stopped: wp.array(dtype=wp.int32),
-    alpha: float,
+    dP: wp.array(dtype=wp.vec3),
+    dPw: wp.array(dtype=wp.float32),
+    sigma_min: float,
 ):
-    """Nudge vertices of inverted tets toward their centroid to un-invert."""
+    """SVD-based inversion prevention: accumulate Jacobi-style position
+    corrections that project tets toward non-inverted configurations.
+    All 4 vertices are corrected symmetrically via centroid-preserving
+    projection."""
     c = wp.tid()
     pts = tet_indices[c]
     p0 = pos[pts[0]]; p1 = pos[pts[1]]; p2 = pos[pts[2]]; p3 = pos[pts[3]]
+    c0 = p0 - p3; c1 = p1 - p3; c2 = p2 - p3
     Ds = wp.mat33(
-        p0[0] - p3[0], p1[0] - p3[0], p2[0] - p3[0],
-        p0[1] - p3[1], p1[1] - p3[1], p2[1] - p3[1],
-        p0[2] - p3[2], p1[2] - p3[2], p2[2] - p3[2])
-    F = Ds * rest_matrix[c]
-    J = wp.determinant(F)
-    if J < 0.01:
-        centroid = (p0 + p1 + p2 + p3) * 0.25
-        for i in range(4):
-            vi = pts[i]
-            if stopped[vi] == 0:
-                pos[vi] = (1.0 - alpha) * pos[vi] + alpha * centroid
+        c0[0], c1[0], c2[0],
+        c0[1], c1[1], c2[1],
+        c0[2], c1[2], c2[2])
+    Dm_inv = rest_matrix[c]
+    F = Ds * Dm_inv
+
+    # Signed SVD: F = U * diag(sigma) * V^T
+    svd = ssvd_fn(F)
+    sig = svd.sigma
+
+    # Only act if any singular value is below threshold
+    if sig[0] >= sigma_min and sig[1] >= sigma_min and sig[2] >= sigma_min:
+        return
+
+    # Clamp singular values
+    sig_c = wp.vec3(
+        wp.max(sig[0], sigma_min),
+        wp.max(sig[1], sigma_min),
+        wp.max(sig[2], sigma_min))
+    S_c = wp.mat33(
+        sig_c[0], 0.0, 0.0,
+        0.0, sig_c[1], 0.0,
+        0.0, 0.0, sig_c[2])
+
+    # Target deformation gradient with clamped singular values
+    F_target = svd.U * S_c * wp.transpose(svd.V)
+
+    # Reconstruct target edge matrix: Ds_target = F_target * Dm
+    Dm = mat33_inverse_fn(Dm_inv)
+    Ds_target = F_target * Dm
+
+    # Compute per-vertex corrections (relative to reference vertex p3)
+    # Ds columns = [p0-p3, p1-p3, p2-p3], p3 is reference → no raw correction
+    d0 = wp.vec3(Ds_target[0, 0] - c0[0], Ds_target[1, 0] - c0[1], Ds_target[2, 0] - c0[2])
+    d1 = wp.vec3(Ds_target[0, 1] - c1[0], Ds_target[1, 1] - c1[1], Ds_target[2, 1] - c1[2])
+    d2 = wp.vec3(Ds_target[0, 2] - c2[0], Ds_target[1, 2] - c2[1], Ds_target[2, 2] - c2[2])
+    # Distribute symmetrically: shift centroid so sum of corrections = 0
+    shift = (d0 + d1 + d2) * 0.25
+    d0 = d0 - shift
+    d1 = d1 - shift
+    d2 = d2 - shift
+    d3 = -shift
+
+    # Accumulate corrections via Jacobi averaging (same as XPBD dP/dPw)
+    if stopped[pts[0]] == 0:
+        wp.atomic_add(dP, pts[0], d0)
+        wp.atomic_add(dPw, pts[0], 1.0)
+    if stopped[pts[1]] == 0:
+        wp.atomic_add(dP, pts[1], d1)
+        wp.atomic_add(dPw, pts[1], 1.0)
+    if stopped[pts[2]] == 0:
+        wp.atomic_add(dP, pts[2], d2)
+        wp.atomic_add(dPw, pts[2], 1.0)
+    if stopped[pts[3]] == 0:
+        wp.atomic_add(dP, pts[3], d3)
+        wp.atomic_add(dPw, pts[3], 1.0)
+
+
+@wp.kernel
+def _apply_svd_clamp_kernel(
+    pos: wp.array(dtype=wp.vec3),
+    dP: wp.array(dtype=wp.vec3),
+    dPw: wp.array(dtype=wp.float32),
+    alpha: float,
+):
+    """Apply Jacobi-averaged SVD clamp corrections with blending factor."""
+    i = wp.tid()
+    w = dPw[i]
+    if w > 0.0:
+        pos[i] = pos[i] + alpha * dP[i] / w
 
 
 @wp.kernel
@@ -1442,8 +1527,9 @@ def solve_tetfibermillard_kernel(
         c0[0], c1[0], c2[0],
         c0[1], c1[1], c2[1],
         c0[2], c1[2], c2[2])
+
     wTDminvT = wp.vec3(cons[c].restvector[0], cons[c].restvector[1], cons[c].restvector[2])
-    FwT = _Ds * wTDminvT
+    FwT = _Ds * wTDminvT  # = F * w (fiber direction in deformed space)
     lm_sq = wp.length_sq(FwT)
     if lm_sq < 1.0e-12:
         return
@@ -2384,16 +2470,31 @@ class MuscleSim(MuscleSimBase):
                   inputs=[self.pos, self.pprev, self.vel, self.dt])
 
     def repair_inverted_tets(self):
-        """Nudge vertices of inverted/near-inverted tets toward centroid."""
+        """SVD-based inversion repair: clamp F singular values and project positions.
+
+        Uses Jacobi-style accumulation (like XPBD) to avoid race conditions
+        when multiple tets share vertices.  Each iteration: clear dP/dPw →
+        accumulate SVD clamp corrections → apply weighted average.
+        """
         repair_alpha = getattr(self.cfg, 'repair_alpha', 0.0)
         repair_iters = int(getattr(self.cfg, 'repair_iters', 0))
+        sigma_min = getattr(self.cfg, 'repair_sigma_min', 0.1)
         if repair_alpha <= 0.0 or repair_iters <= 0:
             return
         n_tet = self.tet_np.shape[0]
         for _ in range(repair_iters):
-            wp.launch(_repair_inverted_tets_kernel, dim=n_tet,
+            # Clear accumulation buffers (reuse XPBD dP/dPw)
+            wp.launch(clear_dP_kernel, dim=self.n_verts,
+                      inputs=[self.dP, self.dPw])
+            # Accumulate SVD clamp corrections
+            wp.launch(_svd_clamp_accumulate_kernel, dim=n_tet,
                       inputs=[self.tet_indices, self.pos, self.rest_matrix,
-                              self.stopped, wp.float32(repair_alpha)])
+                              self.stopped, self.dP, self.dPw,
+                              wp.float32(sigma_min)])
+            # Apply weighted average with blending factor alpha
+            wp.launch(_apply_svd_clamp_kernel, dim=self.n_verts,
+                      inputs=[self.pos, self.dP, self.dPw,
+                              wp.float32(repair_alpha)])
 
     def calc_vol_error(self):
         total_vol = wp.zeros(1, dtype=wp.float32)
@@ -2512,6 +2613,27 @@ class MuscleSim(MuscleSimBase):
         else:
             self._dispatch_constraints(self.cons_ranges)
 
+    # Fiber constraint types to exclude during post-smoothing
+    _FIBER_TYPES = frozenset([TETFIBERNORM, TETFIBERDGF, TETFIBERMILLARD])
+
+    def post_smooth(self):
+        """Jacobi post-smoothing pass: solve only non-fiber constraints
+        (volume, ARAP, attach) to recover mesh quality after fiber contraction.
+        Runs post_smooth_iters iterations, each doing clear→solve→apply."""
+        n_iters = int(getattr(self.cfg, 'post_smooth_iters', 0))
+        if n_iters <= 0 or self.n_cons == 0:
+            return
+        # Build filtered type_ranges once and cache
+        if not hasattr(self, '_smooth_ranges'):
+            self._smooth_ranges = {
+                k: v for k, v in self.cons_ranges.items()
+                if k not in self._FIBER_TYPES
+            }
+        for _ in range(n_iters):
+            self.clear()
+            self._dispatch_constraints(self._smooth_ranges)
+            if self.use_jacobi:
+                self.apply_dP()
 
     def render(self):
         if self.renderer is None:

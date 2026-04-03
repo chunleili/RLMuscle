@@ -8,6 +8,7 @@
   "lambda_opt": 1.0,
   "max_accel": 0.0,
   "contraction_ratio": 0.0,
+  "post_smooth_iters": 3,
   "fiber_stiffness_scale": 10000.0,
   "arch": "cpu",
   "save_image": false,
