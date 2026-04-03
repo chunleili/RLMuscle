@@ -135,7 +135,7 @@ def build_elbow_model(sim: MuscleSim):
         limit_lower=-3.0,
         limit_upper=3.0,
         armature=1.0,
-        friction=0.9,
+        friction=0.05,
         target_ke=5.0,
         target_kd=5.0,
     )

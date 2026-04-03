@@ -103,7 +103,7 @@ def build_elbow_model(usd):
             parent_xform=wp.transform(p=wp.vec3(ELBOW_PIVOT)),
             child_xform=wp.transform(p=wp.vec3(ELBOW_PIVOT)),
             limit_lower=-3.0, limit_upper=3.0,
-            armature=1.0, friction=0.9,
+            armature=1.0, friction=0.05,
             target_ke=5.0, target_kd=5.0,
         )
         # Alternative: ball joint (3 DOF)
