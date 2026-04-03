@@ -104,7 +104,7 @@ def _extract_radius_mesh(sim: MuscleSim):
     return group_name, selected, local_vertices, local_faces
 
 
-def build_elbow_model(sim: MuscleSim):
+def build_elbow_model(sim: MuscleSim, joint_friction: float):
     """Build a minimal Newton model: radius body + elbow revolute joint."""
     builder = newton.ModelBuilder(up_axis=newton.Axis.Y, gravity=0.0)
     newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
@@ -132,7 +132,7 @@ def build_elbow_model(sim: MuscleSim):
         limit_lower=-3.0,
         limit_upper=3.0,
         armature=1.0,
-        friction=0.9,
+        friction=joint_friction,
         target_ke=5.0,
         target_kd=5.0,
     )
@@ -403,7 +403,8 @@ def main():
     sim = MuscleSim(cfg)
 
     dt = 1.0 / 60.0
-    model, state, radius_link, joint, selected_indices = build_elbow_model(sim)
+    joint_friction = float(getattr(cfg, "joint_friction", 0.05))
+    model, state, radius_link, joint, selected_indices = build_elbow_model(sim, joint_friction=joint_friction)
 
     control_config = build_coupling_config(
         args.preset,

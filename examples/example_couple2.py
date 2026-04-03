@@ -25,6 +25,7 @@ import warp as wp
 import newton
 
 from VMuscle.config import load_config
+from VMuscle.mesh_utils import MeshDistortionError, check_mesh_quality
 from VMuscle.controllability import (
     DEFAULT_SWEEP_LEVELS,
     build_coupling_config,
@@ -234,6 +235,10 @@ def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
              usd: UsdIO | None = None, bone_prim_map: dict | None = None,
              sim: MuscleSim | None = None):
     """Run loop with optional rendering, scheduled activation and USD export."""
+    # Precompute mesh data for quality checks (tet order matches kernel convention).
+    tet_idx = sim.tet_np[:, [3, 0, 1, 2]] if sim else None
+    tet_poses = sim.rest_matrix.numpy() if sim else None
+
     for step in range(1, n_steps + 1):
         if sim and sim.renderer and not sim.renderer.is_running():
             break
@@ -241,6 +246,15 @@ def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
             cfg.activation = _activation_schedule(step, n_steps)
 
         solver.step(state, state, dt=dt)
+
+        # Mesh quality check (warn-only to keep run going).
+        if tet_idx is not None and tet_poses is not None:
+            pos_np = solver.core.pos.numpy()
+            try:
+                check_mesh_quality(pos_np, tet_idx, tet_poses, step=step)
+            except MeshDistortionError:
+                log.warning("Mesh distortion at step %d, continuing...", step)
+
         if sim:
             sim.render()
 

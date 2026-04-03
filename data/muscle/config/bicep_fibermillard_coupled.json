@@ -13,6 +13,7 @@
   "save_image": false,
   "gui": true,
   "render_mode": "human",
+  "joint_friction": 0.05,
   "dt": 0.041666666666666667,
   "nsteps": 10000,
   "num_substeps": 30,
