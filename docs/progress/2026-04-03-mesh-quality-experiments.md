@@ -1,5 +1,10 @@
 # Mesh Quality Improvement Experiments
 
+> 相关文档:
+> - [初始实现](2026-04-03-example-couple3.md) — couple3 设计与初始验证
+> - [Mesh 稳定性调查](2026-04-03-couple3-mesh-stability.md) — 退化 tet 根因分析
+> - [方法对比实验](2026-04-03-couple3-approach-comparison.md) — 最终采用 TETFIBERMILLARD + k_coupling=100k
+
 ## 目的
 
 调查并改善 XPBD-Millard bicep 仿真中的网格质量。基线：~75 个反转 tets（1.9%），worst det(F)=-14.2。

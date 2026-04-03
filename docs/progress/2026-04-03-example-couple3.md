@@ -1,5 +1,10 @@
 # example_couple3: XPBD-Millard + MuJoCo Bicep Flexion
 
+> 相关文档:
+> - [Mesh 稳定性调查](2026-04-03-couple3-mesh-stability.md) — 退化 tet 根因分析、force clamping/mass floor
+> - [方法对比实验](2026-04-03-couple3-approach-comparison.md) — explicit force vs TETFIBERMILLARD vs hybrid
+> - [Mesh 质量改善实验](2026-04-03-mesh-quality-experiments.md) — damping/TETSNH/Laplacian/targeted repair
+
 ## 概述
 
 实现了 `example_couple3`，在真实 bicep 几何上验证 XPBD-Millard-explicit-force 方法与 MuJoCo 骨骼动力学的耦合。

@@ -1,5 +1,10 @@
 # couple3 mesh 稳定性调查
 
+> 相关文档:
+> - [初始实现](2026-04-03-example-couple3.md) — couple3 设计与初始验证
+> - [方法对比实验](2026-04-03-couple3-approach-comparison.md) — 最终采用 TETFIBERMILLARD
+> - [Mesh 质量改善实验](2026-04-03-mesh-quality-experiments.md) — damping/TETSNH/Laplacian/targeted repair
+
 ## 问题
 
 example_couple3 在 frame 3（activation 开始时）mesh 完全崩溃，所有 tet 反转。

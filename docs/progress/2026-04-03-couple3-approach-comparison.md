@@ -1,5 +1,10 @@
 # couple3 方法对比实验
 
+> 相关文档:
+> - [初始实现](2026-04-03-example-couple3.md) — couple3 设计与 couple2 对比
+> - [Mesh 稳定性调查](2026-04-03-couple3-mesh-stability.md) — 退化 tet 根因、force clamping
+> - [Mesh 质量改善实验](2026-04-03-mesh-quality-experiments.md) — damping/TETSNH/Laplacian/targeted repair
+
 ## 背景
 
 couple3 使用 XPBD-Millard 方法在真实 bicep mesh 上驱动肘关节屈曲。由于 bicep mesh 存在退化四面体（质量比 12095:1），explicit active fiber force（Route C）在 force clamping 后力量严重不足。本实验对比三个替代方案。
