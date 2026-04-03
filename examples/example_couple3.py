@@ -1,12 +1,12 @@
 """Couple XPBD-Millard MuscleSim with Newton rigid-body skeleton.
 
-Uses explicit active fiber force (sigma0 > 0) with Millard 2012 curves
-instead of TETFIBERNORM constraint-based contraction.
+Uses TETFIBERMILLARD energy-based XPBD constraint with Millard 2012 curves
+for stable active fiber contraction on complex (bicep) geometry.
 
 Usage:
-    RUN=example_couple3 uv run main.py -- --auto
-    RUN=example_couple3 uv run main.py -- --auto --render
-    RUN=example_couple3 uv run main.py -- --steps 300
+    uv run python examples/example_couple3.py --auto --steps 300
+    uv run python examples/example_couple3.py --auto --render
+    uv run python examples/example_couple3.py --auto --k-coupling 100000 --max-torque 20
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ import warp as wp
 import newton
 
 from VMuscle.config import load_config
+from VMuscle.mesh_utils import MeshDistortionError, check_mesh_quality
 from VMuscle.controllability import (
     DEFAULT_SWEEP_LEVELS,
     build_coupling_config,
@@ -268,6 +269,14 @@ def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
              sim: MuscleSim | None = None,
              muscle_surface_path: str | None = None):
     """Run loop with optional rendering, scheduled activation and USD export."""
+    # Precompute mesh quality data.
+    # Reorder tet indices to match kernel convention: ref vertex = index 3.
+    # Kernel Dm = [pts[0]-pts[3], pts[1]-pts[3], pts[2]-pts[3]]
+    # check_mesh_quality Ds = [pts[1]-pts[0], pts[2]-pts[0], pts[3]-pts[0]]
+    # Remap [0,1,2,3] -> [3,0,1,2] so check uses ref=pts[3], Ds=[pts[0]-pts[3],...]
+    tet_idx = sim.tet_np[:, [3, 0, 1, 2]] if sim else None
+    tet_poses = sim.rest_matrix.numpy() if sim else None
+
     for step in range(1, n_steps + 1):
         if sim and sim.renderer and not sim.renderer.is_running():
             break
@@ -275,6 +284,15 @@ def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
             cfg.activation = _activation_schedule(step, n_steps)
 
         solver.step(state, state, dt=dt)
+
+        # Mesh quality check
+        if tet_idx is not None and tet_poses is not None:
+            pos_np = solver.core.pos.numpy()
+            try:
+                check_mesh_quality(pos_np, tet_idx, tet_poses, step=step)
+            except MeshDistortionError:
+                log.warning("Mesh distortion at step %d, continuing...", step)
+
         if sim:
             sim.render()
 
@@ -317,9 +335,11 @@ def _create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         type=str,
-        default="data/muscle/config/bicep_xpbd_millard.json",
+        default="data/muscle/config/bicep_fibermillard_coupled.json",
         help="Path to muscle config JSON",
     )
+    parser.add_argument("--max-accel", type=float, default=None, help="Override max_accel for force clamping")
+    parser.add_argument("--sigma0", type=float, default=None, help="Override sigma0 (Pa)")
     parser.add_argument("--device", type=str, default="cpu", help="Warp device, e.g. cpu or cuda:0")
     parser.add_argument("--render", action="store_true", help="Enable OpenGL interactive rendering")
     parser.add_argument("--no-usd", action="store_true", help="Disable default USD export")
@@ -357,6 +377,10 @@ def main():
     wp.set_device(args.device)
 
     cfg = load_config(args.config)
+    if args.max_accel is not None:
+        cfg.max_accel = args.max_accel
+    if args.sigma0 is not None:
+        cfg.sigma0 = args.sigma0
     cfg.gui = bool(args.render)
     cfg.render_mode = "human" if args.render else None
 
