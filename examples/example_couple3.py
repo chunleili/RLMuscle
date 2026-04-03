@@ -276,7 +276,7 @@ def _create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--device", type=str, default="cpu", help="Warp device, e.g. cpu or cuda:0")
     parser.add_argument("--render", action="store_true", help="Enable OpenGL interactive rendering")
-    parser.add_argument("--export-usd", action="store_true", help="Write animation USD to output/")
+    parser.add_argument("--no-usd", action="store_true", help="Disable default USD export")
     parser.add_argument("--usd-source", type=str, default="data/muscle/model/bicep.usd",
                         help="Source USD for layered export")
     parser.add_argument("--preset", type=str, default="smooth_nonlinear", choices=list_presets(),
@@ -377,7 +377,7 @@ def main():
 
     usd = None
     bone_prim_map = None
-    if args.export_usd:
+    if not args.no_usd:
         usd = UsdIO(usd_source, y_up_to_z_up=False)
         usd.muscle_mesh = usd.find_mesh("muscle")
         usd.bone_meshes = usd.find_meshes("bone")
