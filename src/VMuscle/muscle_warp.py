@@ -937,6 +937,25 @@ def precompute_rest_kernel(
 
 
 @wp.kernel
+def _clamp_force_by_accel_kernel(
+    force: wp.array(dtype=wp.vec3),
+    mass: wp.array(dtype=wp.float32),
+    max_accel: float,
+):
+    """Clamp force magnitude so that |f|/m <= max_accel."""
+    i = wp.tid()
+    m = mass[i]
+    if m < 1.0e-12:
+        force[i] = wp.vec3(0.0, 0.0, 0.0)
+        return
+    f = force[i]
+    f_mag = wp.length(f)
+    f_limit = m * max_accel
+    if f_mag > f_limit and f_mag > 1.0e-20:
+        force[i] = f * (f_limit / f_mag)
+
+
+@wp.kernel
 def integrate_kernel(
     pos: wp.array(dtype=wp.vec3),
     pprev: wp.array(dtype=wp.vec3),
@@ -2200,6 +2219,18 @@ class MuscleSim(MuscleSimBase):
                   inputs=[self.pos0, self.tet_indices, self.rest_volume,
                           self.rest_matrix, self.mass, self.cfg.density,
                           self.total_rest_volume])
+        # Clamp vertex mass to prevent instability from degenerate tets.
+        mass_floor = getattr(self.cfg, 'mass_floor', 0.0)
+        if mass_floor <= 0.0 and getattr(self.cfg, 'sigma0', 0.0) > 0.0:
+            mass_np = self.mass.numpy()
+            mass_floor = float(np.median(mass_np[mass_np > 0])) * 0.01
+        if mass_floor > 0.0:
+            mass_np = self.mass.numpy()
+            n_clamped = int((mass_np < mass_floor).sum())
+            if n_clamped > 0:
+                mass_np = np.maximum(mass_np, mass_floor)
+                self.mass = wp.from_numpy(mass_np, dtype=wp.float32)
+                print(f"  Mass floor applied: {mass_floor:.2e} kg ({n_clamped} vertices clamped)")
 
     def _init_renderer(self):
         self.renderer = None
@@ -2262,6 +2293,11 @@ class MuscleSim(MuscleSimBase):
             self._millard_fl_y_lo, self._millard_fl_y_hi,
             self._millard_fl_dydx_lo, self._millard_fl_dydx_hi,
         ])
+        # Clamp per-vertex acceleration to prevent instability on degenerate tets.
+        max_accel = getattr(self.cfg, 'max_accel', 2000.0)
+        if max_accel > 0.0:
+            wp.launch(_clamp_force_by_accel_kernel, dim=self.n_verts,
+                      inputs=[self.force, self.mass, wp.float32(max_accel)])
 
     def update_velocities(self):
         wp.launch(update_velocities_kernel, dim=self.n_verts,
