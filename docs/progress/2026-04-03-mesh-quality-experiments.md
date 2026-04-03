@@ -53,3 +53,25 @@ Frames 15-25: always=94, ever=94。永远是同一批 tets 反转。
   "repair_iters": 2
 }
 ```
+
+## 耦合仿真验证（300 steps, auto activation）
+
+使用 repair + max_accel=20 + passive fiber + substeps=30：
+
+| Step | Activation | Joint Angle | Torque | Inverted Tets |
+|------|-----------|-------------|--------|---------------|
+| 100 | 1.00 | -0.0003 rad | 0.81 N·m | 528 |
+| 150 | 1.00 | -0.062 rad (-3.5°) | 3.34 N·m | 525 |
+| 200 | 0.70 | -0.157 rad (-9.0°) | 0.41 N·m | 537 |
+| 300 | 0.00 | -0.155 rad (-8.9°) | 0.00 N·m | 17 |
+
+- 仿真全程稳定，无 crash
+- 产生有意义的 torque（最高 3.3 N·m）和屈曲（~9°）
+- Activation 期间 ~525 反转 tets（13%），去激活后恢复到 17（0.4%）
+- USD 输出正常
+
+## 下一步
+
+1. mesh 预处理：remesh 去除退化 tets 是根本解决方案
+2. 参数调优：max_accel、repair_alpha 的最优平衡
+3. 考虑 TETFIBERMILLARD 约束（Route A）作为更稳定的替代方案
