@@ -7,6 +7,8 @@
   "sigma0": 300000.0,
   "lambda_opt": 1.0,
   "max_accel": 20.0,
+  "repair_alpha": 0.1,
+  "repair_iters": 2,
   "contraction_ratio": 0.0,
   "fiber_stiffness_scale": 10000.0,
   "arch": "cpu",

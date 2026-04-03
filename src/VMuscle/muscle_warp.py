@@ -956,6 +956,32 @@ def _clamp_force_by_accel_kernel(
 
 
 @wp.kernel
+def _repair_inverted_tets_kernel(
+    tet_indices: wp.array(dtype=wp.vec4i),
+    pos: wp.array(dtype=wp.vec3),
+    rest_matrix: wp.array(dtype=wp.mat33),
+    stopped: wp.array(dtype=wp.int32),
+    alpha: float,
+):
+    """Nudge vertices of inverted tets toward their centroid to un-invert."""
+    c = wp.tid()
+    pts = tet_indices[c]
+    p0 = pos[pts[0]]; p1 = pos[pts[1]]; p2 = pos[pts[2]]; p3 = pos[pts[3]]
+    Ds = wp.mat33(
+        p0[0] - p3[0], p1[0] - p3[0], p2[0] - p3[0],
+        p0[1] - p3[1], p1[1] - p3[1], p2[1] - p3[1],
+        p0[2] - p3[2], p1[2] - p3[2], p2[2] - p3[2])
+    F = Ds * rest_matrix[c]
+    J = wp.determinant(F)
+    if J < 0.01:
+        centroid = (p0 + p1 + p2 + p3) * 0.25
+        for i in range(4):
+            vi = pts[i]
+            if stopped[vi] == 0:
+                pos[vi] = (1.0 - alpha) * pos[vi] + alpha * centroid
+
+
+@wp.kernel
 def integrate_kernel(
     pos: wp.array(dtype=wp.vec3),
     pprev: wp.array(dtype=wp.vec3),
@@ -2302,6 +2328,18 @@ class MuscleSim(MuscleSimBase):
     def update_velocities(self):
         wp.launch(update_velocities_kernel, dim=self.n_verts,
                   inputs=[self.pos, self.pprev, self.vel, self.dt])
+
+    def repair_inverted_tets(self):
+        """Nudge vertices of inverted/near-inverted tets toward centroid."""
+        repair_alpha = getattr(self.cfg, 'repair_alpha', 0.0)
+        repair_iters = int(getattr(self.cfg, 'repair_iters', 0))
+        if repair_alpha <= 0.0 or repair_iters <= 0:
+            return
+        n_tet = self.tet_np.shape[0]
+        for _ in range(repair_iters):
+            wp.launch(_repair_inverted_tets_kernel, dim=n_tet,
+                      inputs=[self.tet_indices, self.pos, self.rest_matrix,
+                              self.stopped, wp.float32(repair_alpha)])
 
     def calc_vol_error(self):
         total_vol = wp.zeros(1, dtype=wp.float32)
