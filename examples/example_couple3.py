@@ -161,6 +161,49 @@ def _activation_schedule(step: int, total: int) -> float:
     return 0.0
 
 
+def _create_muscle_surface_mesh(usd: UsdIO, sim: MuscleSim) -> str | None:
+    """Create a renderable surface Mesh prim from the TetMesh boundary triangles."""
+    from pxr import Sdf, UsdGeom, Vt
+
+    tet_prim_path = usd.muscle_mesh.mesh_path
+    stage = usd._stage
+    tet_prim = stage.GetPrimAtPath(tet_prim_path)
+    if not tet_prim.IsValid():
+        log.warning("TetMesh prim not found: %s", tet_prim_path)
+        return None
+
+    # Read surface triangle indices from the TetMesh
+    sfvi_attr = tet_prim.GetAttribute("surfaceFaceVertexIndices")
+    sfvi = sfvi_attr.Get() if sfvi_attr else None
+    if sfvi is None or len(sfvi) == 0:
+        log.warning("No surfaceFaceVertexIndices on %s", tet_prim_path)
+        return None
+
+    tri_indices = np.array(sfvi, dtype=np.int32).reshape(-1)  # flatten Vec3i -> flat ints
+    n_tris = len(sfvi)
+
+    # Create Mesh prim as sibling of the TetMesh
+    surf_path = tet_prim_path + "_surface"
+    surf_prim = stage.DefinePrim(surf_path, "Mesh")
+    mesh = UsdGeom.Mesh(surf_prim)
+    mesh.GetFaceVertexCountsAttr().Set(Vt.IntArray([3] * n_tris))
+    mesh.GetFaceVertexIndicesAttr().Set(Vt.IntArray.FromNumpy(tri_indices))
+
+    # Set rest-pose points
+    pts_np = np.ascontiguousarray(sim.pos.numpy(), dtype=np.float32)
+    mesh.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(pts_np))
+
+    # Copy displayColor from TetMesh if available
+    src_pv = UsdGeom.PrimvarsAPI(tet_prim).GetPrimvar("displayColor")
+    if src_pv and src_pv.Get() is not None:
+        dst_pv = UsdGeom.PrimvarsAPI(surf_prim).CreatePrimvar(
+            "displayColor", Sdf.ValueTypeNames.Color3fArray, UsdGeom.Tokens.vertex)
+        dst_pv.Set(src_pv.Get())
+
+    log.info("Created muscle surface mesh: %s (%d triangles)", surf_path, n_tris)
+    return surf_path
+
+
 def _build_bone_prim_map(usd: UsdIO, sim: MuscleSim) -> dict[str, np.ndarray]:
     """Map each bone USD prim path to its vertex indices in sim.bone_pos_field."""
     mapping: dict[str, np.ndarray] = {}
@@ -222,7 +265,8 @@ def _run_eval_sweep(solver, sim: MuscleSim, state, cfg, dt: float, args):
 
 def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
              usd: UsdIO | None = None, bone_prim_map: dict | None = None,
-             sim: MuscleSim | None = None):
+             sim: MuscleSim | None = None,
+             muscle_surface_path: str | None = None):
     """Run loop with optional rendering, scheduled activation and USD export."""
     for step in range(1, n_steps + 1):
         if sim and sim.renderer and not sim.renderer.is_running():
@@ -237,6 +281,8 @@ def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
         # Write USD frame
         if usd is not None:
             usd.set_points(usd.muscle_mesh.mesh_path, solver.core.pos, frame=step)
+            if muscle_surface_path:
+                usd.set_points(muscle_surface_path, solver.core.pos, frame=step)
             bone_np = solver.core.bone_pos_field.numpy()
             for prim_path, indices in (bone_prim_map or {}).items():
                 usd.set_points(prim_path, bone_np[indices], frame=step)
@@ -377,6 +423,7 @@ def main():
 
     usd = None
     bone_prim_map = None
+    muscle_surface_path = None
     if not args.no_usd:
         usd = UsdIO(usd_source, y_up_to_z_up=False)
         usd.muscle_mesh = usd.find_mesh("muscle")
@@ -384,13 +431,17 @@ def main():
         usd.start("output/example_couple3.anim.usd", copy_usd=True)
         usd.set_runtime("fps", 60)
         bone_prim_map = _build_bone_prim_map(usd, sim)
+
+        # Create a renderable surface Mesh from the TetMesh's boundary triangles.
+        muscle_surface_path = _create_muscle_surface_mesh(usd, sim)
+
         log.info("USD export: %s  bone_groups=%s",
                  usd.output_path, list(bone_prim_map.keys()))
 
     try:
         run_loop(solver, state, cfg, dt=dt, n_steps=int(max(1, args.steps)),
                  auto=bool(args.auto), usd=usd, bone_prim_map=bone_prim_map,
-                 sim=sim)
+                 sim=sim, muscle_surface_path=muscle_surface_path)
     finally:
         if usd is not None:
             usd.close()
