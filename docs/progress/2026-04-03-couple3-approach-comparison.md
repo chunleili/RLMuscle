@@ -87,11 +87,24 @@ uv run python examples/example_couple3.py --auto --steps 300 --k-coupling 100000
 | 250 | 0.07 | -41.8 | 0.25 | ~547 |
 | 275 | 0.00 | — | 0.00 | ~65 |
 
+## 当前问题
+
+### Mesh 畸变过大
+
+相比 example_couple2（TETFIBERNORM），couple3 的 TETFIBERMILLARD 在最佳配置下仍产生 ~550 反转 tets（14%），而 couple2 仅约 1-3%。原因：
+
+- TETFIBERMILLARD 的 energy-based 收缩力更强（9.6 N·m vs couple2 的更温和力），对退化四面体施加更大变形
+- Bicep mesh 固有的退化 tets（质量比 12095:1）在大收缩下必然反转
+- 约束 stiffness 提高到 100000 时 torque 仅从 3.3→4.0 N·m，但反转 tets 不减反增
+
+**否决 remesh 方案**：remeshing 会引入新的问题（mesh 拓扑变化影响 mask、attach 约束等），得不偿失。
+
 ## 下一步
 
 1. ~~Approach 1 (explicit force tuning)~~ — 放弃
 2. ~~Approach 4 (hybrid)~~ — 放弃
 3. **TETFIBERMILLARD + 合适 coupling 参数** — 采用
-4. 考虑 remesh bicep 去除退化 tets（减少反转 tets 到 couple2 水平）
-5. 精调 coupling 参数（k_coupling, max_torque, EMA smoothing）
-6. 考虑 controllability preset 专为 fibermillard 优化
+4. ~~remesh bicep~~ — 否决，会引入更多问题
+5. **降低 mesh 畸变**：探索约束参数调优（降低 contraction_factor、增加 volume constraint stiffness、调整 substep 数）或对退化 tets 做局部 stiffness 加权，在保持足够 torque 的同时减少反转
+6. 精调 coupling 参数（k_coupling, max_torque, EMA smoothing）
+7. 考虑 controllability preset 专为 fibermillard 优化
