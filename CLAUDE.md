@@ -2,29 +2,30 @@
 - Running
     - 如果你是初次运行，请注意初始化git submodule，阅读`@README.md`中的运行说明。
     - 使用 uv 运行。
-    - main.py是程序入口，使用环境变量`RUN`来指定运行的示例, 使用uv run main.py来运行。
+    - 对于example, main.py是程序入口，使用环境变量`RUN`指定运行的示例, uv run main.py来运行, 对于scripts中的脚本可以直接运行。
 - Docs
     - `@docs/progress/*.md` 放日志（实验/plan实行的进展，已完成+下一步）。`@docs/plans/*.md`放计划。`@docs/specs/`放具体方案。`@docs/experiments/*.md`放实验总结。`@docs/notes/*.md`放原理（公式）笔记。
     - 当你计划/实施一项大的功能时，为了了解当前情况先去阅读`docs/`中的内容，并分阶段进行。
     - 你可以在`@docs/imgs/`下放一些图片来作为docs的插图，请做好目录分类。
+    - `docs/progress`需要记录：关联计划、时间、是否成功，插图展示结果，可以复现的命令，可验证的数据，输出文件（如动画）所在位置，涉及的commit和其他关联的文档。
     - 代码注释使用英文，文档 markdown使用中文，不要更改README。
-    - 符号使用必须遵循 `@docs/notes/symbols.md` 中的符号表。尤其是纤维拉伸比必须使用lm/lm_tilde而非lambda。
+    - 符号使用遵循 `@docs/notes/symbols.md` 中的符号表。
 - Code Structure
     - 共享的基础设施放 `@src/`， `@examples/`放可独立运行的Simulation Example，脚本（如绘图或运行外部程序）放 `@scripts/`。
     - 输入数据（包括json格式的config和输入文件）放 `@data/`。
     - 总是把config和代码分离，防止参数硬编码，除非临时测试/临时脚本。
-    - 输出放到output/下。需要可视化的测试应把图片放到output/下对比。
+    - 输出放到output/下。临时输出的图片放到output/下。
 - Workflow
     - 完成一个新功能必须告知和记录如何复现/使用。
     - 进行重构时，需要简化代码结构，去除冗余，增加注释，保持代码清晰易读。重构后需要进行测试，确保功能正确。必要时可以改动外部API。
-    - Implement the plan stage by stage. Each time after finishing a stage, record the key findings in docs/progress, and update the docs/plans/
-    - 结束任务前必须测试是否正确运行。
-    - 实验/feature探索失败时需要如实记录失败的原因、过程和可复现的方法。
+    - 进行复杂任务式，需要先调研，然后制定分阶段plan（总纲），每阶段开始前制定spec(具体方案)，阶段完成后记录progress，每阶段都如此往复。
+    - 对代码进行了任何改动之后必须测试是否正确运行。
+    - 实验 or feature探索失败时需要如实记录失败的原因、过程和可复现的方法。
 - Git
     - 使用rebase而非merge来保持线性历史。
     - 实现新功能新建feat/XXX分支，修复新建fix/XXX分支，完成后合并到dev分支，master分支保持稳定，不允许更改。
     - 采用worktree来进行代码的隔离。新的worktree需要`uv sync --extra optional`来安装依赖。
-    - 在worktree工作应在项目目录外部创建../<PRJ_NAME>-<WORKTREE_NAME>，并建立分支<WORKTREE_NAME>，在该分支上进行开发。完成后rebase到dev分支，结束后删除worktree和分支（由于有submodule，需要`--force`）。
+    - 永远不要加coauthred by.
 - Code Style
     - 代码风格应保持一致。
 - Other

@@ -122,7 +122,7 @@ def _build_scene_once():
             parent_xform=wp.transform(p=wp.vec3(ELBOW_PIVOT)),
             child_xform=wp.transform(p=wp.vec3(ELBOW_PIVOT)),
             limit_lower=-3.0, limit_upper=3.0,
-            armature=1.0, friction=0.05,
+            armature=1.0, friction=0.9,
             target_ke=5.0, target_kd=5.0,
         )
         builder.add_articulation([joint], key="elbow")

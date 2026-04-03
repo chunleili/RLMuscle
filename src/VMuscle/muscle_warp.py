@@ -1013,6 +1013,7 @@ def integrate_kernel(
 def accumulate_active_fiber_force_kernel(
     tet_indices: wp.array(dtype=wp.vec4i),
     pos: wp.array(dtype=wp.vec3),
+    vel: wp.array(dtype=wp.vec3),
     force: wp.array(dtype=wp.vec3),
     rest_matrix: wp.array(dtype=wp.mat33),
     rest_volume: wp.array(dtype=wp.float32),
@@ -1020,6 +1021,8 @@ def accumulate_active_fiber_force_kernel(
     activation: wp.array(dtype=wp.float32),
     sigma0: float,
     lambda_opt: float,
+    v_max_norm: float,
+    d_damp: float,
     # Millard f_L curve data (force evaluation only)
     fl_x_coeffs: wp.array(dtype=wp.float32),
     fl_y_coeffs: wp.array(dtype=wp.float32),
@@ -1034,14 +1037,15 @@ def accumulate_active_fiber_force_kernel(
 ):
     """Explicit active fiber force per tet, scattered to vertex force field.
 
-    f_j = -V0 * tau_act * w[j] * n   (j=0,1,2)
+    f_j = -V0 * tau * w[j] * n   (j=0,1,2)
     f_3 = -(f_0 + f_1 + f_2)
-    where tau_act = sigma0 * a * f_FL(r), r = lambda_f / lambda_opt
+    where tau = sigma0 * (a * f_FL(r) * f_V(v_norm) + d_damp * v_norm)
+    r = lambda_f / lambda_opt, v_norm = dlm_dt / v_max_norm
     """
     tid = wp.tid()
     pts = tet_indices[tid]
     acti = activation[tid]
-    if acti < 1.0e-6:
+    if acti < 1.0e-6 and d_damp < 1.0e-6:
         return
 
     p0 = pos[pts[0]]
@@ -1080,19 +1084,35 @@ def accumulate_active_fiber_force_kernel(
     # Stretch ratio alignment: r = lambda_f / lambda_opt
     r = lm_raw / lambda_opt
 
-    # Evaluate Millard f_FL(r)
-    f_FL_val = millard_eval_wp(
-        r, fl_x_coeffs, fl_y_coeffs, fl_seg_bounds, fl_n_segments,
-        fl_x_lo, fl_x_hi, fl_y_lo, fl_y_hi, fl_dydx_lo, fl_dydx_hi)
-
-    # tau_act = sigma0 * a * f_FL(r)
-    tau_act = sigma0 * acti * f_FL_val
-
     # Current fiber unit direction
     n = Fd / lm_raw
 
-    # Scatter node forces: f_j = -V0 * tau_act * w[j] * n
-    s = -V0 * tau_act
+    # --- Fiber velocity from vertex velocities ---
+    dv0 = vel[pts[0]] - vel[pts[3]]
+    dv1 = vel[pts[1]] - vel[pts[3]]
+    dv2 = vel[pts[2]] - vel[pts[3]]
+    Ds_dot = wp.mat33(
+        dv0[0], dv1[0], dv2[0],
+        dv0[1], dv1[1], dv2[1],
+        dv0[2], dv1[2], dv2[2])
+    Fd_dot = Ds_dot * w
+    dlm_dt = wp.dot(n, Fd_dot)
+
+    v_norm = 0.0
+    if v_max_norm > 1.0e-8:
+        v_norm = wp.clamp(dlm_dt / v_max_norm, -1.0, 1.0)
+
+    # Evaluate Millard f_FL(r) and DGF f_V(v_norm)
+    f_FL_val = millard_eval_wp(
+        r, fl_x_coeffs, fl_y_coeffs, fl_seg_bounds, fl_n_segments,
+        fl_x_lo, fl_x_hi, fl_y_lo, fl_y_hi, fl_dydx_lo, fl_dydx_hi)
+    f_V_val = dgf_force_velocity_wp(v_norm)
+
+    # tau = sigma0 * (a * f_FL * f_V + d_damp * v_norm)
+    tau = sigma0 * (acti * f_FL_val * f_V_val + d_damp * v_norm)
+
+    # Scatter node forces: f_j = -V0 * tau * w[j] * n
+    s = -V0 * tau
     f0 = s * w[0] * n
     f1 = s * w[1] * n
     f2 = s * w[2] * n
@@ -1835,7 +1855,8 @@ class MuscleSim(MuscleSimBase):
     def from_procedural(cls, vertices, tets, fiber_dirs_per_tet,
                         bone_targets=None, *, constraint_configs,
                         dts, device="cpu", density=1060.0, veldamping=0.02,
-                        gravity=0.0, sigma0=0.0, lambda_opt=1.0):
+                        gravity=0.0, sigma0=0.0, lambda_opt=1.0,
+                        v_max_norm=0.0, d_damp=0.0):
         """Create a MuscleSim from procedural mesh data (no file loading).
 
         Args:
@@ -1854,6 +1875,8 @@ class MuscleSim(MuscleSimBase):
                 If > 0, enables active fiber force accumulation.
             lambda_opt: Optimal fiber stretch ratio (l_opt / L_ref).
                 Converts 3D fiber stretch to Millard curve input: r = lambda_f / lambda_opt.
+            v_max_norm: Normalizer for fiber velocity (V_max * lambda_opt).
+            d_damp: Linear damping coefficient for fiber velocity term.
 
         Returns:
             Initialized MuscleSim instance.
@@ -1888,6 +1911,7 @@ class MuscleSim(MuscleSimBase):
             render_fps=24, color_bones=False, color_muscles="tendonmask",
             activation=0.0, nsteps=1,
             sigma0=sigma0, lambda_opt=lambda_opt,
+            v_max_norm=v_max_norm, d_damp=d_damp,
         )
 
         wp.set_device(device)
@@ -2079,10 +2103,15 @@ class MuscleSim(MuscleSimBase):
         if sigma0 > 0:
             self.sigma0 = sigma0
             self.lambda_opt = getattr(self.cfg, 'lambda_opt', 1.0)
+            self.v_max_norm = getattr(self.cfg, 'v_max_norm', 0.0)
+            self.d_damp = getattr(self.cfg, 'd_damp', 0.0)
             self._has_active_fiber_force = True
             print(f"  Active fiber force: sigma0={sigma0:.0f} Pa, "
-                  f"lambda_opt={self.lambda_opt:.3f}")
+                  f"lambda_opt={self.lambda_opt:.3f}, "
+                  f"v_max_norm={self.v_max_norm:.3f}, d_damp={self.d_damp:.2f}")
         else:
+            self.v_max_norm = 0.0
+            self.d_damp = 0.0
             self._has_active_fiber_force = False
 
         # Build colored constraint groups for parallel Gauss-Seidel
@@ -2302,17 +2331,19 @@ class MuscleSim(MuscleSimBase):
     def accumulate_active_fiber_force(self):
         """Compute explicit active fiber force per tet, scatter to vertex force field.
 
-        Uses tau_act = sigma0 * a * f_FL(r) with r = lambda_f / lambda_opt.
+        Uses tau = sigma0 * (a * f_FL(r) * f_V(v_norm) + d_damp * v_norm)
+        where r = lambda_f / lambda_opt, v_norm = dlm_dt / v_max_norm.
         See docs/notes/xpbd_fem_fiber_lm.md for derivation.
         """
         if not getattr(self, '_has_active_fiber_force', False):
             return
         n_tet = self.tet_np.shape[0]
         wp.launch(accumulate_active_fiber_force_kernel, dim=n_tet, inputs=[
-            self.tet_indices, self.pos, self.force,
+            self.tet_indices, self.pos, self.vel, self.force,
             self.rest_matrix, self.rest_volume,
             self.v_fiber_dir, self.activation,
             self.sigma0, self.lambda_opt,
+            self.v_max_norm, self.d_damp,
             self._millard_fl_x_coeffs, self._millard_fl_y_coeffs,
             self._millard_fl_seg_bounds, self._millard_fl_n_segments,
             self._millard_fl_x_lo, self._millard_fl_x_hi,
@@ -2324,6 +2355,29 @@ class MuscleSim(MuscleSimBase):
         if max_accel > 0.0:
             wp.launch(_clamp_force_by_accel_kernel, dim=self.n_verts,
                       inputs=[self.force, self.mass, wp.float32(max_accel)])
+
+    def save_predicted_positions(self, vertex_ids):
+        """Save predicted positions after integrate() and before solve()."""
+        self._predicted_pos = self.pos.numpy()[vertex_ids].copy()
+        self._predicted_ids = vertex_ids
+
+    def get_insertion_force(self, insertion_vids, dts):
+        """Get net muscle force on bone from insertion constraint correction.
+
+        Requires save_predicted_positions() called after integrate().
+        """
+        pos_np = self.pos.numpy()
+        corrected = pos_np[insertion_vids]
+        predicted = self._predicted_pos
+
+        mass_np = self.mass.numpy()
+        masses = mass_np[insertion_vids]
+        dts2 = dts * dts
+
+        corrections = corrected.astype(np.float64) - predicted.astype(np.float64)
+        forces = masses[:, None].astype(np.float64) * corrections / dts2
+
+        return (-forces.sum(axis=0)).astype(np.float32)
 
     def update_velocities(self):
         wp.launch(update_velocities_kernel, dim=self.n_verts,
