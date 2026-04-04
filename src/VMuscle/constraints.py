@@ -6,6 +6,7 @@ and the ConstraintBuilderMixin that provides all create_* methods.
 Backend-specific build_constraints lives in muscle.py / muscle_warp.py.
 """
 import time
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -210,9 +211,15 @@ class ConstraintBuilderMixin:
             constraints.append(c)
         return constraints
 
-    def create_tet_fiber_constraint(self, params):
-        stiffness = params.get('stiffness', 1.0)
-        dampingratio = params.get('dampingratio', 0.0)
+    def _compute_fiber_rest_data(self):
+        """Compute per-tet fiber directions transformed to material space.
+
+        Returns (materialW_transformed, volumes, valid, restmatrices) where:
+          materialW_transformed: (n_tet, 3) fiber dirs in material coords
+          volumes: (n_tet,) tet volumes
+          valid: (n_tet,) bool mask for non-degenerate tets
+          restmatrices: (n_tet, 3, 3) inverse rest matrices
+        """
         restmatrices, volumes, valid = self._batch_compute_tet_rest_matrices()
 
         n_tet = len(self.tet_np)
@@ -228,9 +235,15 @@ class ConstraintBuilderMixin:
             materialW = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float32), (n_tet, 1))
 
         materialW_transformed = np.einsum('nj,nkj->nk', materialW, restmatrices)
+        return materialW_transformed, volumes, valid, restmatrices
+
+    def create_tet_fiber_constraint(self, params):
+        stiffness = params.get('stiffness', 1.0)
+        dampingratio = params.get('dampingratio', 0.0)
+        materialW_transformed, volumes, valid, _ = self._compute_fiber_rest_data()
 
         constraints = []
-        for i in range(n_tet):
+        for i in range(len(self.tet_np)):
             tet = self.tet_np[i]
             if not valid[i]:
                 vol = 0.0
@@ -265,24 +278,10 @@ class ConstraintBuilderMixin:
         dampingratio = params.get('dampingratio', 0.0)
         sigma0 = params.get('sigma0', 300000.0)
         contraction_factor = params.get('contraction_factor', 0.4)
-        restmatrices, volumes, valid = self._batch_compute_tet_rest_matrices()
-
-        n_tet = len(self.tet_np)
-        if self.v_fiber_np is not None:
-            fiber_verts = self.v_fiber_np[self.tet_np]
-            w = fiber_verts.sum(axis=1)
-            norms = np.linalg.norm(w, axis=1, keepdims=True)
-            default_w = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float32), (n_tet, 1))
-            norm_ok = (norms > 1e-8).ravel()
-            materialW = default_w.copy()
-            materialW[norm_ok] = w[norm_ok] / norms[norm_ok]
-        else:
-            materialW = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float32), (n_tet, 1))
-
-        materialW_transformed = np.einsum('nj,nkj->nk', materialW, restmatrices)
+        materialW_transformed, volumes, valid, _ = self._compute_fiber_rest_data()
 
         constraints = []
-        for i in range(n_tet):
+        for i in range(len(self.tet_np)):
             tet = self.tet_np[i]
             if not valid[i]:
                 vol = 0.0
@@ -317,24 +316,10 @@ class ConstraintBuilderMixin:
         dampingratio = params.get('dampingratio', 0.0)
         sigma0 = params.get('sigma0', 300000.0)
         contraction_factor = params.get('contraction_factor', 0.4)
-        restmatrices, volumes, valid = self._batch_compute_tet_rest_matrices()
-
-        n_tet = len(self.tet_np)
-        if self.v_fiber_np is not None:
-            fiber_verts = self.v_fiber_np[self.tet_np]
-            w = fiber_verts.sum(axis=1)
-            norms = np.linalg.norm(w, axis=1, keepdims=True)
-            default_w = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float32), (n_tet, 1))
-            norm_ok = (norms > 1e-8).ravel()
-            materialW = default_w.copy()
-            materialW[norm_ok] = w[norm_ok] / norms[norm_ok]
-        else:
-            materialW = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float32), (n_tet, 1))
-
-        materialW_transformed = np.einsum('nj,nkj->nk', materialW, restmatrices)
+        materialW_transformed, volumes, valid, _ = self._compute_fiber_rest_data()
 
         constraints = []
-        for i in range(n_tet):
+        for i in range(len(self.tet_np)):
             tet = self.tet_np[i]
             if not valid[i]:
                 vol = 0.0
@@ -406,12 +391,12 @@ class ConstraintBuilderMixin:
 
         mask = np.asarray(getattr(self.geo, mask_name), dtype=np.float32) if hasattr(self.geo, mask_name) else None
         if mask is None:
-            Warning(f"Warning: mask '{mask_name}' not found in geometry.")
+            warnings.warn(f"mask '{mask_name}' not found in geometry.")
             return []
 
         valid_src_indices = np.where(mask > mask_threshold)[0].astype(np.int32)
         if len(valid_src_indices) == 0:
-            Warning(f"Warning: No vertices with mask > {mask_threshold}")
+            warnings.warn(f"No vertices with mask > {mask_threshold}")
             return []
 
         src_positions = self.pos0_np[valid_src_indices]
@@ -459,12 +444,12 @@ class ConstraintBuilderMixin:
 
         mask = np.asarray(getattr(self.geo, mask_name), dtype=np.float32) if hasattr(self.geo, mask_name) else None
         if mask is None:
-            Warning(f"Warning: mask '{mask_name}' not found in geometry.")
+            warnings.warn(f"mask '{mask_name}' not found in geometry.")
             return []
 
         valid_src_indices = np.where(mask > mask_threshold)[0].astype(np.int32)
         if len(valid_src_indices) == 0:
-            Warning(f"Warning: No vertices with mask > {mask_threshold}")
+            warnings.warn(f"No vertices with mask > {mask_threshold}")
             return []
 
         src_positions = self.pos0_np[valid_src_indices]

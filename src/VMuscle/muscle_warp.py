@@ -4,14 +4,13 @@ import numpy as np
 import warp as wp
 import warp.render
 
-from VMuscle.config import load_config  # noqa: F401
 from VMuscle.constraints import (
     PIN, ATTACH, TETVOLUME, TETFIBERNORM, DISTANCELINE,
     TETARAP, TETARAPNORM, TETFIBERDGF, TETSNH, TETFIBERMILLARD,
     LINEARENERGY, NORMSTIFFNESS,
 )
 from VMuscle.mesh_io import build_surface_tris
-from VMuscle.muscle_common import MuscleSimBase, get_bbox  # noqa: F401
+from VMuscle.muscle_common import MuscleSimBase
 from VMuscle.vis_warp import WarpRenderer
 
 

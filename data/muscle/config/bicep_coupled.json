@@ -1,11 +1,17 @@
 {
-  "name": "bicep_dgf",
+  "name": "bicep_coupled",
   "geo_path": "data/muscle/model/bicep.usd",
   "bone_geo_path": "data/muscle/model/bicep.usd",
   "ground_mesh_path": "data/muscle/model/ground.obj",
   "coord_mesh_path": "data/muscle/model/coord.obj",
   "contraction_ratio": 0.4,
-  "fiber_stiffness_scale": 100000.0,
+  "fiber_stiffness_scale": 10000.0,
+  "joint_friction": 0.05,
+  "coupling": {
+    "preset": "smooth_nonlinear",
+    "k_coupling": 100000.0,
+    "max_torque": 20.0
+  },
   "arch": "cpu",
   "save_image": false,
   "gui": true,
@@ -33,11 +39,10 @@
       "dampingratio": 0.1
     },
     {
-      "type": "fiberdgf",
-      "name": "fiber_dgf",
+      "type": "fiber",
+      "name": "fiber",
       "stiffness": 1000.0,
-      "dampingratio": 0.1,
-      "contraction_factor": 0.4
+      "dampingratio": 0.1
     },
     {
       "type":"tetarap",
@@ -55,19 +60,23 @@
       "target_path": "data/muscle/model/bicep_bone.geo"
     },
     {
-      "type": "attachnormal",
-      "name": "muscleEndAttachNormal",
+      "type": "attach",
+      "name": "muscleEndAttachProximal",
       "mask_name": "muscleendmask",
       "mask_threshold": 0.75,
+      "source_nearest_group": ["L_scapula", "L_humerus"],
+      "target_group": "L_humerus",
       "stiffness": 1e37,
       "dampingratio": 0.1,
       "target_path": "data/muscle/model/bicep_bone.geo"
     },
     {
       "type": "attach",
-      "name": "muscleEndAttach",
+      "name": "muscleEndAttachDistal",
       "mask_name": "muscleendmask",
       "mask_threshold": 0.75,
+      "source_nearest_group": "L_radius",
+      "target_group": "L_radius",
       "stiffness": 1e37,
       "dampingratio": 0.1,
       "target_path": "data/muscle/model/bicep_bone.geo"

@@ -23,25 +23,19 @@ os.environ.setdefault("WARP_CACHE_PATH", str((PROJECT_ROOT / ".cache" / "warp").
 
 import warp as wp
 
-import newton
-
+from VMuscle.bicep_helpers import ELBOW_AXIS, ELBOW_PIVOT, build_elbow_model
 from VMuscle.config import load_config
-from VMuscle.mesh_utils import MeshDistortionError, check_mesh_quality
 from VMuscle.controllability import (
-    DEFAULT_SWEEP_LEVELS,
     build_coupling_config,
     config_to_dict,
-    run_activation_sweep,
-    solver_sample,
-    write_sweep_report,
+    parse_levels,
+    run_eval_sweep,
 )
+from VMuscle.mesh_utils import MeshDistortionError, check_mesh_quality
+from VMuscle.muscle_common import activation_ramp
 from VMuscle.muscle_warp import MuscleSim
 from VMuscle.solver_muscle_bone_coupled_warp import SolverMuscleBoneCoupled
-from VMuscle.usd_io import UsdIO
-
-# Elbow joint parameters (Y-up space)
-ELBOW_PIVOT = np.array([0.328996, 1.16379, -0.0530352], dtype=np.float32)
-ELBOW_AXIS = np.array([-0.788895, -0.45947, -0.408086], dtype=np.float32)
+from VMuscle.usd_io import UsdIO, build_bone_prim_map
 
 DEFAULT_CONFIG = "data/muscle/config/bicep_fibermillard_coupled.json"
 
@@ -66,7 +60,7 @@ def setup_logging(to_file: bool = False):
 
 
 # ---------------------------------------------------------------------------
-# Reusable setup — scripts import this to avoid duplicating init logic
+# Reusable setup -- scripts import this to avoid duplicating init logic
 # ---------------------------------------------------------------------------
 
 def setup_couple3(
@@ -138,106 +132,16 @@ def setup_couple3(
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Activation schedule
 # ---------------------------------------------------------------------------
 
-def _extract_radius_mesh(sim: MuscleSim):
-    """Extract radius-only triangle mesh from bone data if available."""
-    bone_pos = np.asarray(sim.bone_pos, dtype=np.float32)
-    if bone_pos.size == 0:
-        raise ValueError("Bone geometry is empty in MuscleSim.")
-
-    if not hasattr(sim, "bone_indices_np"):
-        raise ValueError("Bone triangle indices are missing in MuscleSim.")
-
-    faces = np.asarray(sim.bone_indices_np, dtype=np.int32).reshape(-1, 3)
-
-    group_name = None
-    selected = None
-    for key, indices in getattr(sim, "bone_muscle_ids", {}).items():
-        if "radius" in str(key).lower():
-            group_name = str(key)
-            selected = np.asarray(indices, dtype=np.int32)
-            break
-
-    if selected is None or selected.size == 0:
-        group_name = "all_bones"
-        selected = np.arange(bone_pos.shape[0], dtype=np.int32)
-
-    selected_set = set(selected.tolist())
-    mask = np.array([all(int(v) in selected_set for v in tri) for tri in faces], dtype=bool)
-    part_faces = faces[mask]
-    if part_faces.size == 0:
-        part_faces = faces
-        selected = np.arange(bone_pos.shape[0], dtype=np.int32)
-
-    used = np.unique(part_faces.reshape(-1))
-    remap = np.full(bone_pos.shape[0], -1, dtype=np.int32)
-    remap[used] = np.arange(used.shape[0], dtype=np.int32)
-
-    local_vertices = bone_pos[used]
-    local_faces = remap[part_faces]
-
-    return group_name, selected, local_vertices, local_faces
-
-
-def build_elbow_model(sim: MuscleSim, joint_friction: float):
-    """Build a minimal Newton model: radius body + elbow revolute joint."""
-    builder = newton.ModelBuilder(up_axis=newton.Axis.Y, gravity=0.0)
-    newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
-
-    group_name, selected_indices, radius_vertices, radius_faces = _extract_radius_mesh(sim)
-
-    radius_link = builder.add_link(xform=wp.transform())
-    builder.add_shape_mesh(
-        body=radius_link,
-        xform=wp.transform(),
-        mesh=newton.Mesh(
-            vertices=radius_vertices,
-            indices=radius_faces.reshape(-1),
-            compute_inertia=True,
-            is_solid=True,
-        ),
-    )
-
-    joint = builder.add_joint_revolute(
-        parent=-1,
-        child=radius_link,
-        axis=wp.vec3(ELBOW_AXIS),
-        parent_xform=wp.transform(p=wp.vec3(ELBOW_PIVOT)),
-        child_xform=wp.transform(p=wp.vec3(ELBOW_PIVOT)),
-        limit_lower=-3.0,
-        limit_upper=3.0,
-        armature=1.0,
-        friction=joint_friction,
-        target_ke=5.0,
-        target_kd=5.0,
-    )
-    builder.add_articulation([joint], label="elbow")
-
-    model = builder.finalize()
-    state = model.state()
-    newton.eval_fk(model, model.joint_q, model.joint_qd, state)
-
-    log.info("Using bone group '%s' with %d vertices", group_name, len(selected_indices))
-
-    return model, state, radius_link, joint, selected_indices
-
-
 def _activation_schedule(step: int, total: int) -> float:
-    t = step / max(total, 1)
-    if t <= 0.2:
-        return 0.0
-    if t <= 0.3:
-        return 0.5
-    if t <= 0.5:
-        return 1.0
-    if t <= 0.7:
-        return 0.7
-    if t <= 0.8:
-        return 0.3
-    return 0.0
+    return activation_ramp(step / max(total, 1))
 
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 def _create_muscle_surface_mesh(usd: UsdIO, sim: MuscleSim) -> str | None:
     """Create a renderable surface Mesh prim from the TetMesh boundary triangles."""
@@ -278,69 +182,6 @@ def _create_muscle_surface_mesh(usd: UsdIO, sim: MuscleSim) -> str | None:
     return surf_path
 
 
-def _build_bone_prim_map(usd: UsdIO, sim: MuscleSim) -> dict[str, np.ndarray]:
-    """Map each bone USD prim path to its vertex indices in sim.bone_pos_field."""
-    mapping: dict[str, np.ndarray] = {}
-    for bm in usd.bone_meshes:
-        for group_name, indices in sim.bone_muscle_ids.items():
-            if group_name.lower() in bm.mesh_path.lower():
-                mapping[bm.mesh_path] = np.asarray(indices, dtype=np.int32)
-                break
-    return mapping
-
-
-def _parse_levels(text: str) -> tuple[float, ...]:
-    values = [float(part.strip()) for part in text.split(",") if part.strip()]
-    return tuple(float(np.clip(value, 0.0, 1.0)) for value in values) if values else DEFAULT_SWEEP_LEVELS
-
-
-def _run_eval_sweep(solver, sim, state, cfg, dt,
-                    levels="0,0.1,0.3,0.5,0.7,1.0",
-                    hold_steps=90, release_steps=90, warmup_steps=20):
-    preset = solver.control_config.preset
-
-    def reset_state():
-        sim.reset()
-        solver.reset_bone(state)
-
-    def step_once():
-        solver.step(state, state, dt=dt)
-
-    def set_excitation(value: float):
-        cfg.activation = float(value)
-
-    report = run_activation_sweep(
-        label=f"example_couple3:{preset}",
-        dt=dt,
-        step_fn=step_once,
-        reset_fn=reset_state,
-        set_excitation_fn=set_excitation,
-        sample_fn=lambda: solver_sample(solver, state),
-        levels=_parse_levels(levels),
-        hold_steps=hold_steps,
-        release_steps=release_steps,
-        warmup_steps=warmup_steps,
-    )
-    report["control_config"] = config_to_dict(solver.control_config)
-    report_path = PROJECT_ROOT / "output" / f"example_couple3_eval_{preset}.json"
-    write_sweep_report(report_path, report)
-    log.info("Evaluation sweep saved: %s", report_path)
-    for episode in report["episodes"]:
-        log.info(
-            "eval act=%.2f steady_tau=%.4f steady_q=%.4f overshoot_tau=%.4f settle=%s",
-            episode["activation"],
-            episode["steady_axis_torque"],
-            episode["steady_joint_angle"],
-            episode["overshoot_axis_torque"],
-            episode["settle_steps_after_release"],
-        )
-    log.info(
-        "monotonic torque=%s angle=%s",
-        report["monotonic_steady_torque"],
-        report["monotonic_steady_angle"],
-    )
-
-
 # ---------------------------------------------------------------------------
 # Main simulation loop
 # ---------------------------------------------------------------------------
@@ -350,7 +191,6 @@ def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
              sim: MuscleSim | None = None,
              muscle_surface_path: str | None = None):
     """Run loop with optional rendering, scheduled activation and USD export."""
-    # Reorder tet indices to match kernel convention: ref vertex = index 3.
     tet_idx = sim.tet_np[:, [3, 0, 1, 2]] if sim else None
     tet_poses = sim.rest_matrix.numpy() if sim else None
 
@@ -441,11 +281,15 @@ def main():
     )
 
     if args.eval:
-        _run_eval_sweep(solver, sim, state, cfg, dt,
-                        levels=args.eval_levels,
-                        hold_steps=args.eval_hold_steps,
-                        release_steps=args.eval_release_steps,
-                        warmup_steps=args.eval_warmup_steps)
+        run_eval_sweep(
+            solver, sim, state, cfg, dt,
+            label="example_couple3",
+            levels=args.eval_levels,
+            hold_steps=args.eval_hold_steps,
+            release_steps=args.eval_release_steps,
+            warmup_steps=args.eval_warmup_steps,
+            output_dir=str(PROJECT_ROOT / "output"),
+        )
         return
 
     usd = None
@@ -458,7 +302,7 @@ def main():
         usd.bone_meshes = usd.find_meshes("bone")
         usd.start("output/example_couple3.anim.usd", copy_usd=True)
         usd.set_runtime("fps", 60)
-        bone_prim_map = _build_bone_prim_map(usd, sim)
+        bone_prim_map = build_bone_prim_map(usd, sim)
         muscle_surface_path = _create_muscle_surface_mesh(usd, sim)
         log.info("USD export: %s  bone_groups=%s",
                  usd.output_path, list(bone_prim_map.keys()))

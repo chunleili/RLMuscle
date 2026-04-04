@@ -17,10 +17,10 @@ if TYPE_CHECKING:
 
 import numpy as np
 
-ColorRgb = tuple[float, float, float]
+from VMuscle.mesh_io import _Y_TO_Z, build_surface_tris
+from VMuscle.mesh_utils import fix_tet_winding
 
-# Hardcoded Y-up -> Z-up rotation: 90 deg around X axis.
-_Y_TO_Z = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=np.float32)
+ColorRgb = tuple[float, float, float]
 
 
 @dataclass
@@ -84,26 +84,6 @@ def _triangulate_faces(face_counts: np.ndarray, face_indices: np.ndarray) -> np.
             tris.append((a, int(face[i]), int(face[i + 1])))
     return np.asarray(tris, dtype=np.int32)
 
-
-def _fix_tet_winding(vertices: np.ndarray, tets: np.ndarray) -> np.ndarray:
-    """Ensure all tets have positive signed volume."""
-    p0, p1, p2, p3 = (vertices[tets[:, i]] for i in range(4))
-    signed6v = np.einsum("ij,ij->i", np.cross(p1 - p0, p2 - p0), p3 - p0)
-    inv = signed6v < 0.0
-    if np.any(inv):
-        tets[inv, 0], tets[inv, 1] = tets[inv, 1].copy(), tets[inv, 0].copy()
-    return tets
-
-
-def _extract_surface_tris(tets: np.ndarray) -> np.ndarray:
-    """Extract boundary triangles from tet mesh (faces shared by exactly one tet)."""
-    tet_faces = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
-    counts: dict[tuple, list] = {}
-    for tet in tets:
-        for f in tet_faces:
-            tri = (int(tet[f[0]]), int(tet[f[1]]), int(tet[f[2]]))
-            counts.setdefault(tuple(sorted(tri)), []).append(tri)
-    return np.asarray([v[0] for v in counts.values() if len(v) == 1], dtype=np.int32)
 
 
 def _read_display_color(prim) -> ColorRgb:
@@ -254,8 +234,8 @@ class UsdIO:
 
                 if (tris is None or tris.size == 0) and tets is not None and tets.shape[0] > 0:
                     valid = np.all((tets >= 0) & (tets < verts.shape[0]), axis=1)
-                    tets = _fix_tet_winding(verts, tets[valid].copy())
-                    tris = _extract_surface_tris(tets)
+                    tets = fix_tet_winding(verts, tets[valid].copy())
+                    tris = build_surface_tris(tets, verts)
 
                 if tris is None or tris.size == 0:
                     continue
@@ -271,7 +251,7 @@ class UsdIO:
             if apply_rotation:
                 verts = (verts @ _Y_TO_Z.T).astype(np.float32)
             if tets is not None and tets.size > 0:
-                tets = _fix_tet_winding(verts, tets.copy())
+                tets = fix_tet_winding(verts, tets.copy())
 
             # Read primvars (skip display-only ones)
             pv_api = UsdGeom.PrimvarsAPI(prim)
@@ -576,4 +556,19 @@ class UsdIO:
         return value
 
 
-__all__ = ["UsdIO", "usd_args", "UsdMesh", "WarpMeshData"]
+def build_bone_prim_map(usd: UsdIO, sim) -> dict[str, np.ndarray]:
+    """Map each bone USD prim path to vertex indices in sim.bone_pos_field.
+
+    Matches prim path keywords (e.g. ``/character/bone/L_radius/...``) against
+    ``sim.bone_muscle_ids`` group names (e.g. ``"L_radius"``).
+    """
+    mapping: dict[str, np.ndarray] = {}
+    for bm in usd.bone_meshes:
+        for group_name, indices in sim.bone_muscle_ids.items():
+            if group_name.lower() in bm.mesh_path.lower():
+                mapping[bm.mesh_path] = np.asarray(indices, dtype=np.int32)
+                break
+    return mapping
+
+
+__all__ = ["UsdIO", "usd_args", "UsdMesh", "WarpMeshData", "build_bone_prim_map"]

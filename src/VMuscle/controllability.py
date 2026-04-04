@@ -329,3 +329,76 @@ def write_sweep_report(output_path: str | Path, payload: dict[str, object]):
 def config_to_dict(cfg: CouplingControlConfig) -> dict[str, float | str | bool]:
     """Serialize a coupling config for logging."""
     return asdict(cfg)
+
+
+def parse_levels(text: str) -> tuple[float, ...]:
+    """Parse comma-separated activation levels, clipping to [0, 1]."""
+    values = [float(part.strip()) for part in text.split(",") if part.strip()]
+    return tuple(float(np.clip(v, 0.0, 1.0)) for v in values) if values else DEFAULT_SWEEP_LEVELS
+
+
+def run_eval_sweep(
+    solver,
+    sim,
+    state,
+    cfg,
+    dt: float,
+    label: str,
+    levels: str = "0,0.1,0.3,0.5,0.7,1.0",
+    hold_steps: int = 90,
+    release_steps: int = 90,
+    warmup_steps: int = 20,
+    output_dir: str | Path = "output",
+) -> dict:
+    """Run activation sweep evaluation and write JSON report.
+
+    High-level wrapper around ``run_activation_sweep`` used by couple examples.
+    """
+    import logging as _logging
+
+    _log = _logging.getLogger("couple")
+
+    def reset_state():
+        sim.reset()
+        solver.reset_bone(state)
+
+    def step_once():
+        solver.step(state, state, dt=dt)
+
+    def set_excitation(value: float):
+        cfg.activation = float(value)
+
+    preset = solver.control_config.preset
+
+    report = run_activation_sweep(
+        label=label,
+        dt=dt,
+        step_fn=step_once,
+        reset_fn=reset_state,
+        set_excitation_fn=set_excitation,
+        sample_fn=lambda: solver_sample(solver, state),
+        levels=parse_levels(levels),
+        hold_steps=hold_steps,
+        release_steps=release_steps,
+        warmup_steps=warmup_steps,
+    )
+    report["control_config"] = config_to_dict(solver.control_config)
+
+    report_path = Path(output_dir) / f"{label.replace(':', '_')}_eval_{preset}.json"
+    write_sweep_report(report_path, report)
+    _log.info("Evaluation sweep saved: %s", report_path)
+    for episode in report["episodes"]:
+        _log.info(
+            "eval act=%.2f steady_tau=%.4f steady_q=%.4f overshoot_tau=%.4f settle=%s",
+            episode["activation"],
+            episode["steady_axis_torque"],
+            episode["steady_joint_angle"],
+            episode["overshoot_axis_torque"],
+            episode["settle_steps_after_release"],
+        )
+    _log.info(
+        "monotonic torque=%s angle=%s",
+        report["monotonic_steady_torque"],
+        report["monotonic_steady_angle"],
+    )
+    return report

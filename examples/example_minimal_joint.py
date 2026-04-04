@@ -27,9 +27,6 @@ import warp as wp
 
 import newton
 import newton.examples
-from VMuscle.solver_muscle_bone_coupled import SolverMuscleBoneCoupled
-
-
 class Example:
     def __init__(self, viewer, args=None):
         # setup simulation parameters first

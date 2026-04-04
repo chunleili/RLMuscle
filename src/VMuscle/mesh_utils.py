@@ -140,8 +140,6 @@ def add_soft_vmuscle_mesh(
         mid_str = str(mid)
         if mid_str in muscles_cfg:
             sigma0 = muscles_cfg[mid_str].get("sigma0", default_sigma0)
-        elif isinstance(muscles_cfg, dict) and mid_str in muscles_cfg:
-            sigma0 = muscles_cfg[mid_str]["sigma0"]
         else:
             sigma0 = default_sigma0
 

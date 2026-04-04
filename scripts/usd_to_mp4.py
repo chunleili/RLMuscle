@@ -109,7 +109,7 @@ def main():
     out_path = args.output or str(Path(args.input).with_suffix(".mp4"))
     print(f"Rendering {len(frames)} frames at {fps} fps -> {out_path}")
 
-    ani = animation.FuncAnimation(fig, draw_frame, frames=120, interval=1000 / fps, blit=False)
+    ani = animation.FuncAnimation(fig, draw_frame, frames=len(frames), interval=1000 / fps, blit=False)
     ani.save(out_path, writer="ffmpeg", fps=fps, dpi=args.dpi)
     print(f"Done: {out_path}")
     plt.close()
