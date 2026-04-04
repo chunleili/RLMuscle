@@ -259,7 +259,7 @@ RUN=example_muscle_warp uv run main.py --steps 5               # OK
 以下问题已识别但未处理（按优先级排序）：
 
 1. ~~**`_import_opensim()` 四重重复**~~ → P3 合并 osim scripts 时已解决 (`2b05971`)
-2. **`compute_fiber_stretches` 五重重复**: `example_vbd_*.py` 应导入 `muscle_common` 版本
+2. **`compute_fiber_stretches` 三重定义**: `muscle_common.py`（vertex 3 为参考点，Warp 约定）与 `example_vbd_*.py`（vertex 0 为参考点，Newton 约定）使用不同 tet 顶点约定，不可直接统一
 3. ~~**`example_tetmesh_import*.py` 无 `main()`**~~ → P2 已补齐 (`2b05971`)
 4. ~~**`example_human_import.py` 全中文注释 + 无 `main()`**~~ → P2 已补齐 (`2b05971`)
 5. **`solver_muscle_bone_coupled` Taichi vs Warp**: ~400 行重叠，可提取 base class（将随 Taichi 废弃）
@@ -267,5 +267,6 @@ RUN=example_muscle_warp uv run main.py --steps 5               # OK
 7. **`example_couple.py`**: Taichi 版 couple，含 9 个模拟 CLI 参数（将随 Taichi 废弃）
 8. **`load_config` 无 schema 验证**: 拼写错误的 JSON 字段被静默忽略
 9. ~~**`sliding_ball_helpers.py` `object.__new__` bypass**~~ → Round 4 用 `from_procedural()` 替换 (`5efb279`)
-10. **`activation.py` Warp kernel `update_activations` 疑似死代码**: 无外部调用方（仅 NumPy 版 `activation_dynamics_step_np` 被使用）
+10. ~~**`activation.py` Warp kernel `update_activations` 死代码**~~ → Round 6 已删除
 11. **src/ 中 ~25 处 `print()` 未迁移到 `logging`**: `muscle_common.py`, `mesh_io.py`, `muscle_warp.py` 等
+12. **`muscle_warp.py:2042` `object.__new__`**: `MuscleSim.from_procedural()` 仍使用，功能正确但不优雅

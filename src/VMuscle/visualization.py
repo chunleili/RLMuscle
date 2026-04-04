@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 """Minimal viewer helpers with fixed defaults.
 

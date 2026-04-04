@@ -33,22 +33,6 @@ def dgf_activation_dynamics(
     return wp.clamp(a_new, min_activation, 1.0)
 
 
-@wp.kernel
-def update_activations(
-    excitations: wp.array(dtype=wp.float32),
-    activations: wp.array(dtype=wp.float32),
-    dt: float,
-    tau_a: float,
-    tau_d: float,
-    b: float,
-    min_activation: float,
-):
-    """Update all tet activations from excitation signals."""
-    tid = wp.tid()
-    activations[tid] = dgf_activation_dynamics(
-        excitations[tid], activations[tid], dt, tau_a, tau_d, b, min_activation
-    )
-
 
 def activation_dynamics_step_np(
     excitation: np.ndarray,

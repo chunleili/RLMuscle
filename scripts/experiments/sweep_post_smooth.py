@@ -10,10 +10,10 @@ import time as _time
 import numpy as np
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(PROJECT_ROOT, "examples"))
+sys.path.insert(0, PROJECT_ROOT)
 os.environ.setdefault("WARP_CACHE_PATH", os.path.join(PROJECT_ROOT, ".cache", "warp"))
 
-from example_couple3 import setup_couple3, _activation_schedule
+from examples.example_couple3 import setup_couple3, _activation_schedule
 
 N_STEPS = 300
 DT = 1.0 / 60.0
