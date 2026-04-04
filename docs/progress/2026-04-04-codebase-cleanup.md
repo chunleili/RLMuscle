@@ -2,16 +2,19 @@
 
 **日期**: 2026-04-04  
 **分支**: dev  
-**Commits**: `39ee427`, `c7010ee`  
+**Commits**: `39ee427`, `c7010ee`, `fe13f9f`, `5efb279`, `2f476f0`  
 **关联文档**: [2026-04-03-refactor-dedup.md](2026-04-03-refactor-dedup.md)（前次重构，SimpleArm + Sliding-ball 去重）  
 **状态**: 成功
 
 ## 概述
 
-在前次重构（SimpleArm/Sliding-ball 去重，净减 ~340 行）基础上，对整个代码库进行了两轮清理：
+在前次重构（SimpleArm/Sliding-ball 去重，净减 ~340 行）基础上，对整个代码库进行了五轮清理：
 
 1. **Commit `39ee427`**: couple3 架构标准化——提取 `setup_couple3()` 工厂函数，移除 12 个模拟 CLI 参数，简化 scripts
 2. **Commit `c7010ee`**: 全面审查与修复——5 个 bug 修复、couple2 对齐 couple3 架构、src/ 废弃代码清理、config 规范化
+3. **Commit `fe13f9f`**: 统一命名——`muscle_type`/`curve_type` 重命名为 `hill_model_type`，默认值统一为 `"millard"`
+4. **Commit `5efb279`**: 修复硬编码参数——activation.py tau 参数化、消除 `object.__new__` hack、清理冗余 `sys.path.insert`
+5. **Commit `2f476f0`**: 为所有 JSON config 添加 `metainfo` 元信息（description/used_by/created）
 
 使用 5 个并行审查 agent 分别检查了源码质量、示例规范性、脚本模式、架构一致性和代码重复。
 
@@ -102,17 +105,116 @@
 
 ---
 
+## Round 3: 统一命名 (`fe13f9f`)
+
+将分散在代码库中的 `muscle_type` / `curve_type` 参数统一重命名为 `hill_model_type`，消除同一概念的多名称混乱。
+
+### 核心变更
+
+| 范围 | 旧名 | 新名 | 影响文件 |
+|------|------|------|----------|
+| osim scripts 函数参数 | `muscle_type` | `hill_model_type` | `osim_simple_arm.py`, `osim_sliding_ball.py` |
+| XPBD config JSON 字段 | `curve_type` | `hill_model_type` | `example_xpbd_coupled_simple_arm.py`, `run_simple_arm_comparison.py` |
+| CLI 参数 | `--muscle-type` | `--hill-model-type` | `osim_simple_arm.py`, `osim_sliding_ball.py` |
+
+**默认值统一**: 所有入口默认 `hill_model_type="millard"`（Millard 2012 是当前主力模型）。
+
+---
+
+## Round 4: 修复硬编码参数 (`5efb279`)
+
+### 4.1 activation.py — tau 参数化
+
+Warp kernel `dgf_activation_dynamics` 中 `tau_a=0.015`、`tau_d=0.060`、`b=10.0` 原为函数体内硬编码。改为显式函数参数：
+
+```python
+# Before
+@wp.func
+def dgf_activation_dynamics(excitation, activation, dt, min_activation=0.0):
+    tau_a = 0.015; tau_d = 0.060  # hardcoded
+
+# After
+@wp.func
+def dgf_activation_dynamics(excitation, activation, dt,
+                            tau_a, tau_d, b, min_activation):
+```
+
+同步更新 `activation_dynamics_step_np()` 接受 `b` 参数。
+
+### 4.2 sliding_ball_helpers.py — 消除 `object.__new__` hack
+
+将 ~60 行手动 `object.__new__(MuscleSim)` + 20+ 属性赋值替换为单次 `MuscleSim.from_procedural()` 调用。
+
+为支持 sliding ball 场景，扩展 `from_procedural()` 新增 3 个参数：
+- `num_substeps` — substep 数（影响 dt 计算）
+- `contraction_ratio` — 初始收缩比
+- `fiber_stiffness_scale` — 纤维约束刚度缩放
+
+### 4.3 清理冗余 sys.path.insert
+
+项目通过 `pyproject.toml` 安装 VMuscle 包，`sys.path.insert(0, "src")` 是冗余的。
+
+| 文件 | 变更 |
+|------|------|
+| `scripts/run_couple3_curves.py` | 移除 `src/` 路径 |
+| `scripts/experiments/sweep_post_smooth.py` | 移除 `src/` 路径 |
+| `tests/conftest.py` | 改为添加项目根目录（覆盖 `examples.*` 导入） |
+| 4 个 test 文件 | 移除各自的 `sys.path.insert`，由 conftest.py 统一处理 |
+
+### 4.4 其他规范化
+
+- `constraints.py`: `print("Warning: ...")` → `warnings.warn(..., DeprecationWarning)`
+- `config.py`: `print()` → `logging.info()`
+- `sliding_ball_helpers.py`: `print()` → `logging.info()`
+
+**统计**: 13 文件，55 新增，117 删除
+
+---
+
+## Round 5: JSON config 元信息 (`2f476f0`)
+
+为所有 12 个 JSON config 文件添加 `metainfo` 字段，记录用途、使用者和创建日期：
+
+```json
+{
+  "metainfo": {
+    "description": "Brief English description of purpose",
+    "used_by": ["examples/xxx.py", "scripts/yyy.py"],
+    "created": "2026-02-10"
+  },
+  ...
+}
+```
+
+| Config | description |
+|--------|-------------|
+| `bicep.json` | Default bicep muscle with generic fiber constraints (VBD solver) |
+| `bicep_coupled.json` | VBD muscle-bone coupled bicep with smooth nonlinear coupling |
+| `bicep_fibermillard_coupled.json` | Millard 2012 energy constitutive model, muscle-bone coupled |
+| `bicep_dgf.json` | DGF constitutive muscle model with attachnormal constraints |
+| `bicep_xpbd_millard.json` | XPBD integrator with Millard 2012 energy model and SVD repair |
+| `simpleArm/config.json` | 1-DOF elbow joint, multi-solver comparison |
+| `slidingBall/config.json` | 1-DOF sliding ball with DGF Hill-type muscle (VBD) |
+| `slidingBall/config_xpbd_dgf.json` | XPBD-DGF sliding ball |
+| `slidingBall/config_xpbd_millard.json` | XPBD-Millard sliding ball |
+| `Human/human_import2.json` | Full human skeleton/muscle import |
+| `archived/bicep_fibermillard.json` | [ARCHIVED] Millard without coupling |
+| `archived/bicep_hybrid.json` | [ARCHIVED] Hybrid fiber + sigma0 |
+
+3 个 slidingBall config 的旧顶层 `description` 字段迁移至 `metainfo` 内。`load_config()` 无需修改，`metainfo` 作为属性对现有代码透明。
+
+**统计**: 12 文件，87 新增，3 删除
+
+---
+
 ## 总统计
 
-| 指标 | Round 1 | Round 2 | 合计 |
-|------|---------|---------|------|
-| 修改文件 | 6 | 20 | 26 |
-| 新增行 | 183 | 610 | 793 |
-| 删除行 | 305 | 615 | 920 |
-| 净变化 | -122 | -5 | **-127** |
-| 新建共享模块 | 0 | 1 (`bicep_helpers.py`) | 1 |
-| 新建 config | 0 | 1 (`bicep_coupled.json`) | 1 |
-| Bug 修复 | 0 | 5 | 5 |
+| 指标 | R1 | R2 | R3 | R4 | R5 | 合计 |
+|------|----|----|----|----|----|----|
+| 修改文件 | 6 | 20 | 6 | 13 | 12 | 57 |
+| 新增行 | 183 | 610 | 30 | 55 | 87 | 965 |
+| 删除行 | 305 | 615 | 30 | 117 | 3 | 1070 |
+| 净变化 | -122 | -5 | 0 | -62 | +84 | **-105** |
 
 ## 验证
 
@@ -152,16 +254,18 @@ RUN=example_muscle_warp uv run main.py --steps 5               # OK
 
 所有模拟参数统一从 JSON config 读取，CLI 仅用于工作流控制。
 
-## 遗留 TODO（未在本次处理）
+## 遗留 TODO
 
-以下问题已识别但不在本次范围（按优先级排序）：
+以下问题已识别但未处理（按优先级排序）：
 
-1. **`_import_opensim()` 四重重复**: 4 个 osim scripts 各自定义，应提取到 `src/`
+1. ~~**`_import_opensim()` 四重重复**~~ → P3 合并 osim scripts 时已解决 (`2b05971`)
 2. **`compute_fiber_stretches` 五重重复**: `example_vbd_*.py` 应导入 `muscle_common` 版本
-3. **`example_tetmesh_import*.py` 无 `main()`**: 模拟代码在模块级执行
-4. **`example_human_import.py` 全中文注释 + 无 `main()`**
-5. **`solver_muscle_bone_coupled` Taichi vs Warp**: ~400 行重叠，可提取 base class
-6. **`activation.py` Warp kernel 硬编码 tau**: 忽略 config 中的 `tau_act`/`tau_deact`
+3. ~~**`example_tetmesh_import*.py` 无 `main()`**~~ → P2 已补齐 (`2b05971`)
+4. ~~**`example_human_import.py` 全中文注释 + 无 `main()`**~~ → P2 已补齐 (`2b05971`)
+5. **`solver_muscle_bone_coupled` Taichi vs Warp**: ~400 行重叠，可提取 base class（将随 Taichi 废弃）
+6. ~~**`activation.py` Warp kernel 硬编码 tau**~~ → Round 4 已参数化 (`5efb279`)
 7. **`example_couple.py`**: Taichi 版 couple，含 9 个模拟 CLI 参数（将随 Taichi 废弃）
 8. **`load_config` 无 schema 验证**: 拼写错误的 JSON 字段被静默忽略
-9. **`sliding_ball_helpers.py` `object.__new__` bypass**: 应使用 `MuscleSim.from_procedural()`
+9. ~~**`sliding_ball_helpers.py` `object.__new__` bypass**~~ → Round 4 用 `from_procedural()` 替换 (`5efb279`)
+10. **`activation.py` Warp kernel `update_activations` 疑似死代码**: 无外部调用方（仅 NumPy 版 `activation_dynamics_step_np` 被使用）
+11. **src/ 中 ~25 处 `print()` 未迁移到 `logging`**: `muscle_common.py`, `mesh_io.py`, `muscle_warp.py` 等

@@ -2,6 +2,8 @@
 
 **日期**: 2026-04-04  
 **分支**: dev  
+**Commit**: `2b05971`  
+**关联 Commits**: `fe13f9f`（hill_model_type 统一命名，紧随本次合并）  
 **关联文档**: [2026-04-04-codebase-cleanup.md](2026-04-04-codebase-cleanup.md)（前次代码逻辑清理）  
 **状态**: 成功
 
