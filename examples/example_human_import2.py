@@ -18,7 +18,6 @@ import newton.examples
 from VMuscle.log import setup_logging
 from VMuscle.usd_io import UsdIO
 from VMuscle.add_tet_muscle import register_muscle_attributes, add_tet_muscles
-from VMuscle.util import add_aux_meshes
 
 
 # Bones to keep in the Newton model
@@ -100,8 +99,6 @@ class Example():
             root_path="/Human",
             ignore_paths=ignore_paths,
         )
-        add_aux_meshes(builder)
-
         # Resolve muscle short names to full TetMesh prim paths
         muscle_paths = _resolve_muscle_paths(stage, KEEP_MUSCLES)
         self.log.info("Resolved muscle paths: %s", muscle_paths)

@@ -32,12 +32,12 @@ import matplotlib.pyplot as plt
 
 
 def run_dgf(cfg):
-    from scripts.osim_simple_arm_dgf import osim_simple_arm_dgf
+    from scripts.osim_simple_arm import osim_simple_arm_dgf
     return osim_simple_arm_dgf(cfg)
 
 
 def run_millard(cfg):
-    from scripts.osim_simple_arm_millard import osim_simple_arm_millard
+    from scripts.osim_simple_arm import osim_simple_arm_millard
     return osim_simple_arm_millard(cfg)
 
 
@@ -62,8 +62,10 @@ def run_xpbd(cfg):
 
 
 def run_xpbd_millard(cfg):
-    from examples.example_xpbd_coupled_simple_arm_millard import xpbd_coupled_simple_arm
-    return xpbd_coupled_simple_arm(cfg)
+    cfg_copy = dict(cfg)
+    cfg_copy.setdefault("xpbd", {})["curve_type"] = "millard"
+    from examples.example_xpbd_coupled_simple_arm import xpbd_coupled_simple_arm
+    return xpbd_coupled_simple_arm(cfg_copy)
 
 
 def plot_comparison(datasets, title, out_path, colors=None):

@@ -75,7 +75,7 @@ def run_opensim_millard(config_path):
     geo, phys, mus, sol = raw["geometry"], raw["physics"], raw["muscle"], raw["solver"]
     t_end = sol["n_steps"] * sol["dt"]
     try:
-        from scripts.osim_sliding_ball_millard import osim_sliding_ball_millard
+        from scripts.osim_sliding_ball import osim_sliding_ball_millard
         os.makedirs("output", exist_ok=True)
         return osim_sliding_ball_millard(
             muscle_length=geo["muscle_length"], ball_mass=phys["ball_mass"],

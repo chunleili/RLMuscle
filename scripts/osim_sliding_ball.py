@@ -1,6 +1,6 @@
-"""OpenSim forward-dynamics sliding-ball model with DeGrooteFregly2016Muscle.
+"""OpenSim forward-dynamics sliding-ball with DGF or Millard muscle.
 
-Builds a 1-DOF model (SliderJoint along Y) with a DGF muscle hanging from
+Builds a 1-DOF model (SliderJoint along Y) with a muscle hanging from
 the ceiling. Runs forward simulation with prescribed excitation via Manager.
 
 Works with pyopensim (pip install pyopensim) — no conda required.
@@ -14,7 +14,6 @@ def _import_opensim():
 
     pyopensim puts some classes in submodules (simulation, actuators, common).
     We patch them onto the top-level module for a uniform API.
-    You need conda to install opensim offical releases, but pyopensim is easier to install via pip and works with Python 3.10+.
     """
     try:
         import opensim as osim
@@ -26,10 +25,10 @@ def _import_opensim():
     except ImportError:
         print("OpenSim not available — skipping comparison.")
         return None
-    # Patch classes that pyopensim only exposes in submodules
     for attr, sub in [
         ("SliderJoint", "simulation"),
         ("DeGrooteFregly2016Muscle", "actuators"),
+        ("Millard2012EquilibriumMuscle", "actuators"),
         ("PiecewiseLinearFunction", "common"),
         ("Sphere", "simulation"),
         ("TimeSeriesTable", "common"),
@@ -43,7 +42,7 @@ def _import_opensim():
 
 
 def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
-                      excitation_func, t_end, dt=0.001):
+                      excitation_func, t_end, dt=0.001, muscle_type="dgf"):
     """Build OpenSim 1-DOF model and run forward dynamics.
 
     Args:
@@ -54,6 +53,7 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
         excitation_func: callable(t) -> excitation [0,1].
         t_end: Simulation end time [s].
         dt: Report interval [s] (integrator uses adaptive stepping).
+        muscle_type: "dgf" or "millard".
 
     Returns:
         dict with 'times', 'positions', 'forces', 'norm_fiber_lengths',
@@ -64,12 +64,13 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
     if osim is None:
         return None
 
+    label = muscle_type.upper()
     pcsa = np.pi * muscle_radius ** 2
     max_isometric_force = sigma0 * pcsa
 
     # --- Build model ---
     model = osim.Model()
-    model.setName("vbd_muscle_comparison")
+    model.setName(f"sliding_ball_{muscle_type}")
     model.set_gravity(osim.Vec3(0, -9.81, 0))
 
     body = osim.Body("ball", ball_mass, osim.Vec3(0), osim.Inertia(0.001))
@@ -87,17 +88,33 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
     coord.set_clamped(False)
     model.addJoint(joint)
 
-    muscle = osim.DeGrooteFregly2016Muscle()
-    muscle.setName("muscle")
-    muscle.set_max_isometric_force(max_isometric_force)
-    muscle.set_optimal_fiber_length(muscle_length)
-    muscle.set_tendon_slack_length(0.001)
-    muscle.set_pennation_angle_at_optimal(0.0)
-    muscle.set_fiber_damping(0.0)
-    muscle.set_max_contraction_velocity(10.0)
-    muscle.set_ignore_tendon_compliance(True)
-    muscle.set_ignore_activation_dynamics(False)
-    muscle.set_ignore_passive_fiber_force(True)
+    # Create muscle based on type
+    if muscle_type == "dgf":
+        muscle = osim.DeGrooteFregly2016Muscle()
+        muscle.setName("muscle")
+        muscle.set_max_isometric_force(max_isometric_force)
+        muscle.set_optimal_fiber_length(muscle_length)
+        muscle.set_tendon_slack_length(0.001)
+        muscle.set_pennation_angle_at_optimal(0.0)
+        muscle.set_fiber_damping(0.0)
+        muscle.set_max_contraction_velocity(10.0)
+        muscle.set_ignore_tendon_compliance(True)
+        muscle.set_ignore_activation_dynamics(False)
+        muscle.set_ignore_passive_fiber_force(True)
+        downcast_cls = osim.DeGrooteFregly2016Muscle
+    else:
+        muscle = osim.Millard2012EquilibriumMuscle()
+        muscle.setName("muscle")
+        muscle.set_max_isometric_force(max_isometric_force)
+        muscle.set_optimal_fiber_length(muscle_length)
+        muscle.set_tendon_slack_length(0.001)
+        muscle.set_pennation_angle_at_optimal(0.0)
+        muscle.set_fiber_damping(0.001)
+        muscle.set_max_contraction_velocity(10.0)
+        muscle.set_ignore_tendon_compliance(True)
+        muscle.set_ignore_activation_dynamics(False)
+        downcast_cls = osim.Millard2012EquilibriumMuscle
+
     muscle.addNewPathPoint("origin", model.updGround(),
                            osim.Vec3(0, muscle_length, 0))
     muscle.addNewPathPoint("insertion", body, osim.Vec3(0, 0, 0))
@@ -121,8 +138,9 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
 
     import os
     os.makedirs("output", exist_ok=True)
-    model.printToXML("output/vbd_muscle_comparison.osim")
-    print("Wrote output/vbd_muscle_comparison.osim")
+    osim_path = f"output/sliding_ball_{muscle_type}.osim"
+    model.printToXML(osim_path)
+    print(f"Wrote {osim_path}")
 
     # --- Forward simulation ---
     state = model.initSystem()
@@ -130,10 +148,9 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
     manager.setIntegratorAccuracy(1e-6)
     manager.initialize(state)
 
-    print(f"Forward sim: F_max={max_isometric_force:.1f}N, "
+    print(f"[{label}] Forward sim: F_max={max_isometric_force:.1f}N, "
           f"L_opt={muscle_length:.3f}m, ball={ball_mass}kg, t_end={t_end}s")
 
-    # Integrate to t_end
     state = manager.integrate(t_end)
 
     # --- Extract results from states table ---
@@ -141,8 +158,7 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
     col_labels = list(states_table.getColumnLabels())
     n_rows = states_table.getNumRows()
 
-    msl = osim.DeGrooteFregly2016Muscle.safeDownCast(
-        model.getForceSet().get("muscle"))
+    msl = downcast_cls.safeDownCast(model.getForceSet().get("muscle"))
 
     times, positions, forces = [], [], []
     norm_fiber_lengths, active_forces, passive_forces = [], [], []
@@ -185,8 +201,8 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
         active_forces = [active_forces[i] for i in indices]
         passive_forces = [passive_forces[i] for i in indices]
 
-    print(f"Forward sim done: {len(times)} time points, "
-          f"final y={positions[-1]:.4f}, nfl={norm_fiber_lengths[-1]:.4f}")
+    print(f"[{label}] Done: {len(times)} points, final y={positions[-1]:.4f}, "
+          f"nfl={norm_fiber_lengths[-1]:.4f}")
 
     result = {
         'times': np.array(times),
@@ -198,14 +214,16 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
         'max_iso_force': max_isometric_force,
     }
 
-    # Save states .sto — column names match model state paths so OpenSim GUI
-    # can associate ("match") the file with the .osim model automatically.
-    sto_path = "output/opensim_sliding_ball.sto"
+    # Save states .sto
+    sto_path = f"output/opensim_sliding_ball_{muscle_type}.sto"
     osim.STOFileAdapter.write(states_table, sto_path)
-    print(f"Wrote {sto_path} ({states_table.getNumRows()} rows, "
-          f"cols: {list(states_table.getColumnLabels())})")
-
+    print(f"Wrote {sto_path} ({states_table.getNumRows()} rows)")
 
     return result
 
 
+# Backward-compatible wrapper
+def osim_sliding_ball_millard(muscle_length, ball_mass, sigma0, muscle_radius,
+                               excitation_func, t_end, dt=0.001):
+    return osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
+                             excitation_func, t_end, dt, muscle_type="millard")
