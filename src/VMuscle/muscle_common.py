@@ -22,7 +22,7 @@ def get_bbox(pos):
 
 
 def compute_fiber_stretches(pos, tet_indices, rest_matrices, fiber_dirs):
-    """Compute per-tet fiber stretch from deformed positions.
+    """Compute per-tet fiber stretch from deformed positions (vectorized).
 
     Args:
         pos: Current vertex positions (N, 3).
@@ -33,16 +33,13 @@ def compute_fiber_stretches(pos, tet_indices, rest_matrices, fiber_dirs):
     Returns:
         Per-tet fiber stretch values (M,).
     """
-    n = len(tet_indices)
-    out = np.empty(n)
-    for e in range(n):
-        i0, i1, i2, i3 = tet_indices[e]
-        Ds = np.column_stack([pos[i0] - pos[i3],
-                              pos[i1] - pos[i3],
-                              pos[i2] - pos[i3]])
-        Fd = (Ds @ rest_matrices[e]) @ fiber_dirs[e]
-        out[e] = max(np.linalg.norm(Fd), 1e-8)
-    return out
+    i0, i1, i2, i3 = (tet_indices[:, k] for k in range(4))
+    # Edge vectors: (M, 3, 3) — columns are [p0-p3, p1-p3, p2-p3]
+    Ds = np.stack([pos[i0] - pos[i3], pos[i1] - pos[i3], pos[i2] - pos[i3]], axis=-1)
+    # Deformation gradient projected onto fiber: F @ fiber_dir
+    F = np.einsum('mij,mjk->mik', Ds, rest_matrices)
+    Fd = np.einsum('mij,mj->mi', F, fiber_dirs)
+    return np.maximum(np.linalg.norm(Fd, axis=1), 1e-8)
 
 
 def activation_ramp(t: float) -> float:
@@ -95,10 +92,10 @@ class MuscleSimBase(ConstraintBuilderMixin):
         self._init_fields()
         self._precompute_rest()
         self._build_surface_tris()
-        self.use_jacobi = False
-        # Auto-enable colored GS on GPU (prevents write conflicts in parallel GS)
-        arch = getattr(self.cfg, 'arch', 'cpu').lower()
-        self.use_colored_gs = arch != 'cpu'
+        # GPU parallelism: auto-enable Jacobi to avoid race conditions on CUDA
+        is_gpu = self.pos.device.is_cuda
+        self.use_jacobi = getattr(self.cfg, 'use_jacobi', is_gpu)
+        self.use_colored_gs = getattr(self.cfg, 'use_colored_gs', False)
         self.build_constraints()
         self.contraction_ratio = getattr(self.cfg, 'contraction_ratio', 0.4)
         self.fiber_stiffness_scale = getattr(self.cfg, 'fiber_stiffness_scale', 10000.0)

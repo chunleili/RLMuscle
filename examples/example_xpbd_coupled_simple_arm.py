@@ -18,8 +18,12 @@ import mujoco
 import numpy as np
 import warp as wp
 
-from VMuscle.activation import activation_dynamics_step_np
-from VMuscle.dgf_curves import active_force_length, force_velocity, passive_force_length
+from VMuscle.activation import activation_dynamics_step_scalar
+from VMuscle.dgf_curves import (
+    active_force_length_scalar,
+    force_velocity_scalar,
+    passive_force_length_scalar,
+)
 from VMuscle.mesh_io import MeshExporter
 from VMuscle.mesh_utils import (
     create_capsule_mesh,
@@ -282,11 +286,10 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
             for _ in range(mj_per_xpbd):
                 exc = compute_excitation(t_now, act_cfg)
 
-                activation = float(activation_dynamics_step_np(
-                    np.array([exc], dtype=np.float32),
-                    np.array([activation], dtype=np.float32),
-                    dtmj, tau_act=act_cfg["tau_act"],
-                    tau_deact=act_cfg["tau_deact"])[0])
+                activation = activation_dynamics_step_scalar(
+                    exc, activation, dtmj,
+                    tau_act=act_cfg["tau_act"],
+                    tau_deact=act_cfg["tau_deact"])
 
                 fib_len = float(mj_data.ten_length[0]) - L_slack
                 fib_vel = (fib_len - prev_fiber_length) / dtmj
@@ -294,14 +297,14 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
                 v_norm = fib_vel / (V_max * L_opt)
 
                 if hill_model_type == "millard":
-                    fl = float(mc.fl.eval(fib_len / L_opt))
-                    fpe = float(mc.fpe.eval(fib_len / L_opt))
+                    fl = mc.fl.eval_scalar(fib_len / L_opt)
+                    fpe = mc.fpe.eval_scalar(fib_len / L_opt)
                 else:
-                    fl = float(active_force_length(fib_len / L_opt))
-                    fpe = float(passive_force_length(fib_len / L_opt))
-                fv = float(force_velocity(np.clip(v_norm, -1.0, 1.0)))
+                    fl = active_force_length_scalar(fib_len / L_opt)
+                    fpe = passive_force_length_scalar(fib_len / L_opt)
+                fv = force_velocity_scalar(max(-1.0, min(1.0, v_norm)))
                 muscle_force = (activation * fl * fv + fpe + d_damp * v_norm) * F_max
-                muscle_force = float(np.clip(muscle_force, 0.0, F_max * 2.0))
+                muscle_force = max(0.0, min(muscle_force, F_max * 2.0))
 
                 mj_data.ctrl[0] = muscle_force
                 mujoco.mj_step(mj_model, mj_data)

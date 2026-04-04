@@ -2066,7 +2066,8 @@ class MuscleSim(MuscleSimBase):
         sim._build_surface_tris()
         sim._create_bone_fields()
 
-        sim.use_jacobi = False
+        is_gpu = not device.startswith("cpu")
+        sim.use_jacobi = is_gpu
         sim.use_colored_gs = False
         sim.contraction_ratio = contraction_ratio
         sim.fiber_stiffness_scale = fiber_stiffness_scale
@@ -2658,7 +2659,11 @@ class MuscleSim(MuscleSimBase):
     def post_smooth(self):
         """Jacobi post-smoothing pass: solve only non-fiber constraints
         (volume, ARAP, attach) to recover mesh quality after fiber contraction.
-        Runs post_smooth_iters iterations, each doing clear→solve→apply."""
+        Runs post_smooth_iters iterations, each doing clear→solve→apply.
+
+        On GPU, forces Jacobi mode to avoid race conditions (post_smooth does
+        NOT use colored GS).  On CPU, respects the global use_jacobi setting.
+        """
         n_iters = int(getattr(self.cfg, 'post_smooth_iters', 0))
         if n_iters <= 0 or self.n_cons == 0:
             return
@@ -2668,23 +2673,62 @@ class MuscleSim(MuscleSimBase):
                 k: v for k, v in self.cons_ranges.items()
                 if k not in self._FIBER_TYPES
             }
+        # Force Jacobi on GPU to prevent race conditions
+        need_jacobi = self.use_jacobi or self.pos.device.is_cuda
+        saved_jacobi = self.use_jacobi
+        if need_jacobi:
+            self.use_jacobi = True
         for _ in range(n_iters):
             self.clear()
             self._dispatch_constraints(self._smooth_ranges)
             if self.use_jacobi:
                 self.apply_dP()
+        self.use_jacobi = saved_jacobi
 
     def freeze_near_inverted(self):
         """Revert vertices of near-inverted tets to their pre-substep positions.
-        Controlled by cfg.freeze_detF_threshold (default 0 = disabled)."""
+        Controlled by cfg.freeze_detF_threshold (default 0 = disabled).
+
+        WARNING: Not GPU-safe (race condition on shared vertices). Skipped on
+        CUDA devices with a one-time warning.
+        """
         threshold = getattr(self.cfg, 'freeze_detF_threshold', 0.0)
         if threshold <= 0.0:
+            return
+        device = self.pos.device
+        if device.is_cuda:
+            if not getattr(self, '_freeze_gpu_warned', False):
+                import logging
+                logging.getLogger(__name__).warning(
+                    "freeze_near_inverted skipped on GPU (race condition on shared vertices)")
+                self._freeze_gpu_warned = True
             return
         n_tet = self.tet_np.shape[0]
         wp.launch(_freeze_near_inverted_kernel, dim=n_tet,
                   inputs=[self.tet_indices, self.pos, self.pprev,
                           self.rest_matrix, self.stopped,
                           wp.float32(threshold)])
+
+    def _capturable_substep(self):
+        """One muscle PBD substep — all Warp kernels, no CPU sync.
+
+        Safe for CUDA graph capture: no .numpy(), no wp.from_numpy(), no
+        wp.array() allocations. All conditionals (use_jacobi, use_colored_gs,
+        post_smooth_iters, etc.) are resolved at capture time.
+        """
+        self.clear_forces()
+        self.accumulate_active_fiber_force()
+        self.integrate()
+        self.clear()
+        self.update_attach_targets()
+        self.clear_reaction()
+        self.solve_constraints()
+        if self.use_jacobi:
+            self.apply_dP()
+        self.post_smooth()
+        self.freeze_near_inverted()
+        self.repair_inverted_tets()
+        self.update_velocities()
 
     def render(self):
         if self.renderer is None:

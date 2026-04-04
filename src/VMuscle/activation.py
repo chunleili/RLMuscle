@@ -4,6 +4,8 @@ Provides both Warp kernel and NumPy implementations of the first-order
 activation dynamics ODE from DeGroote-Fregly 2016.
 """
 
+import math
+
 import numpy as np
 import warp as wp
 
@@ -32,6 +34,24 @@ def dgf_activation_dynamics(
     a_new = activation + dt * da_dt
     return wp.clamp(a_new, min_activation, 1.0)
 
+
+
+def activation_dynamics_step_scalar(
+    excitation: float,
+    activation: float,
+    dt: float,
+    tau_act: float = 0.015,
+    tau_deact: float = 0.060,
+    b: float = 10.0,
+    min_activation: float = 0.0,
+) -> float:
+    """Scalar version of first-order activation dynamics (no numpy overhead)."""
+    t = math.tanh(b * (excitation - activation))
+    f_act = (0.5 + 0.5 * t) / (tau_act * (0.5 + 1.5 * activation))
+    f_deact = (0.5 - 0.5 * t) * (0.5 + 1.5 * activation) / tau_deact
+    da_dt = (f_act + f_deact) * (excitation - activation)
+    a_new = activation + dt * da_dt
+    return max(min_activation, min(1.0, a_new))
 
 
 def activation_dynamics_step_np(

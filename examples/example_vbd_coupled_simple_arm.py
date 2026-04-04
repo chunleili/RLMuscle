@@ -36,7 +36,7 @@ setup_logging()
 
 import newton
 from newton.solvers import SolverVBD
-from VMuscle.activation import activation_dynamics_step_np
+from VMuscle.activation import activation_dynamics_step_scalar
 from VMuscle.dgf_curves import active_force_length, force_velocity, passive_force_length
 from VMuscle.mesh_io import MeshExporter
 from VMuscle.mesh_utils import (
@@ -388,13 +388,11 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
             excitation = compute_excitation(t_sub, act_cfg)
 
             # Activation dynamics at substep rate
-            activation = float(activation_dynamics_step_np(
-                np.array([excitation], dtype=np.float32),
-                np.array([activation], dtype=np.float32),
-                mj_dt,
+            activation = activation_dynamics_step_scalar(
+                excitation, activation, mj_dt,
                 tau_act=act_cfg["tau_act"],
                 tau_deact=act_cfg["tau_deact"],
-            )[0])
+            )
 
             # Real-time fiber length and velocity from MuJoCo
             ten_len = float(mj_data.ten_length[0])

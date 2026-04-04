@@ -274,6 +274,10 @@ class MillardCurve:
             y[i] = self._eval_scalar(xi)
         return float(y[0]) if scalar else y
 
+    def eval_scalar(self, x: float) -> float:
+        """Evaluate y(x) for a single scalar (no numpy overhead)."""
+        return self._eval_scalar(float(x))
+
     def eval_integral(self, x: float | np.ndarray) -> float | np.ndarray:
         """Evaluate ∫_{x_lo}^{x} y(s) ds on CPU."""
         x = np.asarray(x, dtype=np.float64)

@@ -8,6 +8,8 @@ References:
     Problem Formulations for Solving the Muscle Redundancy Problem"
 """
 
+import math
+
 import numpy as np
 
 # Active force-length: 3 Gaussian-like terms
@@ -53,6 +55,31 @@ def force_velocity(v_norm):
     v = np.asarray(v_norm, dtype=float)
     x = _D2 * v + _D3
     return _D1 * np.log(x + np.sqrt(x ** 2 + 1.0)) + _D4
+
+
+def active_force_length_scalar(lm_tilde: float) -> float:
+    """DGF 2016 active force-length curve (scalar, no numpy overhead)."""
+    EPS = 1e-6
+    d1 = max(abs(_b31 + _b41 * lm_tilde), EPS)
+    g1 = _b11 * math.exp(-0.5 * ((lm_tilde - _b21) / d1) ** 2)
+    d2 = max(abs(_b32 + _b42 * lm_tilde), EPS)
+    g2 = _b12 * math.exp(-0.5 * ((lm_tilde - _b22) / d2) ** 2)
+    g3 = _b13 * math.exp(-0.5 * ((lm_tilde - _b23) / _b33) ** 2)
+    return g1 + g2 + g3
+
+
+def passive_force_length_scalar(lm_tilde: float) -> float:
+    """DGF 2016 passive force-length curve (scalar, no numpy overhead)."""
+    offset = math.exp(_KPE * (_LM_MIN - 1.0) / _E0)
+    denom = math.exp(_KPE) - offset
+    arg = max(-50.0, min(50.0, _KPE * (lm_tilde - 1.0) / _E0))
+    return max((math.exp(arg) - offset) / denom, 0.0)
+
+
+def force_velocity_scalar(v_norm: float) -> float:
+    """DGF 2016 force-velocity curve (scalar, no numpy overhead)."""
+    x = _D2 * v_norm + _D3
+    return _D1 * math.log(x + math.sqrt(x * x + 1.0)) + _D4
 
 
 def compute_fiber_forces(stretches, activation, v_norm=0.0, include_passive=True):

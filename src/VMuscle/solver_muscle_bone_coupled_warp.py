@@ -60,6 +60,27 @@ class SolverMuscleBoneCoupled:
         self._step_count = 0
         self._effective_activation = float(max(getattr(self.core.cfg, "activation", 0.0), 0.0))
         self._activation_controller = ActivationController(self.control_config, self._effective_activation)
+        self._muscle_graph = None  # CUDA graph for muscle substep
+
+    # -- CUDA Graph Capture -------------------------------------------------
+
+    def capture_muscle_graph(self):
+        """Capture the muscle PBD substep as a CUDA graph for replay.
+
+        Must be called AFTER at least one normal step (to JIT-compile all
+        kernels and populate arrays). Only works on CUDA with mempool enabled.
+        """
+        device = self.core.pos.device
+        if not device.is_cuda or not wp.is_mempool_enabled(device):
+            log.warning("CUDA graph capture unavailable (device=%s, mempool=%s)",
+                        device, wp.is_mempool_enabled(device) if device.is_cuda else "N/A")
+            self._muscle_graph = None
+            return
+        log.info("Capturing CUDA graph for muscle substep on %s ...", device)
+        with wp.ScopedCapture(device) as capture:
+            self.core._capturable_substep()
+        self._muscle_graph = capture.graph
+        log.info("CUDA graph captured successfully")
 
     # -- Configuration ------------------------------------------------------
 
@@ -131,10 +152,12 @@ class SolverMuscleBoneCoupled:
         t = 2.0 * np.cross(q_xyz, v)       # (N, 3)
         rotated = v + qw * t + np.cross(q_xyz, t) + pos  # (N, 3)
 
-        # Write back to warp bone_pos_field through numpy
+        # Write back to warp bone_pos_field in-place (preserves array pointer
+        # for CUDA graph capture compatibility)
         bone_np = self.core.bone_pos_field.numpy()
         bone_np[self._bone_idx] = rotated
-        self.core.bone_pos_field = wp.from_numpy(bone_np, dtype=wp.vec3)
+        wp.copy(self.core.bone_pos_field,
+                wp.from_numpy(bone_np, dtype=wp.vec3, device=self.core.bone_pos_field.device))
 
     # -- Torque extraction --------------------------------------------------
 
@@ -188,24 +211,11 @@ class SolverMuscleBoneCoupled:
             self._effective_activation = self._activation_controller.step(excitation, dt_sub)
             self.core.activation.fill_(self._effective_activation)
 
-            # 1. Muscle: explicit active fiber force + predict positions
-            self.core.clear_forces()
-            self.core.accumulate_active_fiber_force()
-            self.core.integrate()
-            self.core.clear()
-
-            # 2. Update attach targets from current bone position, then solve constraints
-            if self._coupling_configured:
-                self.core.update_attach_targets()
-                self.core.clear_reaction()
-
-            self.core.solve_constraints()
-            if self.core.use_jacobi:
-                self.core.apply_dP()
-            self.core.post_smooth()
-            self.core.freeze_near_inverted()
-            self.core.repair_inverted_tets()
-            self.core.update_velocities()
+            # Muscle PBD substep: graph replay or full dispatch
+            if self._muscle_graph is not None:
+                wp.capture_launch(self._muscle_graph)
+            else:
+                self.core._capturable_substep()
 
             # 3. Apply torque to bone
             if self._coupling_configured:
@@ -235,7 +245,8 @@ class SolverMuscleBoneCoupled:
                     m = min(n_dofs, 3)
                     joint_f_np[dof:dof + m] = torque[:m]
                     self._axis_torque = float(joint_f_np[dof]) if n_dofs > 0 else 0.0
-                control.joint_f = wp.array(joint_f_np, dtype=wp.float32, device=joint_f_device)
+                control.joint_f.assign(
+                    wp.from_numpy(joint_f_np, dtype=wp.float32, device=joint_f_device))
 
             # 4. Bone substep
             self.bone_solver.step(state_in, state_out, control, None, dt_sub)

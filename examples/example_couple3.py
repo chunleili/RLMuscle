@@ -189,12 +189,16 @@ def _create_muscle_surface_mesh(usd: UsdIO, sim: MuscleSim) -> str | None:
 def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
              usd: UsdIO | None = None, bone_prim_map: dict | None = None,
              sim: MuscleSim | None = None,
-             muscle_surface_path: str | None = None):
+             muscle_surface_path: str | None = None,
+             use_cuda_graph: bool = False):
     """Run loop with optional rendering, scheduled activation and USD export."""
     tet_idx = sim.tet_np[:, [3, 0, 1, 2]] if sim else None
     tet_poses = sim.rest_matrix.numpy() if sim else None
 
     for step in range(1, n_steps + 1):
+        # Capture CUDA graph after first step (JIT warmup complete)
+        if use_cuda_graph and step == 2:
+            solver.capture_muscle_graph()
         if sim and sim.renderer and not sim.renderer.is_running():
             break
         if auto:
@@ -266,6 +270,8 @@ def _create_parser() -> argparse.ArgumentParser:
                         help="Steps after returning activation to zero")
     parser.add_argument("--eval-warmup-steps", type=int, default=20,
                         help="Zero-activation warmup before each sweep episode")
+    parser.add_argument("--use-cuda-graph", action="store_true",
+                        help="Capture CUDA graph after first step for faster kernel dispatch")
     return parser
 
 
@@ -310,7 +316,8 @@ def main():
     try:
         run_loop(solver, state, cfg, dt=dt, n_steps=int(max(1, args.steps)),
                  auto=bool(args.auto), usd=usd, bone_prim_map=bone_prim_map,
-                 sim=sim, muscle_surface_path=muscle_surface_path)
+                 sim=sim, muscle_surface_path=muscle_surface_path,
+                 use_cuda_graph=bool(args.use_cuda_graph))
     finally:
         if usd is not None:
             usd.close()

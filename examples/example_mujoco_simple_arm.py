@@ -23,8 +23,12 @@ import os
 import mujoco
 import numpy as np
 
-from VMuscle.activation import activation_dynamics_step_np
-from VMuscle.dgf_curves import active_force_length, force_velocity, passive_force_length
+from VMuscle.activation import activation_dynamics_step_scalar
+from VMuscle.dgf_curves import (
+    active_force_length_scalar,
+    force_velocity_scalar,
+    passive_force_length_scalar,
+)
 from VMuscle.simple_arm_helpers import build_mjcf, compute_excitation, write_sto
 
 
@@ -114,13 +118,11 @@ def mujoco_simple_arm(cfg, verbose=True):
         excitation = compute_excitation(t, act_cfg)
 
         # 2. Activation dynamics
-        activation = float(activation_dynamics_step_np(
-            np.array([excitation], dtype=np.float32),
-            np.array([activation], dtype=np.float32),
-            inner_dt,
+        activation = activation_dynamics_step_scalar(
+            excitation, activation, inner_dt,
             tau_act=act_cfg["tau_act"],
             tau_deact=act_cfg["tau_deact"],
-        )[0])
+        )
 
         # 3. Read tendon length from MuJoCo
         ten_length = float(mj_data.ten_length[0])
@@ -135,9 +137,9 @@ def mujoco_simple_arm(cfg, verbose=True):
         v_norm = fiber_velocity / (V_max * L_opt)
 
         # 5. DGF force: F = [a * f_L * f_V + f_PE + d * v_norm] * F_max
-        fl = float(active_force_length(lm_tilde))
-        fpe = float(passive_force_length(lm_tilde))
-        fv = float(force_velocity(np.clip(v_norm, -1.0, 1.0)))
+        fl = active_force_length_scalar(lm_tilde)
+        fpe = passive_force_length_scalar(lm_tilde)
+        fv = force_velocity_scalar(max(-1.0, min(1.0, v_norm)))
         f_damp = d_damp * v_norm
 
         muscle_force = (activation * fl * fv + fpe + f_damp) * F_max
