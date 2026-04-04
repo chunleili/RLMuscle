@@ -4,8 +4,8 @@ Config-driven simulation: rigid tendon, activation dynamics.
 Returns dict for comparison with MuJoCo and XPBD.
 
 Usage:
-    uv run python scripts/osim_simple_arm.py --muscle-type dgf
-    uv run python scripts/osim_simple_arm.py --muscle-type millard
+    uv run python scripts/osim_simple_arm.py --hill-model-type dgf
+    uv run python scripts/osim_simple_arm.py --hill-model-type millard
 """
 
 import json
@@ -41,12 +41,12 @@ def _import_opensim():
     return osim
 
 
-def osim_simple_arm(cfg, muscle_type="dgf"):
-    """Build and run OpenSim SimpleArm with the specified muscle type.
+def osim_simple_arm(cfg, hill_model_type="millard"):
+    """Build and run OpenSim SimpleArm with the specified Hill model.
 
     Args:
         cfg: dict with keys geometry, muscle, activation, solver, initial_conditions.
-        muscle_type: "dgf" or "millard".
+        hill_model_type: "dgf" or "millard".
 
     Returns:
         dict with times, elbow_angles, forces, norm_fiber_lengths, activations,
@@ -56,7 +56,7 @@ def osim_simple_arm(cfg, muscle_type="dgf"):
     if osim is None:
         return None
 
-    label = muscle_type.upper()
+    label = hill_model_type.upper()
     geo = cfg["geometry"]
     mus = cfg["muscle"]
     act_cfg = cfg["activation"]
@@ -91,7 +91,7 @@ def osim_simple_arm(cfg, muscle_type="dgf"):
     elbow_coord.set_clamped(True)
 
     # Create muscle based on type
-    if muscle_type == "dgf":
+    if hill_model_type == "dgf":
         biceps = osim.DeGrooteFregly2016Muscle()
         biceps.setName("biceps")
         biceps.set_max_isometric_force(mus["max_isometric_force"])
@@ -222,11 +222,11 @@ def osim_simple_arm(cfg, muscle_type="dgf"):
 
 # Backward-compatible wrappers for comparison scripts
 def osim_simple_arm_dgf(cfg):
-    return osim_simple_arm(cfg, muscle_type="dgf")
+    return osim_simple_arm(cfg, hill_model_type="dgf")
 
 
 def osim_simple_arm_millard(cfg):
-    return osim_simple_arm(cfg, muscle_type="millard")
+    return osim_simple_arm(cfg, hill_model_type="millard")
 
 
 def load_config(path="data/simpleArm/config.json"):
@@ -238,10 +238,10 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="data/simpleArm/config.json")
-    parser.add_argument("--muscle-type", choices=["dgf", "millard"], default="dgf")
+    parser.add_argument("--hill-model-type", choices=["dgf", "millard"], default="millard")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
-    result = osim_simple_arm(cfg, muscle_type=args.muscle_type)
+    result = osim_simple_arm(cfg, hill_model_type=args.hill_model_type)
     if result:
         print(f"Final elbow angle: {np.degrees(result['elbow_angles'][-1]):.2f}°")

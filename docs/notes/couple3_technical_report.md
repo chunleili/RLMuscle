@@ -190,10 +190,10 @@ uv run python examples/example_couple3.py --auto --steps 300
 uv run python examples/example_couple3.py --auto --steps 300 --no-usd
 
 # 绘制曲线图
-uv run python scripts/plot_couple3_curves.py
+uv run python scripts/run_couple3_curves.py
 
 # SVD 参数扫描
-uv run python scripts/sweep_post_smooth.py
+uv run python scripts/experiments/sweep_post_smooth.py
 
 # SimpleArm Millard 对比 (验证 Millard 曲线精度)
 uv run python scripts/run_simple_arm_comparison.py --mode xpbd-millard
@@ -218,5 +218,5 @@ uv run python scripts/run_simple_arm_comparison.py --mode xpbd-millard
 | `src/VMuscle/controllability.py` | activation dynamics, torque shaping, presets |
 | `src/VMuscle/millard_curves.py` | Millard 2012 f_L/f_PE quintic Bezier 实现 |
 | `examples/example_couple3.py` | example 入口 |
-| `scripts/plot_couple3_curves.py` | 曲线绘图 |
-| `scripts/sweep_post_smooth.py` | 参数扫描 |
+| `scripts/run_couple3_curves.py` | 曲线绘图 |
+| `scripts/experiments/sweep_post_smooth.py` | 参数扫描 |

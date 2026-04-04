@@ -3,7 +3,7 @@
 Builds a MuscleSim programmatically from a cylinder mesh with
 TETVOLUME + TETARAP + ATTACH constraints, coupled to MuJoCo rigid-body sim.
 
-Supports DGF or Millard muscle curves via config `xpbd.curve_type`.
+Supports DGF or Millard muscle curves via config `xpbd.hill_model_type`.
 
 Usage:
     RUN=example_xpbd_coupled_simple_arm uv run main.py
@@ -59,7 +59,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
     ic = cfg["initial_conditions"]
     geo = cfg["geometry"]
     xpbd_cfg = cfg.get("xpbd", {})
-    curve_type = xpbd_cfg.get("curve_type", "dgf")
+    hill_model_type = xpbd_cfg.get("hill_model_type", "millard")
 
     F_max = mus["max_isometric_force"]
     L_opt = mus["optimal_fiber_length"]
@@ -88,7 +88,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
 
     # Millard curves (lazy init)
     mc = None
-    if curve_type == "millard":
+    if hill_model_type == "millard":
         from VMuscle.millard_curves import MillardCurves
         mc = MillardCurves()
 
@@ -97,7 +97,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
     dtmj = dts / mj_per_xpbd
 
     if verbose:
-        print(f"[XPBD-{curve_type.upper()}] dt={dt} dts={dts:.6f} dtmj={dtmj:.8f} "
+        print(f"[XPBD-{hill_model_type.upper()}] dt={dt} dts={dts:.6f} dtmj={dtmj:.8f} "
               f"substeps={num_substeps} mj_per_xpbd={mj_per_xpbd}")
 
     # --- MuJoCo ---
@@ -155,7 +155,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
     # --- Build XPBD sim ---
     # Millard mode: derive sigma0 and lambda_opt for explicit active fiber force
     sim_kwargs = {}
-    if curve_type == "millard":
+    if hill_model_type == "millard":
         A_cross = np.pi * r ** 2
         sigma0 = F_max / A_cross
         lambda_opt = L_opt / mesh_length
@@ -267,7 +267,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
             sim.bone_pos_field = wp.from_numpy(bone_arr, dtype=wp.vec3)
 
             # b) One XPBD step
-            if curve_type == "millard":
+            if hill_model_type == "millard":
                 wp.launch(fill_float_kernel, dim=n_tets,
                           inputs=[sim.activation, wp.float32(activation)])
                 sim.update_attach_targets()
@@ -293,7 +293,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
                 prev_fiber_length = fib_len
                 v_norm = fib_vel / (V_max * L_opt)
 
-                if curve_type == "millard":
+                if hill_model_type == "millard":
                     fl = float(mc.fl.eval(fib_len / L_opt))
                     fpe = float(mc.fpe.eval(fib_len / L_opt))
                 else:
@@ -364,7 +364,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
     exporter.finalize()
 
     # Save .sto
-    label = "Millard" if curve_type == "millard" else "DGF"
+    label = "Millard" if hill_model_type == "millard" else "DGF"
     sto_path = f"output/SimpleArm_XPBD_{label}_Coupled_states.sto"
     cols = ["/jointset/elbow/elbow_coord_0/value",
             "/forceset/biceps/activation",

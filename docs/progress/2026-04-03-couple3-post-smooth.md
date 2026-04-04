@@ -118,6 +118,6 @@ uv run python examples/example_couple3.py --auto --steps 300 --no-usd
 | `src/VMuscle/muscle_common.py` | substep 循环中调用 `post_smooth()`, `freeze_near_inverted()` |
 | `src/VMuscle/solver_muscle_bone_coupled_warp.py` | coupled substep 循环中调用 `post_smooth()`, `freeze_near_inverted()` |
 | `src/VMuscle/millard_curves.py` | bug fix: `_eval_integral_scalar` → `z_eval_integral_scalar` |
-| `scripts/sweep_post_smooth.py` | 参数扫描脚本 |
-| `scripts/plot_couple3_curves.py` | 曲线绘图脚本 |
+| `scripts/experiments/sweep_post_smooth.py` | 参数扫描脚本 |
+| `scripts/run_couple3_curves.py` | 曲线绘图脚本 |
 | `docs/experiments/2026-04-04-svd-repair-sweep.md` | SVD 参数扫描实验记录 |

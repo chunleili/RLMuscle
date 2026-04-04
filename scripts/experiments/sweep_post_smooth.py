@@ -1,7 +1,7 @@
 """Sweep post_smooth_iters and SVD repair params to find optimal mesh quality.
 
 Usage:
-    uv run python scripts/sweep_post_smooth.py
+    uv run python scripts/experiments/sweep_post_smooth.py
 """
 import os
 import sys
@@ -9,7 +9,7 @@ import time as _time
 
 import numpy as np
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "src"))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "examples"))
 os.environ.setdefault("WARP_CACHE_PATH", os.path.join(PROJECT_ROOT, ".cache", "warp"))

@@ -42,7 +42,7 @@ def _import_opensim():
 
 
 def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
-                      excitation_func, t_end, dt=0.001, muscle_type="dgf"):
+                      excitation_func, t_end, dt=0.001, hill_model_type="millard"):
     """Build OpenSim 1-DOF model and run forward dynamics.
 
     Args:
@@ -53,7 +53,7 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
         excitation_func: callable(t) -> excitation [0,1].
         t_end: Simulation end time [s].
         dt: Report interval [s] (integrator uses adaptive stepping).
-        muscle_type: "dgf" or "millard".
+        hill_model_type: "dgf" or "millard".
 
     Returns:
         dict with 'times', 'positions', 'forces', 'norm_fiber_lengths',
@@ -64,13 +64,13 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
     if osim is None:
         return None
 
-    label = muscle_type.upper()
+    label = hill_model_type.upper()
     pcsa = np.pi * muscle_radius ** 2
     max_isometric_force = sigma0 * pcsa
 
     # --- Build model ---
     model = osim.Model()
-    model.setName(f"sliding_ball_{muscle_type}")
+    model.setName(f"sliding_ball_{hill_model_type}")
     model.set_gravity(osim.Vec3(0, -9.81, 0))
 
     body = osim.Body("ball", ball_mass, osim.Vec3(0), osim.Inertia(0.001))
@@ -89,7 +89,7 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
     model.addJoint(joint)
 
     # Create muscle based on type
-    if muscle_type == "dgf":
+    if hill_model_type == "dgf":
         muscle = osim.DeGrooteFregly2016Muscle()
         muscle.setName("muscle")
         muscle.set_max_isometric_force(max_isometric_force)
@@ -138,7 +138,7 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
 
     import os
     os.makedirs("output", exist_ok=True)
-    osim_path = f"output/sliding_ball_{muscle_type}.osim"
+    osim_path = f"output/sliding_ball_{hill_model_type}.osim"
     model.printToXML(osim_path)
     print(f"Wrote {osim_path}")
 
@@ -215,7 +215,7 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
     }
 
     # Save states .sto
-    sto_path = f"output/opensim_sliding_ball_{muscle_type}.sto"
+    sto_path = f"output/opensim_sliding_ball_{hill_model_type}.sto"
     osim.STOFileAdapter.write(states_table, sto_path)
     print(f"Wrote {sto_path} ({states_table.getNumRows()} rows)")
 
@@ -226,4 +226,4 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
 def osim_sliding_ball_millard(muscle_length, ball_mass, sigma0, muscle_radius,
                                excitation_func, t_end, dt=0.001):
     return osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
-                             excitation_func, t_end, dt, muscle_type="millard")
+                             excitation_func, t_end, dt, hill_model_type="millard")

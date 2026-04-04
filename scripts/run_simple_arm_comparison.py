@@ -57,13 +57,15 @@ def run_coupled(cfg):
 
 
 def run_xpbd(cfg):
+    cfg_copy = dict(cfg)
+    cfg_copy.setdefault("xpbd", {})["hill_model_type"] = "dgf"
     from examples.example_xpbd_coupled_simple_arm import xpbd_coupled_simple_arm
-    return xpbd_coupled_simple_arm(cfg)
+    return xpbd_coupled_simple_arm(cfg_copy)
 
 
 def run_xpbd_millard(cfg):
     cfg_copy = dict(cfg)
-    cfg_copy.setdefault("xpbd", {})["curve_type"] = "millard"
+    cfg_copy.setdefault("xpbd", {})["hill_model_type"] = "millard"
     from examples.example_xpbd_coupled_simple_arm import xpbd_coupled_simple_arm
     return xpbd_coupled_simple_arm(cfg_copy)
 

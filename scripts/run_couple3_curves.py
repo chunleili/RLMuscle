@@ -1,7 +1,7 @@
 """Plot couple3 joint angle / activation / torque / inverted tets vs time.
 
 Usage:
-    uv run python scripts/plot_couple3_curves.py
+    uv run python scripts/run_couple3_curves.py
 """
 
 import os

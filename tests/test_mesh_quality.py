@@ -4,7 +4,7 @@ Runs standalone MuscleSim (no coupling) with activation ramp,
 reports inverted tet count and det(F) statistics per frame.
 
 Usage:
-    uv run python scripts/test_mesh_quality.py --config <config.json> [--frames 50] [--label test]
+    uv run python tests/test_mesh_quality.py --config <config.json> [--frames 50] [--label test]
 """
 import argparse
 import json

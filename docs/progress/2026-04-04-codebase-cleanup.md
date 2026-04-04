@@ -25,9 +25,9 @@
 |------|------|
 | `examples/example_couple3.py` | 提取 `setup_couple3()` 工厂函数，返回 `(solver, sim, state, cfg, dt)`；移除 12 个模拟 CLI 参数（`--sigma0`, `--max-accel`, `--k-coupling`, `--max-torque`, `--preset` 等） |
 | `data/muscle/config/bicep_fibermillard_coupled.json` | 添加 `"coupling"` 段：`preset`, `k_coupling=100000`, `max_torque=20` |
-| `scripts/plot_couple3_curves.py` | 177->102 行，导入 `setup_couple3()` 替代重复 setup 代码 |
-| `scripts/sweep_post_smooth.py` | 197->132 行，导入 `setup_couple3()` 替代重复 setup 代码 |
-| `scripts/test_mesh_quality.py` | 移除硬编码路径覆盖 |
+| `scripts/run_couple3_curves.py` | 177->102 行，导入 `setup_couple3()` 替代重复 setup 代码 |
+| `scripts/experiments/sweep_post_smooth.py` | 197->132 行，导入 `setup_couple3()` 替代重复 setup 代码 |
+| `tests/test_mesh_quality.py` | 移除硬编码路径覆盖 |
 | `CLAUDE.md` | 添加 scripts-as-shells 和 no-CLI-params 规则 |
 
 **统计**: 6 文件，183 新增，305 删除，净减 122 行

@@ -22,7 +22,7 @@
 ### 复现命令
 
 ```bash
-uv run python scripts/sweep_post_smooth.py
+uv run python scripts/experiments/sweep_post_smooth.py
 ```
 
 ## 结果
@@ -109,7 +109,7 @@ alpha=0.2 修正力度过大，peak 反而升高。**a=0.1 σ=0.05 i=1 确认为
 ### 复现最终结果
 ```bash
 uv run python examples/example_couple3.py --auto --steps 300 --no-usd
-uv run python scripts/plot_couple3_curves.py
+uv run python scripts/run_couple3_curves.py
 ```
 
 ### 输出文件
@@ -119,8 +119,8 @@ uv run python scripts/plot_couple3_curves.py
 
 ## 涉及文件
 
-- 扫描脚本: `scripts/sweep_post_smooth.py`
-- 绘图脚本: `scripts/plot_couple3_curves.py`
+- 扫描脚本: `scripts/experiments/sweep_post_smooth.py`
+- 绘图脚本: `scripts/run_couple3_curves.py`
 - Config: `data/muscle/config/bicep_fibermillard_coupled.json`
 - Git tag: `couple3-bicep`
 - Commit: `00569ce`
