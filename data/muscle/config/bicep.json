@@ -1,4 +1,19 @@
 {
+  "metainfo": {
+    "description": "Default bicep muscle with generic fiber constraints (VBD solver)",
+    "used_by": [
+      "examples/example_muscle_warp.py",
+      "examples/example_couple.py",
+      "tests/test_muscle_warp_vs_taichi.py",
+      "tests/test_visual_comparison.py",
+      "tests/test_warp_cpu_vs_cuda.py",
+      "tests/test_warp_cuda_jacobi.py",
+      "tests/test_graph_color.py",
+      "tests/test_perf_couple.py",
+      "tests/test_solver_parameters.py"
+    ],
+    "created": "2026-02-10"
+  },
   "name": "bicep",
   "geo_path": "data/muscle/model/bicep.usd",
   "bone_geo_path": "data/muscle/model/bicep.usd",

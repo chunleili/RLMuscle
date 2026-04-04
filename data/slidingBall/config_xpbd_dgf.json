@@ -1,6 +1,13 @@
 {
+  "metainfo": {
+    "description": "1-DOF sliding ball with XPBD-DGF constitutive model",
+    "used_by": [
+      "examples/example_xpbd_dgf_sliding_ball.py",
+      "scripts/run_sliding_ball_comparison.py"
+    ],
+    "created": "2026-03-30"
+  },
   "name": "slidingBall_xpbd_dgf",
-  "description": "1-DOF sliding ball with XPBD-DGF constitutive model",
   "geometry": {
     "muscle_length": 0.1,
     "muscle_radius": 0.02,

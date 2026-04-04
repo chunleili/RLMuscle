@@ -1,6 +1,13 @@
 {
+  "metainfo": {
+    "description": "1-DOF sliding ball with DGF Hill-type muscle (VBD solver), for VBD vs OpenSim comparison",
+    "used_by": [
+      "examples/example_muscle_sliding_ball.py",
+      "scripts/run_sliding_ball_comparison.py"
+    ],
+    "created": "2026-03-24"
+  },
   "name": "slidingBall",
-  "description": "1-DOF sliding ball with DGF Hill-type muscle, for VBD vs OpenSim comparison",
 
   "geometry": {
     "muscle_length": 0.10,

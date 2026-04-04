@@ -1,4 +1,9 @@
 {
+  "metainfo": {
+    "description": "[ARCHIVED] Millard muscle model without coupling, superseded by bicep_fibermillard_coupled.json",
+    "used_by": [],
+    "created": "2026-02-10"
+  },
   "name": "bicep_fibermillard",
   "geo_path": "data/muscle/model/bicep.usd",
   "bone_geo_path": "data/muscle/model/bicep.usd",

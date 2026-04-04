@@ -1,4 +1,9 @@
 {
+  "metainfo": {
+    "description": "Full human skeleton/muscle import from USD, multi-muscle simulation",
+    "used_by": ["examples/example_human_import2.py"],
+    "created": "2026-02-10"
+  },
   "name": "human",
   "usd_path": "data/Human/Human.usd",
   "contraction_ratio": 0.4,

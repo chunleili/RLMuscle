@@ -1,4 +1,9 @@
 {
+  "metainfo": {
+    "description": "Millard 2012 energy constitutive model, muscle-bone coupled (couple3 pipeline)",
+    "used_by": ["examples/example_couple3.py"],
+    "created": "2026-02-10"
+  },
   "name": "bicep_fibermillard_coupled",
   "geo_path": "data/muscle/model/bicep.usd",
   "bone_geo_path": "data/muscle/model/bicep.usd",
