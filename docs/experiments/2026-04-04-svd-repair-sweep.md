@@ -96,8 +96,31 @@ alpha=0.2 修正力度过大，peak 反而升高。**a=0.1 σ=0.05 i=1 确认为
 | smooth=5 | 10 (0.25%) | -2.48 | 1 | +224% |
 | **smooth=5 + SVD最优** | **9 (0.23%)** | **-0.54** | **1** | **+224%** |
 
+## 最终默认配置
+
+已写入 `data/muscle/config/bicep_fibermillard_coupled.json`：
+```json
+"post_smooth_iters": 5,
+"repair_alpha": 0.1,
+"repair_iters": 1,
+"repair_sigma_min": 0.05
+```
+
+### 复现最终结果
+```bash
+uv run python examples/example_couple3.py --auto --steps 300 --no-usd
+uv run python scripts/plot_couple3_curves.py
+```
+
+### 输出文件
+- 曲线图: `output/couple3_curves.png`
+- 参数扫描图: `output/sweep_post_smooth.png`
+- USD 动画: `output/example_couple3.anim.usd`
+
 ## 涉及文件
 
 - 扫描脚本: `scripts/sweep_post_smooth.py`
-- 输出图片: `output/sweep_post_smooth.png`
+- 绘图脚本: `scripts/plot_couple3_curves.py`
 - Config: `data/muscle/config/bicep_fibermillard_coupled.json`
+- Git tag: `couple3-bicep`
+- Commit: `00569ce`
