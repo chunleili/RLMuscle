@@ -3,81 +3,33 @@
 Usage:
     uv run python scripts/sweep_post_smooth.py
 """
-import sys
 import os
-import json
-import copy
+import sys
+import time as _time
+
 import numpy as np
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "src"))
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "examples"))
 os.environ.setdefault("WARP_CACHE_PATH", os.path.join(PROJECT_ROOT, ".cache", "warp"))
 
-import warp as wp
-wp.init()
-wp.set_device("cpu")
+from example_couple3 import setup_couple3, _activation_schedule
 
-from VMuscle.config import load_config
-from VMuscle.controllability import build_coupling_config
-from VMuscle.muscle_warp import MuscleSim
-from VMuscle.solver_muscle_bone_coupled_warp import SolverMuscleBoneCoupled
-
-sys.path.insert(0, os.path.join(PROJECT_ROOT, "examples"))
-from example_couple3 import (
-    build_elbow_model, ELBOW_PIVOT, ELBOW_AXIS, _activation_schedule,
-)
-
-BASE_CONFIG = os.path.join(PROJECT_ROOT,
-                           "data/muscle/config/bicep_fibermillard_coupled.json")
 N_STEPS = 300
 DT = 1.0 / 60.0
-USD_SOURCE = "data/muscle/model/bicep.usd"
 
 
 def run_one(overrides: dict, label: str):
     """Run simulation with config overrides, return summary metrics."""
-    cfg = load_config(BASE_CONFIG)
-    for k, v in overrides.items():
-        setattr(cfg, k, v)
-    cfg.gui = False
-    cfg.render_mode = None
-    cfg.geo_path = USD_SOURCE
-    cfg.bone_geo_path = USD_SOURCE
-    cfg.muscle_prim_path = "/character/muscle/bicep"
-    cfg.bone_prim_paths = {
-        "L_scapula": "/character/bone/L_scapula/L_scapulaShape",
-        "L_radius": "/character/bone/L_radius/L_radiusShape",
-        "L_humerus": "/character/bone/L_humerus/L_humerusShape",
-    }
-    if cfg.constraints:
-        for c in cfg.constraints:
-            if "target_path" in c:
-                c["target_path"] = USD_SOURCE
-
-    sim = MuscleSim(cfg)
-    jf = float(getattr(cfg, "joint_friction", 0.05))
-    model, state, radius_link, joint, sel = build_elbow_model(sim, joint_friction=jf)
-    control_config = build_coupling_config("smooth_nonlinear")
-    solver = SolverMuscleBoneCoupled(model, sim, control_config=control_config)
-    if radius_link is not None and sel.size > 0:
-        solver.configure_coupling(
-            bone_body_id=radius_link,
-            bone_rest_verts=sim.bone_pos[sel].astype(np.float32),
-            bone_vertex_indices=sel,
-            joint_index=joint,
-            joint_pivot=ELBOW_PIVOT,
-            joint_axis=ELBOW_AXIS,
-        )
+    solver, sim, state, cfg, _ = setup_couple3(config_overrides=overrides)
 
     tet_idx = sim.tet_np[:, [3, 0, 1, 2]]
     tet_poses = sim.rest_matrix.numpy()
 
-    import time as _time
-
     peak_inv = 0
     worst_det = 999.0
     peak_torque = 0.0
-    inv_at_end = 0
     inv_history = []
 
     t0 = _time.perf_counter()
@@ -102,9 +54,6 @@ def run_one(overrides: dict, label: str):
             print(f"    [{label}] step {step}: inv={n_inv}  det={w_det:.3f}  tau={solver._axis_torque:.3f}")
 
     elapsed = _time.perf_counter() - t0
-    ms_per_step = elapsed / N_STEPS * 1000.0
-
-    # Recovery: average inverted in last 20 steps
     inv_at_end = int(np.mean(inv_history[-20:]))
 
     return {
@@ -115,16 +64,14 @@ def run_one(overrides: dict, label: str):
         "inv_at_end": inv_at_end,
         "inv_history": inv_history,
         "elapsed_s": elapsed,
-        "ms_per_step": ms_per_step,
+        "ms_per_step": elapsed / N_STEPS * 1000.0,
     }
 
 
 def main():
     experiments = [
-        # Reference (current best)
         ({"post_smooth_iters": 5, "repair_alpha": 0.1, "repair_iters": 1, "repair_sigma_min": 0.05},
          "a=0.1 σ=0.05 i=1 (ref)"),
-        # New tests
         ({"post_smooth_iters": 5, "repair_alpha": 0.2, "repair_iters": 1, "repair_sigma_min": 0.05},
          "a=0.2 σ=0.05 i=1"),
         ({"post_smooth_iters": 5, "repair_alpha": 0.2, "repair_iters": 1, "repair_sigma_min": 0.01},
@@ -140,8 +87,8 @@ def main():
         r = run_one(overrides, label)
         results.append(r)
 
-    # Summary table with timing
-    base_ms = results[0]["ms_per_step"]  # "no fix" as reference
+    # Summary table
+    base_ms = results[0]["ms_per_step"]
     hdr = f"{'Config':<25} {'Peak':>5} {'W.det':>7} {'τ':>5} {'End':>4} {'ms/st':>7} {'overhead':>8}"
     print(f"\n{'='*len(hdr)}")
     print(hdr)
@@ -168,15 +115,14 @@ def main():
     ax1.legend(fontsize=8, ncol=2)
     ax1.grid(True, alpha=0.3)
 
-    # Bar chart: peak_inv vs ms_per_step
     labels = [r["label"] for r in results]
     peaks = [r["peak_inv"] for r in results]
     times = [r["ms_per_step"] for r in results]
     x = np.arange(len(labels))
     w = 0.35
     ax2b = ax2.twinx()
-    bars1 = ax2.bar(x - w/2, peaks, w, label="Peak Inverted", color="tab:red", alpha=0.7)
-    bars2 = ax2b.bar(x + w/2, times, w, label="ms/step", color="tab:blue", alpha=0.7)
+    ax2.bar(x - w/2, peaks, w, label="Peak Inverted", color="tab:red", alpha=0.7)
+    ax2b.bar(x + w/2, times, w, label="ms/step", color="tab:blue", alpha=0.7)
     ax2.set_ylabel("Peak Inverted Tets", color="tab:red")
     ax2b.set_ylabel("ms / step", color="tab:blue")
     ax2.set_xticks(x)

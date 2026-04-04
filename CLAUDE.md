@@ -12,7 +12,8 @@
     - 符号使用遵循 `@docs/notes/symbols.md` 中的符号表。
 - Code Structure
     - 共享的基础设施放 `@src/`， `@examples/`放可独立运行的Simulation Example，脚本（如绘图或运行外部程序）放 `@scripts/`。
-    - 输入数据（包括json格式的config和输入文件）放 `@data/`。
+    - scripts应该是用于复现的、一键调用的，不需要任何cli参数（除了用于分隔不同case）。scripts只是调用examples的壳子。
+    - 输入数据（包括json格式的config和输入文件）放 `@data/`。除临时实验外，不采用cli来配置模拟参数和硬编码。
     - 总是把config和代码分离，防止参数硬编码，除非临时测试/临时脚本。
     - 输出放到output/下。临时输出的图片放到output/下。
 - Workflow

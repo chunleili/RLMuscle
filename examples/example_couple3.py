@@ -4,9 +4,9 @@ Uses TETFIBERMILLARD energy-based XPBD constraint with Millard 2012 curves
 for stable active fiber contraction on complex (bicep) geometry.
 
 Usage:
-    uv run python examples/example_couple3.py --auto --steps 300
-    uv run python examples/example_couple3.py --auto --render
-    uv run python examples/example_couple3.py --auto --k-coupling 100000 --max-torque 20
+    RUN=example_couple3 uv run main.py --auto --steps 300
+    RUN=example_couple3 uv run main.py --auto --render
+    RUN=example_couple3 uv run main.py --eval
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ from VMuscle.controllability import (
     DEFAULT_SWEEP_LEVELS,
     build_coupling_config,
     config_to_dict,
-    list_presets,
     run_activation_sweep,
     solver_sample,
     write_sweep_report,
@@ -43,6 +42,8 @@ from VMuscle.usd_io import UsdIO
 # Elbow joint parameters (Y-up space)
 ELBOW_PIVOT = np.array([0.328996, 1.16379, -0.0530352], dtype=np.float32)
 ELBOW_AXIS = np.array([-0.788895, -0.45947, -0.408086], dtype=np.float32)
+
+DEFAULT_CONFIG = "data/muscle/config/bicep_fibermillard_coupled.json"
 
 log = logging.getLogger("couple")
 
@@ -63,6 +64,82 @@ def setup_logging(to_file: bool = False):
     for handler in couple_log.handlers:
         handler.setFormatter(fmt)
 
+
+# ---------------------------------------------------------------------------
+# Reusable setup — scripts import this to avoid duplicating init logic
+# ---------------------------------------------------------------------------
+
+def setup_couple3(
+    config_path: str | None = None,
+    device: str = "cpu",
+    render: bool = False,
+    config_overrides: dict | None = None,
+):
+    """Initialize couple3 simulation components.
+
+    Args:
+        config_path: Path to muscle config JSON. Defaults to DEFAULT_CONFIG.
+        device: Warp device string (e.g. "cpu", "cuda:0").
+        render: Enable OpenGL interactive rendering.
+        config_overrides: Optional dict of cfg attribute overrides (for sweep scripts).
+
+    Returns:
+        (solver, sim, state, cfg, dt) tuple.
+    """
+    config_path = config_path or DEFAULT_CONFIG
+
+    wp.init()
+    wp.set_device(device)
+
+    cfg = load_config(config_path)
+    if config_overrides:
+        for k, v in config_overrides.items():
+            setattr(cfg, k, v)
+    cfg.gui = bool(render)
+    cfg.render_mode = "human" if render else None
+
+    sim = MuscleSim(cfg)
+
+    dt = 1.0 / 60.0
+    joint_friction = float(getattr(cfg, "joint_friction", 0.05))
+    model, state, radius_link, joint, selected_indices = build_elbow_model(
+        sim, joint_friction=joint_friction)
+
+    # Build coupling config from JSON "coupling" section or defaults
+    coupling = getattr(cfg, "coupling", None)
+    if coupling:
+        preset = getattr(coupling, "preset", "smooth_nonlinear")
+        overrides = {k: v for k, v in vars(coupling).items() if k != "preset"}
+        control_config = build_coupling_config(preset, **overrides)
+    else:
+        control_config = build_coupling_config("smooth_nonlinear")
+
+    solver = SolverMuscleBoneCoupled(model, sim, control_config=control_config)
+
+    if radius_link is not None and selected_indices.size > 0:
+        solver.configure_coupling(
+            bone_body_id=radius_link,
+            bone_rest_verts=sim.bone_pos[selected_indices].astype(np.float32),
+            bone_vertex_indices=selected_indices,
+            joint_index=joint,
+            joint_pivot=ELBOW_PIVOT,
+            joint_axis=ELBOW_AXIS,
+        )
+
+    log.info(
+        "dt=%.6f muscle_substeps=%d bone_substeps=%d control=%s",
+        dt,
+        int(cfg.num_substeps),
+        int(solver.bone_substeps),
+        config_to_dict(control_config),
+    )
+
+    return solver, sim, state, cfg, dt
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 def _extract_radius_mesh(sim: MuscleSim):
     """Extract radius-only triangle mesh from bone data if available."""
@@ -173,28 +250,24 @@ def _create_muscle_surface_mesh(usd: UsdIO, sim: MuscleSim) -> str | None:
         log.warning("TetMesh prim not found: %s", tet_prim_path)
         return None
 
-    # Read surface triangle indices from the TetMesh
     sfvi_attr = tet_prim.GetAttribute("surfaceFaceVertexIndices")
     sfvi = sfvi_attr.Get() if sfvi_attr else None
     if sfvi is None or len(sfvi) == 0:
         log.warning("No surfaceFaceVertexIndices on %s", tet_prim_path)
         return None
 
-    tri_indices = np.array(sfvi, dtype=np.int32).reshape(-1)  # flatten Vec3i -> flat ints
+    tri_indices = np.array(sfvi, dtype=np.int32).reshape(-1)
     n_tris = len(sfvi)
 
-    # Create Mesh prim as sibling of the TetMesh
     surf_path = tet_prim_path + "_surface"
     surf_prim = stage.DefinePrim(surf_path, "Mesh")
     mesh = UsdGeom.Mesh(surf_prim)
     mesh.GetFaceVertexCountsAttr().Set(Vt.IntArray([3] * n_tris))
     mesh.GetFaceVertexIndicesAttr().Set(Vt.IntArray.FromNumpy(tri_indices))
 
-    # Set rest-pose points
     pts_np = np.ascontiguousarray(sim.pos.numpy(), dtype=np.float32)
     mesh.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(pts_np))
 
-    # Copy displayColor from TetMesh if available
     src_pv = UsdGeom.PrimvarsAPI(tet_prim).GetPrimvar("displayColor")
     if src_pv and src_pv.Get() is not None:
         dst_pv = UsdGeom.PrimvarsAPI(surf_prim).CreatePrimvar(
@@ -221,7 +294,11 @@ def _parse_levels(text: str) -> tuple[float, ...]:
     return tuple(float(np.clip(value, 0.0, 1.0)) for value in values) if values else DEFAULT_SWEEP_LEVELS
 
 
-def _run_eval_sweep(solver, sim: MuscleSim, state, cfg, dt: float, args):
+def _run_eval_sweep(solver, sim, state, cfg, dt,
+                    levels="0,0.1,0.3,0.5,0.7,1.0",
+                    hold_steps=90, release_steps=90, warmup_steps=20):
+    preset = solver.control_config.preset
+
     def reset_state():
         sim.reset()
         solver.reset_bone(state)
@@ -233,19 +310,19 @@ def _run_eval_sweep(solver, sim: MuscleSim, state, cfg, dt: float, args):
         cfg.activation = float(value)
 
     report = run_activation_sweep(
-        label=f"example_couple3:{args.preset}",
+        label=f"example_couple3:{preset}",
         dt=dt,
         step_fn=step_once,
         reset_fn=reset_state,
         set_excitation_fn=set_excitation,
         sample_fn=lambda: solver_sample(solver, state),
-        levels=_parse_levels(args.eval_levels),
-        hold_steps=args.eval_hold_steps,
-        release_steps=args.eval_release_steps,
-        warmup_steps=args.eval_warmup_steps,
+        levels=_parse_levels(levels),
+        hold_steps=hold_steps,
+        release_steps=release_steps,
+        warmup_steps=warmup_steps,
     )
     report["control_config"] = config_to_dict(solver.control_config)
-    report_path = PROJECT_ROOT / "output" / f"example_couple3_eval_{args.preset}.json"
+    report_path = PROJECT_ROOT / "output" / f"example_couple3_eval_{preset}.json"
     write_sweep_report(report_path, report)
     log.info("Evaluation sweep saved: %s", report_path)
     for episode in report["episodes"]:
@@ -264,16 +341,16 @@ def _run_eval_sweep(solver, sim: MuscleSim, state, cfg, dt: float, args):
     )
 
 
+# ---------------------------------------------------------------------------
+# Main simulation loop
+# ---------------------------------------------------------------------------
+
 def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
              usd: UsdIO | None = None, bone_prim_map: dict | None = None,
              sim: MuscleSim | None = None,
              muscle_surface_path: str | None = None):
     """Run loop with optional rendering, scheduled activation and USD export."""
-    # Precompute mesh quality data.
     # Reorder tet indices to match kernel convention: ref vertex = index 3.
-    # Kernel Dm = [pts[0]-pts[3], pts[1]-pts[3], pts[2]-pts[3]]
-    # check_mesh_quality Ds = [pts[1]-pts[0], pts[2]-pts[0], pts[3]-pts[0]]
-    # Remap [0,1,2,3] -> [3,0,1,2] so check uses ref=pts[3], Ds=[pts[0]-pts[3],...]
     tet_idx = sim.tet_np[:, [3, 0, 1, 2]] if sim else None
     tet_poses = sim.rest_matrix.numpy() if sim else None
 
@@ -285,7 +362,6 @@ def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
 
         solver.step(state, state, dt=dt)
 
-        # Mesh quality check
         if tet_idx is not None and tet_poses is not None:
             pos_np = solver.core.pos.numpy()
             try:
@@ -296,7 +372,6 @@ def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
         if sim:
             sim.render()
 
-        # Write USD frame
         if usd is not None:
             usd.set_points(usd.muscle_mesh.mesh_path, solver.core.pos, frame=step)
             if muscle_surface_path:
@@ -327,42 +402,28 @@ def run_loop(solver, state, cfg, dt: float, n_steps: int, auto: bool,
             )
 
 
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
 def _create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="XPBD-Millard muscle-bone coupling (explicit active fiber force)")
+        description="XPBD-Millard muscle-bone coupling (bicep flexion)")
     parser.add_argument("--auto", action="store_true", help="Use built-in activation schedule")
     parser.add_argument("--steps", type=int, default=300, help="Number of simulation steps")
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="data/muscle/config/bicep_fibermillard_coupled.json",
-        help="Path to muscle config JSON",
-    )
-    parser.add_argument("--max-accel", type=float, default=None, help="Override max_accel for force clamping")
-    parser.add_argument("--sigma0", type=float, default=None, help="Override sigma0 (Pa)")
-    parser.add_argument("--device", type=str, default="cpu", help="Warp device, e.g. cpu or cuda:0")
+    parser.add_argument("--config", type=str, default=DEFAULT_CONFIG,
+                        help="Path to muscle config JSON")
+    parser.add_argument("--device", type=str, default="cpu", help="Warp device")
     parser.add_argument("--render", action="store_true", help="Enable OpenGL interactive rendering")
     parser.add_argument("--no-usd", action="store_true", help="Disable default USD export")
-    parser.add_argument("--usd-source", type=str, default="data/muscle/model/bicep.usd",
-                        help="Source USD for layered export")
-    parser.add_argument("--preset", type=str, default="smooth_nonlinear", choices=list_presets(),
-                        help="Controllability preset")
-    parser.add_argument("--coupling-mode", type=str, choices=["linear", "smooth_nonlinear", "rate_limited"],
-                        help="Override coupling mode")
-    parser.add_argument("--k-coupling", type=float, default=None, help="Override coupling stiffness")
-    parser.add_argument("--max-torque", type=float, default=None, help="Override torque clamp")
-    parser.add_argument("--passive-scale", type=float, default=None, help="Override passive torque floor")
-    parser.add_argument("--torque-ema", type=float, default=None, help="Override torque smoothing factor")
-    parser.add_argument("--torque-slew-rate", type=float, default=None, help="Override torque slew rate")
-    parser.add_argument("--nonlinear-gamma", type=float, default=None, help="Override nonlinear activation gamma")
-    parser.add_argument("--disable-activation-dynamics", action="store_true",
-                        help="Disable first-order activation dynamics")
-    parser.add_argument("--eval", action="store_true", help="Run activation sweep evaluation instead of time schedule")
+    parser.add_argument("--eval", action="store_true",
+                        help="Run activation sweep evaluation instead of time schedule")
     parser.add_argument("--eval-levels", type=str, default="0,0.1,0.3,0.5,0.7,1.0",
                         help="Comma-separated activation levels for sweep")
-    parser.add_argument("--eval-hold-steps", type=int, default=90, help="Steps to hold each activation level")
+    parser.add_argument("--eval-hold-steps", type=int, default=90,
+                        help="Steps to hold each activation level")
     parser.add_argument("--eval-release-steps", type=int, default=90,
-                        help="Steps to run after returning activation to zero")
+                        help="Steps after returning activation to zero")
     parser.add_argument("--eval-warmup-steps", type=int, default=20,
                         help="Zero-activation warmup before each sweep episode")
     return parser
@@ -373,82 +434,24 @@ def main():
 
     setup_logging(to_file=True)
 
-    wp.init()
-    wp.set_device(args.device)
-
-    cfg = load_config(args.config)
-    if args.max_accel is not None:
-        cfg.max_accel = args.max_accel
-    if args.sigma0 is not None:
-        cfg.sigma0 = args.sigma0
-    cfg.gui = bool(args.render)
-    cfg.render_mode = "human" if args.render else None
-
-    # Override cfg to load from USD source so MuscleSim and USD export
-    # read the same asset, preventing data inconsistency.
-    usd_source = args.usd_source
-    cfg.geo_path = usd_source
-    cfg.bone_geo_path = usd_source
-    cfg.muscle_prim_path = "/character/muscle/bicep"
-    cfg.bone_prim_paths = {
-        "L_scapula": "/character/bone/L_scapula/L_scapulaShape",
-        "L_radius": "/character/bone/L_radius/L_radiusShape",
-        "L_humerus": "/character/bone/L_humerus/L_humerusShape",
-    }
-    if cfg.constraints:
-        for c in cfg.constraints:
-            if "target_path" in c:
-                c["target_path"] = usd_source
-
-    sim = MuscleSim(cfg)
-
-    dt = 1.0 / 60.0
-    joint_friction = float(getattr(cfg, "joint_friction", 0.05))
-    model, state, radius_link, joint, selected_indices = build_elbow_model(sim, joint_friction=joint_friction)
-
-    control_config = build_coupling_config(
-        args.preset,
-        mode=args.coupling_mode,
-        k_coupling=args.k_coupling,
-        max_torque=args.max_torque,
-        passive_scale=args.passive_scale,
-        torque_ema=args.torque_ema,
-        torque_slew_rate=args.torque_slew_rate,
-        nonlinear_gamma=args.nonlinear_gamma,
-        use_activation_dynamics=False if args.disable_activation_dynamics else None,
-    )
-
-    solver = SolverMuscleBoneCoupled(
-        model,
-        sim,
-        control_config=control_config,
-    )
-
-    if radius_link is not None and selected_indices.size > 0:
-        solver.configure_coupling(
-            bone_body_id=radius_link,
-            bone_rest_verts=sim.bone_pos[selected_indices].astype(np.float32),
-            bone_vertex_indices=selected_indices,
-            joint_index=joint,
-            joint_pivot=ELBOW_PIVOT,
-            joint_axis=ELBOW_AXIS,
-        )
-
-    log.info(
-        "dt=%.6f muscle_substeps=%d bone_substeps=%d control=%s",
-        dt,
-        int(cfg.num_substeps),
-        int(solver.bone_substeps),
-        config_to_dict(control_config),
+    solver, sim, state, cfg, dt = setup_couple3(
+        config_path=args.config,
+        device=args.device,
+        render=args.render,
     )
 
     if args.eval:
-        _run_eval_sweep(solver, sim, state, cfg, dt, args)
+        _run_eval_sweep(solver, sim, state, cfg, dt,
+                        levels=args.eval_levels,
+                        hold_steps=args.eval_hold_steps,
+                        release_steps=args.eval_release_steps,
+                        warmup_steps=args.eval_warmup_steps)
         return
 
     usd = None
     bone_prim_map = None
     muscle_surface_path = None
+    usd_source = str(cfg.geo_path)
     if not args.no_usd:
         usd = UsdIO(usd_source, y_up_to_z_up=False)
         usd.muscle_mesh = usd.find_mesh("muscle")
@@ -456,10 +459,7 @@ def main():
         usd.start("output/example_couple3.anim.usd", copy_usd=True)
         usd.set_runtime("fps", 60)
         bone_prim_map = _build_bone_prim_map(usd, sim)
-
-        # Create a renderable surface Mesh from the TetMesh's boundary triangles.
         muscle_surface_path = _create_muscle_surface_mesh(usd, sim)
-
         log.info("USD export: %s  bone_groups=%s",
                  usd.output_path, list(bone_prim_map.keys()))
 

@@ -51,17 +51,6 @@ def run_test(config_path, n_frames=50, label="test", extra_constraints=None,
     cfg.gui = False
     cfg.render_mode = None
     cfg.arch = "cpu"
-    cfg.geo_path = "data/muscle/model/bicep.usd"
-    cfg.bone_geo_path = "data/muscle/model/bicep.usd"
-    cfg.muscle_prim_path = "/character/muscle/bicep"
-    cfg.bone_prim_paths = {
-        "L_scapula": "/character/bone/L_scapula/L_scapulaShape",
-        "L_radius": "/character/bone/L_radius/L_radiusShape",
-        "L_humerus": "/character/bone/L_humerus/L_humerusShape",
-    }
-    for c in cfg.constraints:
-        if "target_path" in c:
-            c["target_path"] = "data/muscle/model/bicep.usd"
 
     if extra_constraints:
         for ec in extra_constraints:
