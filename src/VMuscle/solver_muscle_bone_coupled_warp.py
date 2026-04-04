@@ -203,6 +203,7 @@ class SolverMuscleBoneCoupled:
             if self.core.use_jacobi:
                 self.core.apply_dP()
             self.core.post_smooth()
+            self.core.freeze_near_inverted()
             self.core.repair_inverted_tets()
             self.core.update_velocities()
 

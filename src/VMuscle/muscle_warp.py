@@ -1067,6 +1067,33 @@ def _apply_svd_clamp_kernel(
 
 
 @wp.kernel
+def _freeze_near_inverted_kernel(
+    tet_indices: wp.array(dtype=wp.vec4i),
+    pos: wp.array(dtype=wp.vec3),
+    pprev: wp.array(dtype=wp.vec3),
+    rest_matrix: wp.array(dtype=wp.mat33),
+    stopped: wp.array(dtype=wp.int32),
+    detF_threshold: float,
+):
+    """Revert vertices of near-inverted tets (det(F) < threshold) to pprev."""
+    c = wp.tid()
+    pts = tet_indices[c]
+    p0 = pos[pts[0]]; p1 = pos[pts[1]]; p2 = pos[pts[2]]; p3 = pos[pts[3]]
+    c0 = p0 - p3; c1 = p1 - p3; c2 = p2 - p3
+    Ds = wp.mat33(
+        c0[0], c1[0], c2[0],
+        c0[1], c1[1], c2[1],
+        c0[2], c1[2], c2[2])
+    F = Ds * rest_matrix[c]
+    J = wp.determinant(F)
+    if J < detF_threshold:
+        for i in range(4):
+            vi = pts[i]
+            if stopped[vi] == 0:
+                pos[vi] = pprev[vi]
+
+
+@wp.kernel
 def integrate_kernel(
     pos: wp.array(dtype=wp.vec3),
     pprev: wp.array(dtype=wp.vec3),
@@ -1499,6 +1526,7 @@ def solve_tetfibermillard_kernel(
     fpe_x_lo: float, fpe_x_hi: float,
     fpe_y_lo: float, fpe_y_hi: float,
     fpe_dydx_lo: float, fpe_dydx_hi: float,
+    fiber_skip_detF: float,
 ):
     """XPBD fiber constraint with energy-based Millard 2012 formulation.
 
@@ -1527,6 +1555,13 @@ def solve_tetfibermillard_kernel(
         c0[0], c1[0], c2[0],
         c0[1], c1[1], c2[1],
         c0[2], c1[2], c2[2])
+
+    # Skip fiber solve for near-inverted tets to prevent further distortion
+    if fiber_skip_detF > 0.0:
+        F_full = _Ds * rest_matrix[tetid]
+        J = wp.determinant(F_full)
+        if J < fiber_skip_detF:
+            return
 
     wTDminvT = wp.vec3(cons[c].restvector[0], cons[c].restvector[1], cons[c].restvector[2])
     FwT = _Ds * wTDminvT  # = F * w (fiber direction in deformed space)
@@ -2596,6 +2631,7 @@ class MuscleSim(MuscleSimBase):
                     self._millard_fpe_x_lo, self._millard_fpe_x_hi,
                     self._millard_fpe_y_lo, self._millard_fpe_y_hi,
                     self._millard_fpe_dydx_lo, self._millard_fpe_dydx_hi,
+                    float(getattr(self.cfg, 'fiber_skip_detF', 0.0)),
                     ])
             elif ctype == TETSNH:
                 wp.launch(solve_tetsnh_kernel, dim=count, inputs=[
@@ -2634,6 +2670,18 @@ class MuscleSim(MuscleSimBase):
             self._dispatch_constraints(self._smooth_ranges)
             if self.use_jacobi:
                 self.apply_dP()
+
+    def freeze_near_inverted(self):
+        """Revert vertices of near-inverted tets to their pre-substep positions.
+        Controlled by cfg.freeze_detF_threshold (default 0 = disabled)."""
+        threshold = getattr(self.cfg, 'freeze_detF_threshold', 0.0)
+        if threshold <= 0.0:
+            return
+        n_tet = self.tet_np.shape[0]
+        wp.launch(_freeze_near_inverted_kernel, dim=n_tet,
+                  inputs=[self.tet_indices, self.pos, self.pprev,
+                          self.rest_matrix, self.stopped,
+                          wp.float32(threshold)])
 
     def render(self):
         if self.renderer is None:

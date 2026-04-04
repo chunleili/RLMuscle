@@ -194,6 +194,7 @@ class MuscleSimBase(ConstraintBuilderMixin):
             if self.use_jacobi:
                 self.apply_dP()
             self.post_smooth()
+            self.freeze_near_inverted()
             self.repair_inverted_tets()
             self.update_velocities()
 

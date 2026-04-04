@@ -81,32 +81,43 @@ uv run python examples/example_couple3.py --auto --steps 300 --no-usd
 
 | 配置 | Peak 反转 Tets | Worst det(F) | 去激活恢复 |
 |------|:---:|:---:|:---:|
-| **Baseline（无修复）** | ~530 (13.5%) | -1427 | ~18（永久） |
+| **Baseline（无修复）** | ~480 (12.2%) | -927 | ~19（永久） |
 | couple2 (TETFIBERNORM) | ~15 (0.4%) | -3.9 | 0-1 |
 | Old centroid repair | ~360 (9.1%) | -0.002 | ~350（trap!） |
 | SVD Jacobi repair | ~260 (6.6%) | varies | ~260（trap!） |
-| **Post-smooth (3 iters)** | **~60 (1.5%)** | **-5.09** | **0（完全恢复）** |
+| Post-smooth (3 iters) | ~62 (1.5%) | -5.09 | 0-1 |
+| Post-smooth (5 iters) | ~10 (0.25%) | -2.48 | 1 |
+| **smooth=5 + SVD(a=0.1, σ=0.05, i=1)** | **9 (0.23%)** | **-0.54** | **0-1** |
 
-### 关键指标
-- 反转 tets 峰值：从 530 → 60（**89% 改善**）
-- 完全恢复：去激活后 0 个反转 tets（vs baseline 18 个永久反转）
-- 无 NaN、无 crash、无 trap state
+### 最终方案（默认配置）
+`post_smooth_iters=5 + repair_alpha=0.1, repair_sigma_min=0.05, repair_iters=1`
+- 反转 tets 峰值: 9 (0.23%)，从 480 降低 **98%**
+- Worst det(F): -0.54（vs -927 baseline）
+- 完全恢复：去激活后 0-1 个反转 tets
+- 性能开销: +224%（全部来自 smooth=5，SVD i=1 零额外开销）
 - 峰值 torque 6.5 N·m，joint angle -0.92 rad
+- 详细参数扫描见 [SVD repair 实验](../experiments/2026-04-04-svd-repair-sweep.md)
 
 ## 其他修改
 
 ### MillardCurve bug fix（`millard_curves.py`）
 - Line 284: `self._eval_integral_scalar(xi)` → `self.z_eval_integral_scalar(xi)`（方法重命名后调用点未更新）
 
-### SVD 修复代码（保留但未启用）
-`_svd_clamp_accumulate_kernel` 和 `_apply_svd_clamp_kernel` 已实现但默认 `repair_alpha=0`，不启用。Post-smooth 方法效果更好且更稳定。
+### fiber kernel skip（已实现但无效）
+在 `solve_tetfibermillard_kernel` 中加入 det(F) 检查，跳过近反转 tet 的 fiber 约束。实测无效（peak 59 vs baseline 62），因为问题在于邻居挤压而非自身 fiber 力。参数 `fiber_skip_detF` 默认 0 不启用。
+
+### freeze_near_inverted（已实现但无效）
+在 post_smooth 后检测 det(F) < threshold 的 tet，将其顶点回退到 pprev。实测无有效改善，且可能阻碍恢复。参数 `freeze_detF_threshold` 默认 0 不启用。
 
 ## 修改文件
 
 | 文件 | 改动 |
 |------|------|
-| `data/muscle/config/bicep_fibermillard_coupled.json` | +`post_smooth_iters: 3` |
-| `src/VMuscle/muscle_warp.py` | +`post_smooth()`, +SVD kernels, +`mat33_inverse_fn` |
-| `src/VMuscle/muscle_common.py` | substep 循环中调用 `post_smooth()` |
-| `src/VMuscle/solver_muscle_bone_coupled_warp.py` | coupled substep 循环中调用 `post_smooth()` |
+| `data/muscle/config/bicep_fibermillard_coupled.json` | +`post_smooth_iters: 5`, +SVD repair 参数 |
+| `src/VMuscle/muscle_warp.py` | +`post_smooth()`, +`freeze_near_inverted()`, +SVD kernels, +fiber skip, +`mat33_inverse_fn` |
+| `src/VMuscle/muscle_common.py` | substep 循环中调用 `post_smooth()`, `freeze_near_inverted()` |
+| `src/VMuscle/solver_muscle_bone_coupled_warp.py` | coupled substep 循环中调用 `post_smooth()`, `freeze_near_inverted()` |
 | `src/VMuscle/millard_curves.py` | bug fix: `_eval_integral_scalar` → `z_eval_integral_scalar` |
+| `scripts/sweep_post_smooth.py` | 参数扫描脚本 |
+| `scripts/plot_couple3_curves.py` | 曲线绘图脚本 |
+| `docs/experiments/2026-04-04-svd-repair-sweep.md` | SVD 参数扫描实验记录 |
