@@ -6,9 +6,6 @@ Reports NaN count, volume error, and centroid at checkpoints.
 Usage:
     uv run python tests/test_warp_cuda_jacobi.py
 """
-import sys
-sys.path.insert(0, "src")
-
 import numpy as np
 import warp as wp
 

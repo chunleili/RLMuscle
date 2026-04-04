@@ -8,13 +8,15 @@ example_xpbd_millard_sliding_ball.py into reusable functions:
 """
 
 import json
-from types import SimpleNamespace
+import logging
 
 import numpy as np
 import warp as wp
 
 from VMuscle.mesh_utils import create_cylinder_tet_mesh, assign_fiber_directions
 from VMuscle.muscle_warp import MuscleSim
+
+logger = logging.getLogger(__name__)
 
 
 def load_sliding_ball_config_base(path):
@@ -90,84 +92,24 @@ def build_xpbd_sliding_ball_sim(cfg, constraint_configs,
     fiber_dirs_per_tet = assign_fiber_directions(vertices, tets, axis=axis_idx)
     n_v = len(vertices)
     n_tet = len(tets)
-    print(f"Mesh: {n_v} verts, {n_tet} tets (fixed {inverted.sum()} inverted tets)")
+    logger.info("Mesh: %d verts, %d tets (fixed %d inverted tets)",
+                n_v, n_tet, inverted.sum())
 
-    # Per-vertex fiber directions (average from incident tets)
-    v_fiber = np.zeros((n_v, 3), dtype=np.float32)
-    v_count = np.zeros(n_v, dtype=np.float32)
-    for e, tet in enumerate(tets):
-        for vi in tet:
-            v_fiber[vi] += fiber_dirs_per_tet[e]
-            v_count[vi] += 1.0
-    mask = v_count > 0
-    v_fiber[mask] /= v_count[mask, None]
-    norms = np.linalg.norm(v_fiber, axis=1, keepdims=True)
-    v_fiber /= np.maximum(norms, 1e-8)
-
-    # Build SimConfig
-    sim_cfg = SimpleNamespace(
-        geo_path="<procedural>",
-        bone_geo_path="<none>",
-        gui=False,
-        render_mode="none",
-        constraints=constraint_configs,
-        dt=cfg["dt"],
+    # Build MuscleSim via from_procedural (handles fiber averaging, field init, etc.)
+    sim = MuscleSim.from_procedural(
+        vertices, tets, fiber_dirs_per_tet,
+        constraint_configs=constraint_configs,
+        dts=cfg["dt"],
         num_substeps=cfg["num_substeps"],
-        gravity=cfg["gravity"],
+        device="cpu",
         density=cfg["density"],
         veldamping=cfg["veldamping"],
-        contraction_ratio=contraction_ratio,
-        fiber_stiffness_scale=cfg["fiber_stiffness_scale"],
+        gravity=cfg["gravity"],
         sigma0=sigma0,
         lambda_opt=lambda_opt,
-        HAS_compressstiffness=False,
-        arch="cpu",
-        save_image=False,
-        pause=False,
-        reset=False,
-        show_auxiliary_meshes=False,
-        show_wireframe=False,
-        render_fps=24,
-        color_bones=False,
-        color_muscles="tendonmask",
-        activation=0.0,
-        nsteps=cfg["n_steps"],
+        contraction_ratio=contraction_ratio,
+        fiber_stiffness_scale=cfg["fiber_stiffness_scale"],
     )
-
-    # Manually construct MuscleSim bypassing file-based __init__
-    wp.set_device("cpu")
-    sim = object.__new__(MuscleSim)
-    sim.cfg = sim_cfg
-    sim.constraint_configs = sim_cfg.constraints
-    sim.pos0_np = vertices.astype(np.float32)
-    sim.tet_np = tets.astype(np.int32)
-    sim.v_fiber_np = v_fiber.astype(np.float32)
-    sim.v_tendonmask_np = None
-    sim.geo = SimpleNamespace()
-    sim.n_verts = n_v
-    sim.bone_geo = None
-    sim.bone_pos = np.zeros((0, 3), dtype=np.float32)
-    sim.bone_indices_np = np.zeros(0, dtype=np.int32)
-    sim.bone_muscle_ids = {}
-
-    wp.init()
-    sim._init_backend()
-    sim._allocate_fields()
-    sim._init_fields()
-    sim._precompute_rest()
-    sim._build_surface_tris()
-    sim._create_bone_fields()
-
-    sim.use_jacobi = False
-    sim.use_colored_gs = False
-    sim.contraction_ratio = contraction_ratio
-    sim.fiber_stiffness_scale = cfg["fiber_stiffness_scale"]
-    sim.has_compressstiffness = False
-    sim.dt = cfg["dt"] / cfg["num_substeps"]
-    sim.step_cnt = 0
-    sim.renderer = None
-
-    sim.build_constraints()
 
     # Set gravity vector based on up axis
     g = cfg["gravity"]
@@ -193,7 +135,8 @@ def build_xpbd_sliding_ball_sim(cfg, constraint_configs,
     mass_per_bottom = ball_mass / max(len(bottom_ids), 1)
     for bid in bottom_ids:
         mass_np[bid] += mass_per_bottom
-    print(f"Ball mass: {ball_mass} kg distributed to {len(bottom_ids)} bottom verts")
+    logger.info("Ball mass: %s kg distributed to %d bottom verts",
+                ball_mass, len(bottom_ids))
 
     sim.mass = wp.from_numpy(mass_np.astype(np.float32), dtype=wp.float32)
     sim.stopped = wp.from_numpy(stopped_np.astype(np.int32), dtype=wp.int32)

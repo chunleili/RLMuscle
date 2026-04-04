@@ -9,8 +9,7 @@ matplotlib (Agg backend) at key frames. Saves images to:
 Usage:
     uv run python tests/test_visual_comparison.py
 """
-import sys, os
-sys.path.insert(0, "src")
+import os
 os.environ["MPLBACKEND"] = "Agg"
 
 import numpy as np

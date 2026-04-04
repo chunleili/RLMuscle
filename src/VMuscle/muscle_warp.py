@@ -1974,8 +1974,10 @@ class MuscleSim(MuscleSimBase):
     @classmethod
     def from_procedural(cls, vertices, tets, fiber_dirs_per_tet,
                         bone_targets=None, *, constraint_configs,
-                        dts, device="cpu", density=1060.0, veldamping=0.02,
-                        gravity=0.0, sigma0=0.0, lambda_opt=1.0,
+                        dts, num_substeps=1, device="cpu",
+                        density=1060.0, veldamping=0.02, gravity=0.0,
+                        sigma0=0.0, lambda_opt=1.0,
+                        contraction_ratio=0.0, fiber_stiffness_scale=1.0,
                         v_max_norm=0.0, d_damp=0.0):
         """Create a MuscleSim from procedural mesh data (no file loading).
 
@@ -1986,15 +1988,16 @@ class MuscleSim(MuscleSimBase):
             bone_targets: Optional attachment target positions (K, 3) float.
             constraint_configs: List of constraint config dicts, e.g.
                 [{"type": "volume", "stiffness": 1e6, "dampingratio": 0.1}, ...].
-            dts: Simulation timestep [s].
+            dts: Frame timestep [s] (substep dt = dts / num_substeps).
+            num_substeps: Number of substeps per frame.
             device: Warp device string ("cpu" or "cuda:0").
             density: Material density [kg/m^3].
             veldamping: Velocity damping coefficient.
             gravity: Gravity magnitude [m/s^2].
             sigma0: Peak isometric stress [Pa] for explicit active fiber force.
-                If > 0, enables active fiber force accumulation.
             lambda_opt: Optimal fiber stretch ratio (l_opt / L_ref).
-                Converts 3D fiber stretch to Millard curve input: r = lambda_f / lambda_opt.
+            contraction_ratio: Initial contraction ratio.
+            fiber_stiffness_scale: Scaling factor for fiber constraint stiffness.
             v_max_norm: Normalizer for fiber velocity (V_max * lambda_opt).
             d_damp: Linear damping coefficient for fiber velocity term.
 
@@ -2022,9 +2025,10 @@ class MuscleSim(MuscleSimBase):
             geo_path="<procedural>", bone_geo_path="<none>",
             gui=False, render_mode="none",
             constraints=list(constraint_configs),
-            dt=dts, num_substeps=1,
+            dt=dts, num_substeps=num_substeps,
             gravity=gravity, density=density, veldamping=veldamping,
-            contraction_ratio=0.0, fiber_stiffness_scale=1.0,
+            contraction_ratio=contraction_ratio,
+            fiber_stiffness_scale=fiber_stiffness_scale,
             HAS_compressstiffness=False, arch=device,
             save_image=False, pause=False, reset=False,
             show_auxiliary_meshes=False, show_wireframe=False,
@@ -2064,10 +2068,10 @@ class MuscleSim(MuscleSimBase):
 
         sim.use_jacobi = False
         sim.use_colored_gs = False
-        sim.contraction_ratio = 0.0
-        sim.fiber_stiffness_scale = 1.0
+        sim.contraction_ratio = contraction_ratio
+        sim.fiber_stiffness_scale = fiber_stiffness_scale
         sim.has_compressstiffness = False
-        sim.dt = dts
+        sim.dt = dts / num_substeps
         sim.step_cnt = 0
         sim.renderer = None
 

@@ -13,7 +13,10 @@ def dgf_activation_dynamics(
     excitation: float,
     activation: float,
     dt: float,
-    min_activation: float = 0.0,
+    tau_a: float,
+    tau_d: float,
+    b: float,
+    min_activation: float,
 ) -> float:
     """One step of DGF activation dynamics (implicit Euler).
 
@@ -21,10 +24,6 @@ def dgf_activation_dynamics(
     where f = (0.5+0.5*tanh(b*(e-a)))/(tau_a*(0.5+1.5*a))
             + (0.5-0.5*tanh(b*(e-a)))*(0.5+1.5*a)/tau_d
     """
-    tau_a = 0.015  # activation time constant [s]
-    tau_d = 0.060  # deactivation time constant [s]
-    b = 10.0  # smoothing factor
-
     t = wp.tanh(b * (excitation - activation))
     f_act = (0.5 + 0.5 * t) / (tau_a * (0.5 + 1.5 * activation))
     f_deact = (0.5 - 0.5 * t) * (0.5 + 1.5 * activation) / tau_d
@@ -39,11 +38,16 @@ def update_activations(
     excitations: wp.array(dtype=wp.float32),
     activations: wp.array(dtype=wp.float32),
     dt: float,
-    min_activation: float = 0.0,
+    tau_a: float,
+    tau_d: float,
+    b: float,
+    min_activation: float,
 ):
     """Update all tet activations from excitation signals."""
     tid = wp.tid()
-    activations[tid] = dgf_activation_dynamics(excitations[tid], activations[tid], dt, min_activation)
+    activations[tid] = dgf_activation_dynamics(
+        excitations[tid], activations[tid], dt, tau_a, tau_d, b, min_activation
+    )
 
 
 def activation_dynamics_step_np(
@@ -52,10 +56,10 @@ def activation_dynamics_step_np(
     dt: float,
     tau_act: float = 0.015,
     tau_deact: float = 0.060,
+    b: float = 10.0,
     min_activation: float = 0.0,
 ) -> np.ndarray:
     """NumPy version of first-order activation dynamics."""
-    b = 10.0
     t = np.tanh(b * (excitation - activation))
     f_act = (0.5 + 0.5 * t) / (tau_act * (0.5 + 1.5 * activation))
     f_deact = (0.5 - 0.5 * t) * (0.5 + 1.5 * activation) / tau_deact

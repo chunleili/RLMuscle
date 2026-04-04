@@ -1,11 +1,6 @@
 """Smoke tests for XPBD coupled SimpleArm Stage 3."""
-import sys
-import os
-
 import numpy as np
 import pytest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 @pytest.fixture(scope="module")

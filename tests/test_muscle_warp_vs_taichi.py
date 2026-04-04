@@ -18,9 +18,6 @@ Usage:
     uv run python tests/test_muscle_warp_vs_taichi.py --mode both
 """
 
-import sys
-sys.path.insert(0, "src")
-
 import argparse
 import numpy as np
 import warp as wp

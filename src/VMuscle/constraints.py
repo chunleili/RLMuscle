@@ -7,7 +7,6 @@ Backend-specific build_constraints lives in muscle.py / muscle_warp.py.
 """
 import time
 import warnings
-from pathlib import Path
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -44,9 +43,11 @@ def warn_deprecated_constraint_type(name: str):
     name = name.lower()
     if name != "attachnormal" or name in _DEPRECATED_CONSTRAINT_TYPE_WARNINGS:
         return
-    print(
-        "Warning: constraint type 'attachnormal' is deprecated. "
-        "Use 'attach' by default, or 'distanceline' only if you explicitly need the legacy line-projection behavior."
+    warnings.warn(
+        "Constraint type 'attachnormal' is deprecated. "
+        "Use 'attach' by default, or 'distanceline' only if you explicitly need the legacy line-projection behavior.",
+        DeprecationWarning,
+        stacklevel=2,
     )
     _DEPRECATED_CONSTRAINT_TYPE_WARNINGS.add(name)
 
