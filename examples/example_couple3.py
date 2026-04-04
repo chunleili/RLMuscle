@@ -65,7 +65,7 @@ def setup_logging(to_file: bool = False):
 
 def setup_couple3(
     config_path: str | None = None,
-    device: str = "cpu",
+    device: str | None = None,
     render: bool = False,
     config_overrides: dict | None = None,
 ):
@@ -73,7 +73,7 @@ def setup_couple3(
 
     Args:
         config_path: Path to muscle config JSON. Defaults to DEFAULT_CONFIG.
-        device: Warp device string (e.g. "cpu", "cuda:0").
+        device: Warp device string override. If None, reads from config "arch".
         render: Enable OpenGL interactive rendering.
         config_overrides: Optional dict of cfg attribute overrides (for sweep scripts).
 
@@ -83,9 +83,12 @@ def setup_couple3(
     config_path = config_path or DEFAULT_CONFIG
 
     wp.init()
-    wp.set_device(device)
 
     cfg = load_config(config_path)
+    # Device: CLI override > config arch > default "cuda:0"
+    device = device or getattr(cfg, 'arch', 'cuda:0')
+    cfg.arch = device
+    wp.set_device(device)
     if config_overrides:
         for k, v in config_overrides.items():
             setattr(cfg, k, v)
@@ -257,7 +260,7 @@ def _create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steps", type=int, default=300, help="Number of simulation steps")
     parser.add_argument("--config", type=str, default=DEFAULT_CONFIG,
                         help="Path to muscle config JSON")
-    parser.add_argument("--device", type=str, default="cpu", help="Warp device")
+    parser.add_argument("--device", type=str, default=None, help="Warp device (overrides config arch)")
     parser.add_argument("--render", action="store_true", help="Enable OpenGL interactive rendering")
     parser.add_argument("--no-usd", action="store_true", help="Disable default USD export")
     parser.add_argument("--eval", action="store_true",
@@ -270,8 +273,8 @@ def _create_parser() -> argparse.ArgumentParser:
                         help="Steps after returning activation to zero")
     parser.add_argument("--eval-warmup-steps", type=int, default=20,
                         help="Zero-activation warmup before each sweep episode")
-    parser.add_argument("--use-cuda-graph", action="store_true",
-                        help="Capture CUDA graph after first step for faster kernel dispatch")
+    parser.add_argument("--no-cuda-graph", action="store_true",
+                        help="Disable CUDA graph capture (auto-enabled on GPU)")
     return parser
 
 
@@ -285,6 +288,7 @@ def main():
         device=args.device,
         render=args.render,
     )
+    use_cuda_graph = sim.pos.device.is_cuda and not args.no_cuda_graph
 
     if args.eval:
         run_eval_sweep(
@@ -317,7 +321,7 @@ def main():
         run_loop(solver, state, cfg, dt=dt, n_steps=int(max(1, args.steps)),
                  auto=bool(args.auto), usd=usd, bone_prim_map=bone_prim_map,
                  sim=sim, muscle_surface_path=muscle_surface_path,
-                 use_cuda_graph=bool(args.use_cuda_graph))
+                 use_cuda_graph=use_cuda_graph)
     finally:
         if usd is not None:
             usd.close()

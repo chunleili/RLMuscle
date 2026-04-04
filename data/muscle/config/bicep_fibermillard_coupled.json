@@ -23,7 +23,7 @@
     "k_coupling": 100000.0,
     "max_torque": 20.0
   },
-  "arch": "cpu",
+  "arch": "cuda:0",
   "save_image": false,
   "gui": true,
   "render_mode": "human",
