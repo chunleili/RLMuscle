@@ -1,4 +1,6 @@
-# 2026-03-30 SimpleArm VBD 默认 CUDA
+# [已废弃] 2026-03-30 SimpleArm VBD 默认 CUDA
+
+> **已废弃**: `example_vbd_mujoco_simple_arm.py` 已删除（2026-04-05）。
 
 ## 背景
 

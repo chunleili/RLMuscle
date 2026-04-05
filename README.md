@@ -38,13 +38,11 @@ uv run main.py
 
 (Optional) To run a different example, set environment variable `RUN` or change .env file. The RUN case names are exactly the same as those in `examples/*`. E.g.,
 ```sh
-# linux or macOS
-$env:RUN = "exmaple_couple"
+# Linux or macOS
+RUN=example_couple3 uv run main.py
 
-# Windows
-RUN=exmaple_couple 
-
-uv run main.py 
+# Windows (PowerShell)
+$env:RUN = "example_couple3"; uv run main.py
 ```
 
 (Optional) You can also use `uv run -m examples.example_XXX` to run an example.
@@ -78,7 +76,7 @@ git lfs pull
 
 `uv run -m examples.example_human_import` 
 
-### Sliding Ball Comparison agianst OpenSim
+### Sliding Ball Comparison against OpenSim
 Run the sliding ball muscle experiment and generate force/displacement comparison curves:
 ```
 uv run python scripts/run_sliding_ball_comparison.py
@@ -86,7 +84,7 @@ uv run python scripts/run_sliding_ball_comparison.py
 Results (plots and data) are saved to `output/`. If `pyopensim` is installed (`uv sync --extra optional`), the script also runs an OpenSim reference simulation for comparison. Sample output plots are shown below:
 ![sliding_ball_comparison](docs/imgs/sliding_ball_curve.png)
 
-This example coresponds to a sliding ball lift above by a single muscle.
+This example corresponds to a sliding ball lifted by a single muscle.
 <p float="left">
   <img src="./docs/imgs/sliding_ball_osim.gif" width="40%" />
   <img src="./docs/imgs/sliding_ball_vbd.gif" width="49%" />
@@ -105,28 +103,25 @@ uv run python scripts/run_simple_arm_comparison.py --mode xpbd-dgf
   <video src="./docs/imgs/simpleArm-xpbd-millard.mp4" width="49%" autoplay loop muted playsinline></video>
 </p>
 
+XPBD coupled simple arm (Millard Hill-type muscle + MuJoCo rigid body):
+
 ```
-RUN=example_xpbd_coupled_simple_arm; uv run main.py
+RUN=example_xpbd_coupled_simple_arm uv run main.py
 ```
 <p>
   <video src="./docs/imgs/example_xpbd_coupled_simple_arm.5s.mp4" width="49%" autoplay loop muted playsinline></video>
 </p>
 
+### Bicep: Muscle-Bone Coupling (couple3)
 
-### Bicep: Muscle-Bone Coupling with XPBD and Mujoco
-
-<p float="left">
-  <video src="./docs/imgs/example_couple3.anim.5s.mp4" width="49%" autoplay loop muted playsinline></video>
-</p>
-
-XPBD coupled simple arm
+XPBD-Millard volumetric bicep coupled with Newton MuJoCo elbow joint:
 
 ```
 RUN=example_couple3 uv run main.py --auto --steps 300
 ```
-
-
-
+<p>
+  <video src="./docs/imgs/example_couple3.anim.5s.mp4" width="49%" autoplay loop muted playsinline></video>
+</p>
 
 ## Test
 You can run all the tests with:

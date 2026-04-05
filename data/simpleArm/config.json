@@ -4,7 +4,6 @@
     "used_by": [
       "examples/example_xpbd_coupled_simple_arm.py",
       "examples/example_mujoco_simple_arm.py",
-      "examples/example_vbd_mujoco_simple_arm.py",
       "examples/example_vbd_coupled_simple_arm.py",
       "scripts/osim_simple_arm.py",
       "scripts/run_simple_arm_comparison.py",

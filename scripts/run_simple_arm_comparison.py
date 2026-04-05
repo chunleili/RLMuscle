@@ -3,8 +3,7 @@
 Available modes (solver-hillmodel):
     osim                 OpenSim DGF vs Millard (reference only)
     mujoco-dgf           MuJoCo rigid-body + DGF force injection (no FEM)
-    vbd-dgf              VBD FEM + MuJoCo, kinematic boundary (mass=0), DGF
-    vbd-coupled-dgf      VBD FEM + Newton, spring ATTACH coupling, DGF
+    vbd-dgf      VBD FEM + Newton, spring ATTACH coupling, DGF
     xpbd-dgf             XPBD FEM + MuJoCo, elastic ATTACH coupling, DGF
     xpbd-millard         XPBD FEM + MuJoCo, elastic ATTACH coupling, Millard  [default]
     all                  Run all modes
@@ -44,11 +43,6 @@ def run_mujoco_dgf(cfg):
 
 
 def run_vbd_dgf(cfg):
-    from examples.example_vbd_mujoco_simple_arm import vbd_mujoco_simple_arm
-    return vbd_mujoco_simple_arm(cfg)
-
-
-def run_vbd_coupled_dgf(cfg):
     from examples.example_vbd_coupled_simple_arm import vbd_coupled_simple_arm
     return vbd_coupled_simple_arm(cfg)
 
@@ -136,7 +130,7 @@ def main():
     parser = argparse.ArgumentParser(description="SimpleArm comparison")
     parser.add_argument("--config", default="data/simpleArm/config.json")
     parser.add_argument("--mode", choices=[
-                            "osim", "mujoco-dgf", "vbd-dgf", "vbd-coupled-dgf",
+                            "osim", "mujoco-dgf", "vbd-dgf",
                             "xpbd-dgf", "xpbd-millard", "all"],
                         default="xpbd-millard",
                         help="Solver mode (solver-hillmodel-coupling)")
@@ -175,25 +169,10 @@ def main():
 
     if args.mode in ("vbd-dgf", "all"):
         print("\n" + "=" * 60)
-        print("VBD+MuJoCo vs OpenSim DGF")
-        print("=" * 60)
-        dgf = run_osim_dgf(cfg) if args.mode == "vbd-dgf" else dgf
-        vbd = run_vbd_dgf(cfg)
-        rmse, max_err = plot_comparison(
-            [("OpenSim DGF", dgf), ("VBD+MuJoCo", vbd)],
-            "SimpleArm: VBD+MuJoCo vs OpenSim (DGF)",
-            "output/simple_arm_vbd_vs_osim.png",
-            {"OpenSim DGF": "b", "VBD+MuJoCo": "g"},
-        )
-        if rmse is not None:
-            print(f"\nVBD+MuJoCo vs OpenSim DGF: RMSE={rmse:.2f} deg, Max error={max_err:.2f} deg")
-
-    if args.mode in ("vbd-coupled-dgf", "all"):
-        print("\n" + "=" * 60)
         print("VBD Coupled vs OpenSim DGF")
         print("=" * 60)
-        dgf = run_osim_dgf(cfg) if args.mode == "vbd-coupled-dgf" else dgf
-        coupled = run_vbd_coupled_dgf(cfg)
+        dgf = run_osim_dgf(cfg) if args.mode == "vbd-dgf" else dgf
+        coupled = run_vbd_dgf(cfg)
         rmse, max_err = plot_comparison(
             [("OpenSim DGF", dgf), ("VBD Coupled", coupled)],
             "SimpleArm: VBD Coupled vs OpenSim (DGF)",

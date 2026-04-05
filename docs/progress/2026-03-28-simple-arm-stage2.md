@@ -1,4 +1,6 @@
-# SimpleArm 阶段 2: VBD 体积肌肉 + MuJoCo 骨骼
+# [已废弃] SimpleArm 阶段 2: VBD 体积肌肉 + MuJoCo 骨骼
+
+> **已废弃**: `example_vbd_mujoco_simple_arm.py` 已删除（2026-04-05）。该方案使用 kinematic boundary（强行拉伸 mesh）来伪造变形，已被 XPBD elastic ATTACH 方案替代。参见 `example_xpbd_coupled_simple_arm.py`。
 
 日期：2026-03-28
 
