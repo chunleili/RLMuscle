@@ -2,7 +2,8 @@
   "metainfo": {
     "description": "Millard 2012 energy constitutive model, muscle-bone coupled (couple3 pipeline)",
     "used_by": ["examples/example_couple3.py"],
-    "created": "2026-02-10"
+    "created": "2026-02-10",
+    "_note": "Active muscle is driven by the 'fibermillard' constraint (sigma0/contraction_factor inside it). Top-level sigma0/contraction_ratio control the legacy explicit fiber force kernel and generic FIBER constraint — both disabled here (set to 0)."
   },
   "name": "bicep_fibermillard_coupled",
   "geo_path": "data/muscle/model/bicep.usd",

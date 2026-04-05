@@ -45,6 +45,7 @@ from VMuscle.mesh_utils import (
     rotation_matrix_align,
     set_vmuscle_properties,
 )
+from VMuscle.muscle_common import compute_fiber_stretches
 from VMuscle.simple_arm_helpers import build_mjcf, compute_excitation, write_sto
 
 
@@ -140,6 +141,8 @@ def build_vbd_muscle_coupled(cfg, origin_pos, insertion_pos, fiber_length, devic
     )
 
     tet_idx = np.array(builder.tet_indices, dtype=int).reshape(-1, 4)
+    # Reorder for shared compute_fiber_stretches: VBD ref=col0 -> shared ref=col3
+    tet_idx_stretch = tet_idx[:, [1, 2, 3, 0]]
     tet_poses = np.array(builder.tet_poses).reshape(-1, 3, 3)
     fib_np = model.vmuscle.fiber_dirs.numpy()
 
@@ -153,6 +156,7 @@ def build_vbd_muscle_coupled(cfg, origin_pos, insertion_pos, fiber_length, devic
         "R": R,  # rotation matrix Z->world
         "mesh_length": mesh_length,
         "tet_idx": tet_idx,
+        "tet_idx_stretch": tet_idx_stretch,
         "tet_poses": tet_poses,
         "fiber_dirs_np": fib_np,
         "n_tets": model.tet_count,
@@ -164,18 +168,6 @@ def build_vbd_muscle_coupled(cfg, origin_pos, insertion_pos, fiber_length, devic
         "vbd_options": vbd_opts,
     }
     return model, s0, s1, ctrl, solver, meta
-
-
-def compute_fiber_stretches(pos, tet_idx, tet_poses, fiber_dirs):
-    """Compute per-tet fiber stretch via deformation gradient F = Ds @ Dm_inv."""
-    n = len(tet_idx)
-    stretches = np.empty(n)
-    for e in range(n):
-        i, j, k, l = tet_idx[e]
-        Ds = np.column_stack([pos[j] - pos[i], pos[k] - pos[i], pos[l] - pos[i]])
-        Fd = (Ds @ tet_poses[e]) @ fiber_dirs[e]
-        stretches[e] = max(np.linalg.norm(Fd), 1e-8)
-    return stretches
 
 
 def _update_boundary_vertices(s0, meta, new_insertion_pos, device="cpu"):
@@ -270,6 +262,7 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
     n_tets = meta["n_tets"]
     tendon_dir = meta["tendon_dir"]
     tet_idx = meta["tet_idx"]
+    tet_idx_stretch = meta["tet_idx_stretch"]
     tet_poses = meta["tet_poses"]
     fib_np = meta["fiber_dirs_np"]
     mesh_L = meta["mesh_length"]
@@ -311,7 +304,7 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
     # Check warm-up result
     pos_np = s0.particle_q.numpy()
     check_mesh_quality(pos_np, tet_idx, tet_poses, step=-1)
-    warmup_stretches = compute_fiber_stretches(pos_np, tet_idx, tet_poses, fib_np)
+    warmup_stretches = compute_fiber_stretches(pos_np, tet_idx_stretch, tet_poses, fib_np)
     warmup_ltilde = float(warmup_stretches.mean()) * stretch_to_ltilde
     if verbose:
         print(
@@ -364,7 +357,7 @@ def vbd_coupled_simple_arm(cfg, verbose=True):
         check_mesh_quality(vbd_pos, tet_idx, tet_poses, step=step)
         vbd_valid = not np.any(np.isnan(vbd_pos))
         if vbd_valid:
-            stretches = compute_fiber_stretches(vbd_pos, tet_idx, tet_poses, fib_np)
+            stretches = compute_fiber_stretches(vbd_pos, tet_idx_stretch, tet_poses, fib_np)
             l_tilde_vbd = float(stretches.mean()) * stretch_to_ltilde
             # Sanity check
             if l_tilde_vbd < 0.1 or l_tilde_vbd > 3.0:

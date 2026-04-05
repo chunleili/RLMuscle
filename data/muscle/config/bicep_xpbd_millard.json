@@ -2,7 +2,8 @@
   "metainfo": {
     "description": "XPBD integrator with Millard 2012 energy model and SVD mesh repair",
     "used_by": ["tests/test_mesh_quality.py"],
-    "created": "2026-02-10"
+    "created": "2026-02-10",
+    "_note": "Top-level sigma0 drives the explicit active fiber force kernel (accumulate_active_fiber_force). contraction_ratio=0 means no generic FIBER constraint contraction."
   },
   "name": "bicep_xpbd_millard",
   "geo_path": "data/muscle/model/bicep.usd",

@@ -2,7 +2,8 @@
   "metainfo": {
     "description": "DGF (DeGroote-Fregly) constitutive muscle model with attachnormal constraints",
     "used_by": ["tests/test_mesh_quality.py"],
-    "created": "2026-02-10"
+    "created": "2026-02-10",
+    "_note": "Top-level contraction_ratio controls generic FIBER constraint. The 'fiberdgf' constraint has its own contraction_factor for DGF-specific logic. Both are set to 0.4 here."
   },
   "name": "bicep_dgf",
   "geo_path": "data/muscle/model/bicep.usd",
