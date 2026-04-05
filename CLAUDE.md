@@ -26,7 +26,8 @@
     - 使用rebase而非merge来保持线性历史。
     - 实现新功能新建feat/XXX分支，修复新建fix/XXX分支，完成后合并到dev分支，master分支保持稳定，不允许更改。
     - 采用worktree来进行代码的隔离。新的worktree需要`uv sync --extra optional`来安装依赖。
-    - 永远不要加coauthred by.
+    - 永远不要加co-authored by Claude.
+    - 使用[Conventional Commits](https://www.conventionalcommits.org)规范来写commit message。
 - Code Style
     - 代码风格应保持一致。
 - Other

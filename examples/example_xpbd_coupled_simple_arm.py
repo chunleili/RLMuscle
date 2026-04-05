@@ -204,7 +204,7 @@ def xpbd_coupled_simple_arm(cfg, verbose=True):
     # Mesh exporter
     os.makedirs("output", exist_ok=True)
     output_fmt = cfg.get("output_format", "ply")
-    exporter = MeshExporter(path="output/anim_xpbd", format=output_fmt,
+    exporter = MeshExporter(path="output/xpbd_coupled_simple_arm", format=output_fmt,
                             tet_indices=tet_idx, positions=vertices)
 
     # Bone capsule meshes (rest-pose, body-local coords)

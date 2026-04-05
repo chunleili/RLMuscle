@@ -13,6 +13,7 @@ imgui.ini
 
 .cache/
 output/
+output*/
 log.md
 .env
 .claude/settings.local.json
@@ -31,3 +32,4 @@ core
 MUJOCO_LOG.TXT
 docs/imgs/tmp/
 .worktrees
+.codex
