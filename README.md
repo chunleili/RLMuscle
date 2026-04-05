@@ -63,14 +63,17 @@ git lfs pull
     - [x] Implement a minimal joint demo using newton
     - [x] USD IO
     - [x] Add muscle coupling solver
-    - [x] Register the constitutive model to Hill-type muscle model (DeGrooteFregly2016): sliding ball
+    - [x] Hill-type volumetric muscle model 
+      - [x] VBD: DeGrooteFregly2016. Two examples: slidingBall and simpleArm. Compared against OpenSim.
+      - [x] XPBD: DeGrooteFregly2016; Millard2012. Three examples: slidingBall、simpleArm and bicep (couple3). The first two compared against OpenSim. Prefer XPBD over VBD.
 - reinforcement learning
     - [ ] Implement a simple RL task (simpleArm)
 - final stage
     - [ ] Full body simulation with RL control
 
-## Examples
+## Examples & Experiments
 
+### Importing a Full Human Skeleton/Muscle from USD
 ![import_human](docs/imgs/import_human.png)
 
 `uv run -m examples.example_human_import` 
@@ -91,7 +94,8 @@ This example coresponds to a sliding ball lift above by a single muscle.
 
 ### Simple Arm Comparison against OpenSim
 ```
-uv run python scripts/run_simple_arm_comparison.py
+uv run python scripts/run_simple_arm_comparison.py --mode xpbd-millard
+uv run python scripts/run_simple_arm_comparison.py --mode xpbd-dgf
 ```
 
 ![simple_arm_comparison](docs/imgs/simple_arm_xpbd_millard_vs_osim.png)
@@ -101,20 +105,28 @@ uv run python scripts/run_simple_arm_comparison.py
   <video src="./docs/imgs/simpleArm-xpbd-millard.mp4" width="49%" autoplay loop muted playsinline></video>
 </p>
 
-
-### Muscle-Bone Coupled Simulation
-
-<p float="left">
-  <video src="./docs/imgs/example_couple3.anim.5s.mp4" width="49%" autoplay loop muted playsinline></video>
+```
+RUN=example_xpbd_coupled_simple_arm; uv run main.py
+```
+<p>
   <video src="./docs/imgs/example_xpbd_coupled_simple_arm.5s.mp4" width="49%" autoplay loop muted playsinline></video>
 </p>
 
-Left: VBD coupled bicep (couple3) &nbsp; Right: XPBD coupled simple arm
+
+### Bicep: Muscle-Bone Coupling with XPBD and Mujoco
+
+<p float="left">
+  <video src="./docs/imgs/example_couple3.anim.5s.mp4" width="49%" autoplay loop muted playsinline></video>
+</p>
+
+XPBD coupled simple arm
 
 ```
 RUN=example_couple3 uv run main.py --auto --steps 300
-RUN=example_xpbd_coupled_simple_arm uv run main.py
 ```
+
+
+
 
 ## Test
 You can run all the tests with:
@@ -128,27 +140,26 @@ uv run python tests/xxx.py
 ```
 
 
-
-## Symbol Table
-See [docs/notes/symbols.md](docs/notes/symbols.md) for the unified symbol table used across code and documentation.
-
 ## Note
 
+### Symbol Table
+See [docs/notes/symbols.md](docs/notes/symbols.md) for the unified symbol table used across code and documentation.
+
+### Docs
+`/docs` is not a user guide but a collection of documentation files during development. We keep all changes and progress in `docs/` to make it easier to track. The structure is as follows:
+- `docs/progress/*.md`: logs (experiment / plan execution progress; completed + next steps)
+- `docs/plans/*.md`: plans
+- `docs/specs/`: detailed specifications
+- `docs/experiments/*.md`: experiment summaries
+- `docs/notes/*.md`: theory (formula) notes   
+
+
 ### Layered USD
-Use **"--use-layered-usd"** to enable the layered USD export. This is better than the newton's usd viewer because it just adding layers on top of the original usd file, which is the correct way to use usd. So it is incompatible with the "--viewer usd" and has to be used with usd as input. 
+There are two ways to export USD. 1: Adding layers on top of an existing usd file. 2: construct a new usd file from scratch. The layered approach is better when you want to do a non-destructive editing, or adding different animations to the same source. See `examples/example_usd_io.py` for an example. But the second one is also useful when your scene is completely new.
 
-You can also specify "--copy-usd" to copy the input usd file to the output directory, which is useful when you want to move and share the usd since the usd use relative path to reference the input usd file.
-
-
-### Headless mode
-You can run the USD IO example in headless mode:
-```
-.\.venv\Scripts\python.exe examples\example_usd_io.py --viewer null --headless --num-frames 100 --use-layered-usd
-```
-It will automatically save the layered usd file after 100 frames.
 
 ### up-axis
  USD and Houdini use Y up by default. But Newton uses **Z up** by default. See [here](https://newton-physics.github.io/newton/latest/concepts/conventions.html#coordinate-system-and-up-axis-conventions) for newton's convention. We will **transfer the asset to Z up when loading it** (turn off by switching off "y_up_to_z_up"). Be careful when importing other assets.
 
 ## macOS Related
-If you are simultaneously using Taichi and Warp, you have to first initialize Warp (`wp.init()`) then import Taichi, otherwise their LLVM will conflict with each other.
+If you are simultaneously using Taichi and Warp, you have to first initialize Warp (`wp.init()`) then import Taichi, otherwise their LLVM will conflict with each other. Taichi is going to be deprecated. We will freeze the code related to Taichi and focus on Warp.
