@@ -1,7 +1,7 @@
-"""Sliding-ball comparison: VBD / XPBD-DGF / XPBD-Millard vs OpenSim.
+"""Sliding-ball comparison: VBD-DGF / XPBD-DGF / XPBD-Millard vs OpenSim.
 
 Usage:
-    uv run python scripts/run_sliding_ball_comparison.py --mode vbd             # VBD vs OpenSim-DGF
+    uv run python scripts/run_sliding_ball_comparison.py --mode vbd-dgf         # VBD-DGF vs OpenSim-DGF
     uv run python scripts/run_sliding_ball_comparison.py --mode xpbd-dgf        # XPBD-DGF vs OpenSim-DGF
     uv run python scripts/run_sliding_ball_comparison.py --mode xpbd-millard    # XPBD-Millard vs OpenSim-Millard
     uv run python scripts/run_sliding_ball_comparison.py --mode xpbd-millard --skip-opensim
@@ -19,9 +19,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # Runners: each returns an NPZ path (XPBD/VBD) or a result dict (OpenSim)
 # ---------------------------------------------------------------------------
 
-def run_vbd(config_path, label):
+def run_vbd_dgf(config_path, label):
     print("=" * 60)
-    print("VBD Simulation")
+    print("VBD-DGF Simulation")
     print("=" * 60)
     from examples.example_muscle_sliding_ball import load_config, run_sim
     cfg = load_config(config_path)
@@ -127,7 +127,7 @@ def plot_comparison(xpbd_npz, osim_result, label, curve_module="dgf"):
         from VMuscle.dgf_curves import active_force_length
         fl_vals = active_force_length(l_norm)
         curve_label = "DGF $f_L$"
-        sim_label = "XPBD-DGF" if "xpbd" in label else "VBD"
+        sim_label = "XPBD-DGF" if "xpbd" in label else "VBD-DGF"
         osim_label = "OpenSim-DGF"
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -205,7 +205,7 @@ def plot_comparison(xpbd_npz, osim_result, label, curve_module="dgf"):
 # ---------------------------------------------------------------------------
 
 MODE_CONFIGS = {
-    "vbd":           "data/slidingBall/config.json",
+    "vbd-dgf":       "data/slidingBall/config.json",
     "xpbd-dgf":      "data/slidingBall/config_xpbd_dgf.json",
     "xpbd-millard":   "data/slidingBall/config_xpbd_millard.json",
 }
@@ -214,9 +214,9 @@ MODE_CONFIGS = {
 def main():
     parser = argparse.ArgumentParser(description="Sliding-ball comparison")
     parser.add_argument("--mode",
-                        choices=["vbd", "xpbd-dgf", "xpbd-millard"],
+                        choices=["vbd-dgf", "xpbd-dgf", "xpbd-millard"],
                         default="xpbd-millard",
-                        help="vbd / xpbd-dgf / xpbd-millard")
+                        help="vbd-dgf / xpbd-dgf / xpbd-millard")
     parser.add_argument("--config", default=None,
                         help="Override config JSON path")
     parser.add_argument("--label", default=None)
@@ -227,8 +227,8 @@ def main():
     label = args.label or args.mode.replace("-", "_")
 
     # Run simulation
-    if args.mode == "vbd":
-        npz = run_vbd(config_path, label)
+    if args.mode == "vbd-dgf":
+        npz = run_vbd_dgf(config_path, label)
     elif args.mode == "xpbd-dgf":
         npz = run_xpbd_dgf(config_path, label)
     elif args.mode == "xpbd-millard":

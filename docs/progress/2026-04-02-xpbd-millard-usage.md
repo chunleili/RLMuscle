@@ -8,7 +8,7 @@ uv run python scripts/run_sliding_ball_comparison.py
 
 # 其他模式
 uv run python scripts/run_sliding_ball_comparison.py --mode xpbd-dgf       # XPBD-DGF vs OpenSim-DGF
-uv run python scripts/run_sliding_ball_comparison.py --mode vbd            # VBD vs OpenSim-DGF
+uv run python scripts/run_sliding_ball_comparison.py --mode vbd-dgf        # VBD-DGF vs OpenSim-DGF
 
 # 跳过 OpenSim（只跑仿真+出图）
 uv run python scripts/run_sliding_ball_comparison.py --skip-opensim
@@ -23,7 +23,8 @@ uv run python scripts/run_sliding_ball_comparison.py --skip-opensim
 uv run python scripts/run_simple_arm_comparison.py --mode xpbd-millard
 
 # 其他模式
-uv run python scripts/run_simple_arm_comparison.py --mode xpbd-dgf         # XPBD-DGF vs OpenSim-DGF
+uv run python scripts/run_simple_arm_comparison.py --mode xpbd-dgf         # XPBD-DGF vs OpenSim DGF
+uv run python scripts/run_simple_arm_comparison.py --mode mujoco-dgf      # MuJoCo-DGF vs OpenSim DGF
 uv run python scripts/run_simple_arm_comparison.py --mode osim             # OpenSim DGF vs Millard
 uv run python scripts/run_simple_arm_comparison.py --mode all              # 所有模式
 ```
