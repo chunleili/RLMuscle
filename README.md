@@ -102,6 +102,20 @@ uv run python scripts/run_simple_arm_comparison.py
 </p>
 
 
+### Muscle-Bone Coupled Simulation
+
+<p float="left">
+  <video src="./docs/imgs/example_couple3.anim.5s.mp4" width="49%" autoplay loop muted playsinline></video>
+  <video src="./docs/imgs/example_xpbd_coupled_simple_arm.5s.mp4" width="49%" autoplay loop muted playsinline></video>
+</p>
+
+Left: VBD coupled bicep (couple3) &nbsp; Right: XPBD coupled simple arm
+
+```
+RUN=example_couple3 uv run main.py --auto --steps 300
+RUN=example_xpbd_coupled_simple_arm uv run main.py
+```
+
 ## Test
 You can run all the tests with:
 ```
