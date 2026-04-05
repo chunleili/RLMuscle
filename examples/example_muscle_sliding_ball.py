@@ -33,6 +33,8 @@ from VMuscle.mesh_utils import (
     create_cylinder_tet_mesh,
     set_vmuscle_properties,
 )
+from VMuscle.muscle_common import compute_fiber_stretches
+)
 
 
 def load_config(path):
@@ -53,20 +55,17 @@ def load_config(path):
     return cfg
 
 
-def compute_fiber_data(pos, tet_idx, tet_poses, fiber_dirs,
+def compute_fiber_data(pos, tet_idx_stretch, tet_poses, fiber_dirs,
                        activation, dt, v_max, l_prev_mean=None):
     """Compute per-tet fiber stretches and mean normalized forces.
 
+    Args:
+        tet_idx_stretch: Tet indices in shared convention (ref=col3).
+            For VBD data, pass tet_idx[:, [1,2,3,0]] to reorder.
+
     Returns dict with l_mean, f_active, f_passive, f_total, f_velocity.
     """
-    n = len(tet_idx)
-    stretches = np.empty(n)
-    for e in range(n):
-        i, j, k, l = tet_idx[e]
-        Ds = np.column_stack([pos[j] - pos[i], pos[k] - pos[i], pos[l] - pos[i]])
-        Fd = (Ds @ tet_poses[e]) @ fiber_dirs[e]
-        stretches[e] = max(np.linalg.norm(Fd), 1e-8)
-
+    stretches = compute_fiber_stretches(pos, tet_idx_stretch, tet_poses, fiber_dirs)
     l_mean = float(stretches.mean())
     if l_prev_mean is not None and dt > 0:
         v_norm = (l_mean - l_prev_mean) / (dt * v_max)
@@ -136,8 +135,10 @@ def run_sim(cfg, label="default"):
           f"ratio={F_max/(ball_mass*9.81):.2f}")
 
     # CPU-side tet data for fiber extraction
-    tet_idx = np.array(builder.tet_indices, dtype=int)
-    tet_poses = np.array(builder.tet_poses)
+    tet_idx = np.array(builder.tet_indices, dtype=int).reshape(-1, 4)
+    # Reorder for shared compute_fiber_stretches: VBD ref=col0 -> shared ref=col3
+    tet_idx_stretch = tet_idx[:, [1, 2, 3, 0]]
+    tet_poses = np.array(builder.tet_poses).reshape(-1, 3, 3)
     fib_np = model.vmuscle.fiber_dirs.numpy()
 
     # Solver
@@ -188,7 +189,7 @@ def run_sim(cfg, label="default"):
         bottom_z = float(np.mean([pos[bid][axis] for bid in bottom_ids]))
         bottom_vz = float(np.mean([vel[bid][axis] for bid in bottom_ids]))
 
-        fd = compute_fiber_data(pos, tet_idx, tet_poses, fib_np,
+        fd = compute_fiber_data(pos, tet_idx_stretch, tet_poses, fib_np,
                                 a, dt, v_max, l_prev_mean)
         l_prev_mean = fd['l_mean']
 

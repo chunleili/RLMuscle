@@ -8,37 +8,7 @@ Works with pyopensim (pip install pyopensim) — no conda required.
 
 import numpy as np
 
-
-def _import_opensim():
-    """Import opensim, supporting both conda opensim and pip pyopensim.
-
-    pyopensim puts some classes in submodules (simulation, actuators, common).
-    We patch them onto the top-level module for a uniform API.
-    """
-    try:
-        import opensim as osim
-        return osim
-    except ImportError:
-        pass
-    try:
-        import pyopensim as osim
-    except ImportError:
-        print("OpenSim not available — skipping comparison.")
-        return None
-    for attr, sub in [
-        ("SliderJoint", "simulation"),
-        ("DeGrooteFregly2016Muscle", "actuators"),
-        ("Millard2012EquilibriumMuscle", "actuators"),
-        ("PiecewiseLinearFunction", "common"),
-        ("Sphere", "simulation"),
-        ("TimeSeriesTable", "common"),
-        ("STOFileAdapter", "common"),
-    ]:
-        if not hasattr(osim, attr):
-            mod = getattr(osim, sub, None)
-            if mod and hasattr(mod, attr):
-                setattr(osim, attr, getattr(mod, attr))
-    return osim
+from scripts.osim_compat import import_opensim
 
 
 def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
@@ -60,7 +30,7 @@ def osim_sliding_ball(muscle_length, ball_mass, sigma0, muscle_radius,
         'active_forces', 'passive_forces', 'max_iso_force',
         or None if opensim unavailable.
     """
-    osim = _import_opensim()
+    osim = import_opensim()
     if osim is None:
         return None
 

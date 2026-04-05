@@ -13,32 +13,7 @@ import os
 
 import numpy as np
 
-
-def _import_opensim():
-    """Import opensim, supporting both conda opensim and pip pyopensim."""
-    try:
-        import opensim as osim
-        return osim
-    except ImportError:
-        pass
-    try:
-        import pyopensim as osim
-    except ImportError:
-        print("OpenSim not available — skipping.")
-        return None
-    for attr, sub in [
-        ("PinJoint", "simulation"),
-        ("DeGrooteFregly2016Muscle", "actuators"),
-        ("Millard2012EquilibriumMuscle", "actuators"),
-        ("PiecewiseLinearFunction", "common"),
-        ("TimeSeriesTable", "common"),
-        ("STOFileAdapter", "common"),
-    ]:
-        if not hasattr(osim, attr):
-            mod = getattr(osim, sub, None)
-            if mod and hasattr(mod, attr):
-                setattr(osim, attr, getattr(mod, attr))
-    return osim
+from scripts.osim_compat import import_opensim
 
 
 def osim_simple_arm(cfg, hill_model_type="millard"):
@@ -52,7 +27,7 @@ def osim_simple_arm(cfg, hill_model_type="millard"):
         dict with times, elbow_angles, forces, norm_fiber_lengths, activations,
         max_iso_force, muscle_type.  Or None if OpenSim unavailable.
     """
-    osim = _import_opensim()
+    osim = import_opensim()
     if osim is None:
         return None
 

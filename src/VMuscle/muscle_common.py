@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from VMuscle.config import SimConfig, load_config  # noqa: F401
+from VMuscle.config import SimConfig
 from VMuscle.constraints import ConstraintBuilderMixin
 from VMuscle.mesh_io import load_mesh, load_bone_mesh
 

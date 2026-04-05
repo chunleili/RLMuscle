@@ -16,6 +16,7 @@ import warp as wp
 
 from VMuscle.activation import activation_dynamics_step_np
 from VMuscle.millard_curves import MillardCurves
+from VMuscle.muscle_common import compute_fiber_stretches
 from VMuscle.muscle_warp import fill_float_kernel
 from VMuscle.sliding_ball_helpers import (
     build_xpbd_sliding_ball_sim,
@@ -44,15 +45,7 @@ def load_config(path):
 def compute_fiber_data(pos, tet_idx, rest_matrices, fiber_dirs,
                        activation, mc):
     """Compute per-tet fiber stretches and mean normalized forces using Millard curves."""
-    n = len(tet_idx)
-    stretches = np.empty(n)
-    for e in range(n):
-        i0, i1, i2, i3 = tet_idx[e]
-        Ds = np.column_stack([pos[i0] - pos[i3], pos[i1] - pos[i3], pos[i2] - pos[i3]])
-        F = Ds @ rest_matrices[e]
-        Fd = F @ fiber_dirs[e]
-        stretches[e] = max(np.linalg.norm(Fd), 1e-8)
-
+    stretches = compute_fiber_stretches(pos, tet_idx, rest_matrices, fiber_dirs)
     l_mean = float(stretches.mean())
     fl_vals = mc.fl.eval(stretches)
     fpe_vals = mc.fpe.eval(stretches)

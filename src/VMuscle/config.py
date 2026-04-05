@@ -15,17 +15,6 @@ _PATH_FIELDS = frozenset(["geo_path", "bone_geo_path", "ground_mesh_path", "coor
 SimConfig = SimpleNamespace
 
 
-def load_config_dict(json_path: str) -> dict:
-    """Load JSON config and return as a plain dict.
-
-    Use for examples that access nested keys like cfg["geometry"]["humerus_length"].
-    """
-    if not os.path.exists(json_path):
-        raise FileNotFoundError(f"json file {json_path} not exist!")
-    with open(json_path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 def load_config(json_path, args=None) -> SimpleNamespace:
     """Load JSON config. If args is given, override its attributes; otherwise create new."""
     if not os.path.exists(json_path):

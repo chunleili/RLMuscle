@@ -44,12 +44,8 @@
     "elbow_angle_deg": 90.0
   },
   "coupling": {
-    "spring_stiffness": 50000.0,
-    "spring_damping": 10.0,
     "vbd_warmup_steps": 100,
     "vbd_quasi_static": true,
-    "vbd_scale_guard_min": 0.35,
-    "vbd_scale_guard_max": 1.6,
     "vbd_substeps": 20,
     "vbd_iterations": 20
   },

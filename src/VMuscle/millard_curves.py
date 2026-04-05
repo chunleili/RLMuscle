@@ -285,7 +285,7 @@ class MillardCurve:
         x = np.atleast_1d(x)
         result = np.empty_like(x)
         for i, xi in enumerate(x):
-            result[i] = self.z_eval_integral_scalar(xi)
+            result[i] = self._eval_integral_scalar(xi)
         return float(result[0]) if scalar else result
 
     def _eval_scalar(self, x: float) -> float:
@@ -307,7 +307,7 @@ class MillardCurve:
         u = _newton_find_u(x, seg.x_coeffs)
         return _horner_eval(u, seg.y_coeffs)
 
-    def z_eval_integral_scalar(self, x: float) -> float:
+    def _eval_integral_scalar(self, x: float) -> float:
         """Evaluate cumulative integral from x_lo to x."""
         if x <= self.x_lo:
             # Quadratic extrapolation: y_lo*(x-x_lo) + 0.5*dydx_lo*(x-x_lo)^2

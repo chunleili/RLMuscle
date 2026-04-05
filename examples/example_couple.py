@@ -35,22 +35,20 @@ wp.set_device("cpu")
 import taichi as ti
 import newton
 
+from VMuscle.bicep_helpers import ELBOW_AXIS, ELBOW_PIVOT
 from VMuscle.controllability import (
-    DEFAULT_SWEEP_LEVELS,
     build_coupling_config,
     config_to_dict,
     list_presets,
+    parse_levels,
     run_activation_sweep,
     solver_sample,
     write_sweep_report,
 )
+from VMuscle.muscle_common import activation_ramp
 from VMuscle.muscle_taichi import MuscleSim, load_config
 from VMuscle.usd_io import UsdIO
 from VMuscle.solver_muscle_bone_coupled import SolverMuscleBoneCoupled
-
-# Elbow joint parameters (Y-up space)
-ELBOW_PIVOT = np.array([0.328996, 1.16379, -0.0530352], dtype=np.float32)
-ELBOW_AXIS = np.array([-0.788895, -0.45947, -0.408086], dtype=np.float32)
 
 log = logging.getLogger("couple")
 
@@ -133,11 +131,6 @@ def create_joint_debug_visuals():
     return pivot_field, axis_field
 
 
-def _parse_levels(text: str) -> tuple[float, ...]:
-    values = [float(part.strip()) for part in text.split(",") if part.strip()]
-    return tuple(float(np.clip(value, 0.0, 1.0)) for value in values) if values else DEFAULT_SWEEP_LEVELS
-
-
 def _create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Taichi muscle-bone coupling demo")
     parser.add_argument("--auto", action="store_true", help="Use built-in activation schedule")
@@ -168,19 +161,7 @@ def _create_parser() -> argparse.ArgumentParser:
 def _run_auto_test(solver, state, cfg, dt, n_steps=300):
     """Headless test: ramp activation 0 -> 0.5 -> 1.0 over n_steps."""
     for step in range(1, n_steps + 1):
-        t = step / n_steps
-        if t <= 0.2:
-            cfg.activation = 0.0
-        elif t <= 0.3:
-            cfg.activation = 0.5
-        elif t<=0.5:
-            cfg.activation = 1.0
-        elif t<=0.7:
-            cfg.activation = 0.7
-        elif t<=0.8:
-            cfg.activation = 0.3
-        else:
-            cfg.activation = 0.0
+        cfg.activation = activation_ramp(step / n_steps)
         solver.step(state, state, dt=dt)
         if step % 50 == 1:
             body_q = state.body_q.numpy()[0]
@@ -209,7 +190,7 @@ def _run_eval_sweep(solver, sim, state, cfg, dt: float, args):
         reset_fn=reset_state,
         set_excitation_fn=set_excitation,
         sample_fn=lambda: solver_sample(solver, state),
-        levels=_parse_levels(args.eval_levels),
+        levels=parse_levels(args.eval_levels),
         hold_steps=args.eval_hold_steps,
         release_steps=args.eval_release_steps,
         warmup_steps=args.eval_warmup_steps,
