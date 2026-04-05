@@ -28,6 +28,7 @@
     - 采用worktree来进行代码的隔离。新的worktree需要`uv sync --extra optional`来安装依赖。
     - 永远不要加co-authored by Claude.
     - 使用[Conventional Commits](https://www.conventionalcommits.org)规范来写commit message。
+    - Use tags to mark breaking changes or important milestones, push those tags to remote. Should give a brief description in the tag message.
 - Code Style
     - 代码风格应保持一致。
 - Other
